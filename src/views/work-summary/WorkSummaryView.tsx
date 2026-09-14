@@ -38,20 +38,6 @@ import type { AppSettings } from '@/settings/app-settings'
 import { workSummarySystemPrompt } from '@/settings/settings'
 
 /**
- * The prose a model writes from the selected period's accomplishments and the
- * current commitments, read before it is copied — and, beside Generate, the
- * Work Summary Material itself, copyable with no key, no network and no
- * waiting (see
- * docs/adr/0041-work-summary-combines-a-selected-period-with-current-commitments.md).
- * The material is read by the session; the summary itself is this view's — it
- * lives as long as the Main Window that showed it, Generate again replaces
- * it, and nothing of it is ever persisted.
- *
- * The model call is made from Rust so the API Key never enters this window —
- * see docs/adr/0026-the-api-key-lives-in-the-keychain-and-rust-makes-the-call.md.
- */
-
-/**
  * A generated Work Summary with the snapshot it was written from — the
  * selected range and the complete source material of that one request, plus
  * when it arrived. The range and the material are what mark it outdated once
@@ -69,24 +55,18 @@ interface GeneratedSummary {
 }
 
 /**
- * Whether a snapshot no longer matches the world the arguments describe: a
- * moved control range, or source inputs rendering different material. A null
- * material is a read that cannot speak — it drifts nothing on its own, so a
- * range that would not read can still outdate through its range while never
- * unmarking through its silence.
+ * The prose a model writes from the selected period's accomplishments and the
+ * current commitments, read before it is copied — and, beside Generate, the
+ * Work Summary Material itself, copyable with no key, no network and no
+ * waiting (see
+ * docs/adr/0041-work-summary-combines-a-selected-period-with-current-commitments.md).
+ * The material is read by the session; the summary itself is this view's — it
+ * lives as long as the Main Window that showed it, Generate again replaces
+ * it, and nothing of it is ever persisted.
+ *
+ * The model call is made from Rust so the API Key never enters this window —
+ * see docs/adr/0026-the-api-key-lives-in-the-keychain-and-rust-makes-the-call.md.
  */
-function isDrifted(
-  snapshot: GeneratedSummary | null,
-  control: DayRange,
-  material: string | null,
-): boolean {
-  return (
-    snapshot !== null &&
-    (snapshot.from !== control.from ||
-      snapshot.to !== control.to ||
-      (material !== null && material !== snapshot.material))
-  )
-}
 export default function WorkSummaryView({
   desktop,
   settings,
@@ -159,32 +139,39 @@ export default function WorkSummaryView({
   // A moved range alone outdates it, and so does any change to the actual
   // source inputs, compared as the rendered material rather than by object
   // identity: an ordinary refresh that re-reads unchanged inputs renders the
-  // same material and leaves the snapshot current.
+  // same material and leaves the snapshot current — and returning to the
+  // snapshot's own range with its inputs untouched reads as current again.
   //
-  // Latched per summary, not derived: a refresh that would not read carries
-  // no material to compare, so deriving would unmark prose already proven
-  // stale the moment the alert replaces the counts. The verdict settles fresh
-  // with each summary and only ever moves toward outdated afterwards — a read
-  // that cannot speak changes nothing.
-  const [outdatedMark, setOutdatedMark] = useState<{
+  // Only the material half is remembered. A refresh that would not read
+  // carries no material to compare, so deriving would unmark prose already
+  // proven stale the moment the alert replaces the counts; the last verdict
+  // computed while readable stands in instead. The range half stays live —
+  // it needs no read — so peeking at another range still outdates at once.
+  const [rememberedVerdict, setRememberedVerdict] = useState<{
     snapshot: GeneratedSummary | null
     outdated: boolean
   }>({ snapshot: null, outdated: false })
   const currentMaterial =
     state.state === 'ready' ? buildWorkSummaryMaterial(state.selection) : null
-  if (outdatedMark.snapshot !== summary) {
-    setOutdatedMark({
-      snapshot: summary,
-      outdated: isDrifted(summary, range, currentMaterial),
-    })
-  } else if (
+  if (
     summary !== null &&
-    !outdatedMark.outdated &&
-    isDrifted(summary, range, currentMaterial)
+    currentMaterial !== null &&
+    (rememberedVerdict.snapshot !== summary ||
+      rememberedVerdict.outdated !== (currentMaterial !== summary.material))
   ) {
-    setOutdatedMark({ snapshot: summary, outdated: true })
+    setRememberedVerdict({
+      snapshot: summary,
+      outdated: currentMaterial !== summary.material,
+    })
   }
-  const outdated = outdatedMark.outdated
+  const outdated =
+    summary !== null &&
+    (summary.from !== range.from ||
+      summary.to !== range.to ||
+      (currentMaterial !== null
+        ? currentMaterial !== summary.material
+        : rememberedVerdict.snapshot === summary &&
+          rememberedVerdict.outdated))
   // Between a range move and its read landing, the control already reads the
   // new range while the selection on screen is still the old one. Spending or
   // copying then would spend the previous period, so both wait for the read:

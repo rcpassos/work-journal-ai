@@ -1590,6 +1590,36 @@ describe('Work Summary snapshot provenance', () => {
     expect(desktop.workSummaryRequests).toHaveLength(1)
   })
 
+  it('reads as current again when the range returns with its inputs untouched', async () => {
+    const user = userEvent.setup()
+    const { journal, clock, desktop, settings } = await workSummaryAt()
+    await journalWithBothHalves(journal, clock)
+
+    renderWorkSummary({ journal, clock, desktop, settings })
+    await screen.findByRole('button', { name: 'Generate' })
+    await user.click(screen.getByRole('button', { name: 'Generate' }))
+    await screen.findByText('The work summary the model wrote.')
+
+    // A peek at another range outdates at once…
+    await user.click(screen.getByRole('button', { name: /^Days / }))
+    await user.click(await screen.findByRole('button', { name: 'Last week' }))
+    await screen.findByText(/Outdated/)
+
+    // …but coming straight back, nothing edited, matches the snapshot
+    // exactly — so the marking clears rather than condemning valid prose
+    // into a call nobody needs.
+    await user.click(screen.getByRole('button', { name: /^Days / }))
+    await user.click(await screen.findByRole('button', { name: 'This week' }))
+    await screen.findByText('2 Notes')
+    await waitFor(() => {
+      expect(screen.queryByText(/Outdated/)).toBeNull()
+    })
+    expect(
+      screen.getByText('The work summary the model wrote.'),
+    ).toBeTruthy()
+    expect(desktop.workSummaryRequests).toHaveLength(1)
+  })
+
   it('marks the result outdated when Note inputs change, and leaves it current on unchanged refreshes', async () => {
     const user = userEvent.setup()
     const { journal, clock, desktop, settings } = await workSummaryAt()
