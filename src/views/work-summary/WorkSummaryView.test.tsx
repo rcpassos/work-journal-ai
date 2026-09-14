@@ -1645,6 +1645,48 @@ describe('Work Summary snapshot provenance', () => {
     expect(desktop.workSummaryRequests).toHaveLength(1)
   })
 
+  it('keeps the outdated marking when a refresh read fails', async () => {
+    const user = userEvent.setup()
+    const { journal, clock, desktop, settings } = await workSummaryAt()
+    await journalWithBothHalves(journal, clock)
+
+    let failNextDigest = false
+    const gated = {
+      ...journal,
+      digest: async (filter: { from: string; to: string }) => {
+        if (failNextDigest) throw new Error('the journal would not open')
+        return journal.digest(filter)
+      },
+    }
+
+    renderWorkSummary({ journal: gated, clock, desktop, settings })
+    await screen.findByText('2 Notes')
+    await user.click(screen.getByRole('button', { name: 'Generate' }))
+    await screen.findByText('The work summary the model wrote.')
+
+    // Inputs change first, proving the snapshot stale…
+    await journal.capture('a late arrival')
+    desktop.announceJournalChanged()
+    await screen.findByText('3 Notes')
+    expect(screen.getByText(/Outdated/)).toBeTruthy()
+
+    // …then the next refresh would not read at all: the alert says so, the
+    // prose stays, and the verdict stands — a read that cannot speak must not
+    // silently unmark what was already proven stale.
+    failNextDigest = true
+    desktop.announceJournalChanged()
+    expect(
+      await screen.findByText('The selected period could not be read.'),
+    ).toBeTruthy()
+    expect(
+      screen.getByText('The work summary the model wrote.'),
+    ).toBeTruthy()
+    expect(
+      screen.getByText(/no longer what's selected/),
+    ).toBeTruthy()
+    expect(desktop.workSummaryRequests).toHaveLength(1)
+  })
+
   it('marks the result outdated when a Task is completed', async () => {
     const user = userEvent.setup()
     const { journal, clock, desktop, settings } = await workSummaryAt()

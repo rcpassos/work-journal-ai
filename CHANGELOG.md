@@ -8,7 +8,7 @@ What changed in each released version, newest first. Every `vX.Y.Z` section here
 - Work Summary Material copies the selected period's records without a model configured, separately from the generated prose.
 - Settings holds a Work Summary Prompt with a new default; old Standup Prompt values are not carried over.
 - Work Summary has its own date-range calendar and presets, independent of History, opening on This week.
-- Each Work Summary shows the range it was written from and when it was written, and is marked outdated when the selected notes and tasks change.
+- Each Work Summary shows the range it was written from and when it was written, and is marked outdated when it no longer matches the current selection.
 - Regeneration is explicit, and a failed one keeps the previous result.
 - The Work Summary copy button reads Copy Work Summary Material, naming what it copies apart from the generated summary.
 

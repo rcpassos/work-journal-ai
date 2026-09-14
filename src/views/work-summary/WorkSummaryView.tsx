@@ -50,6 +50,43 @@ import { workSummarySystemPrompt } from '@/settings/settings'
  * The model call is made from Rust so the API Key never enters this window —
  * see docs/adr/0026-the-api-key-lives-in-the-keychain-and-rust-makes-the-call.md.
  */
+
+/**
+ * A generated Work Summary with the snapshot it was written from — the
+ * selected range and the complete source material of that one request, plus
+ * when it arrived. The range and the material are what mark it outdated once
+ * the selection on screen no longer matches them; the response is never
+ * relabelled to a newer range, including when the range or the inputs moved
+ * while the call was in flight. Nothing here is persisted.
+ */
+interface GeneratedSummary {
+  markdown: string
+  model: string
+  from: string
+  to: string
+  material: string
+  generatedAt: Date
+}
+
+/**
+ * Whether a snapshot no longer matches the world the arguments describe: a
+ * moved control range, or source inputs rendering different material. A null
+ * material is a read that cannot speak — it drifts nothing on its own, so a
+ * range that would not read can still outdate through its range while never
+ * unmarking through its silence.
+ */
+function isDrifted(
+  snapshot: GeneratedSummary | null,
+  control: DayRange,
+  material: string | null,
+): boolean {
+  return (
+    snapshot !== null &&
+    (snapshot.from !== control.from ||
+      snapshot.to !== control.to ||
+      (material !== null && material !== snapshot.material))
+  )
+}
 export default function WorkSummaryView({
   desktop,
   settings,
@@ -88,21 +125,8 @@ export default function WorkSummaryView({
       onChange: setState,
     }),
   )
-  // The summary on screen: what the model wrote, which model wrote it, and
-  // the snapshot it was written from — the selected range and the complete
-  // source material of that one request, plus when it arrived. The range and
-  // the material are what mark it outdated once the selection on screen no
-  // longer matches them; the response is never relabelled to a newer range,
-  // including when the range or the inputs moved while the call was in
-  // flight. Nothing here is persisted.
-  const [summary, setSummary] = useState<{
-    markdown: string
-    model: string
-    from: string
-    to: string
-    material: string
-    generatedAt: Date
-  } | null>(null)
+  // The summary on screen, with its snapshot beside it.
+  const [summary, setSummary] = useState<GeneratedSummary | null>(null)
   // The last copy's claim, said twice — a toast for whoever is looking, and
   // a live region for whoever is not — and naming its subject in the button's
   // own words. One claim, not one per copy: each landed copy replaces the
@@ -132,19 +156,35 @@ export default function WorkSummaryView({
   const copySaid =
     copyLive !== null ? said(copyLive.subject, copyLive.count) : ''
   // Whether the summary on screen still describes the selection on screen.
-  // A moved range alone outdates it — including while the move's read is
-  // still catching up — and so does any change to the actual source inputs,
-  // compared as the rendered material rather than by object identity: an
-  // ordinary refresh that re-reads unchanged inputs renders the same material
-  // and leaves the snapshot current. With no read to compare against, only
-  // the range can speak.
+  // A moved range alone outdates it, and so does any change to the actual
+  // source inputs, compared as the rendered material rather than by object
+  // identity: an ordinary refresh that re-reads unchanged inputs renders the
+  // same material and leaves the snapshot current.
+  //
+  // Latched per summary, not derived: a refresh that would not read carries
+  // no material to compare, so deriving would unmark prose already proven
+  // stale the moment the alert replaces the counts. The verdict settles fresh
+  // with each summary and only ever moves toward outdated afterwards — a read
+  // that cannot speak changes nothing.
+  const [outdatedMark, setOutdatedMark] = useState<{
+    snapshot: GeneratedSummary | null
+    outdated: boolean
+  }>({ snapshot: null, outdated: false })
   const currentMaterial =
     state.state === 'ready' ? buildWorkSummaryMaterial(state.selection) : null
-  const outdated =
+  if (outdatedMark.snapshot !== summary) {
+    setOutdatedMark({
+      snapshot: summary,
+      outdated: isDrifted(summary, range, currentMaterial),
+    })
+  } else if (
     summary !== null &&
-    (summary.from !== range.from ||
-      summary.to !== range.to ||
-      (currentMaterial !== null && currentMaterial !== summary.material))
+    !outdatedMark.outdated &&
+    isDrifted(summary, range, currentMaterial)
+  ) {
+    setOutdatedMark({ snapshot: summary, outdated: true })
+  }
+  const outdated = outdatedMark.outdated
   // Between a range move and its read landing, the control already reads the
   // new range while the selection on screen is still the old one. Spending or
   // copying then would spend the previous period, so both wait for the read:
@@ -254,14 +294,15 @@ export default function WorkSummaryView({
         // current now: a move or an edit during the call leaves this answer
         // outdated rather than silently relabelled. A failed regeneration
         // never reaches here, so the previous result stands.
-        setSummary({
+        const completed: GeneratedSummary = {
           markdown: response.markdown,
           model: stored.model,
           from: requested.from,
           to: requested.to,
           material: requestedMaterial,
           generatedAt: clock.now(),
-        })
+        }
+        setSummary(completed)
         // A new summary retires the copy claim with the prose it was about —
         // and only that one: a material claim outlives the prose.
         setCopyClaim((claim) =>
@@ -513,8 +554,9 @@ export default function WorkSummaryView({
               </p>
               {outdated && (
                 <p className="type-meta text-muted-foreground">
-                  Outdated — the selected notes and tasks changed since this
-                  was written. Generate again for the current selection.
+                  Outdated — the notes and tasks this was written from are no
+                  longer what&apos;s selected. Generate again for the current
+                  selection.
                 </p>
               )}
               <div className="rounded-md border border-border bg-card px-4 py-3 whitespace-pre-wrap type-body">
