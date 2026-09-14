@@ -89,6 +89,19 @@ export async function selectWorkSummary({
 }
 
 /**
+ * When a Work Summary was written, in the reader's own locale — the
+ * generation time each snapshot carries beside its original range. A value,
+ * not a rule: tests compute the same string from the same fixed clock rather
+ * than matching prose across locales.
+ */
+export function formatWorkSummaryGeneratedAt(at: Date): string {
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  }).format(at)
+}
+
+/**
  * Whether a Generate would refuse without spending a call. The two halves are
  * the selected period — Notes, Tasks completed in it, and Task Occurrences
  * kept in it — and the current Open Tasks that stand on their own; only a
