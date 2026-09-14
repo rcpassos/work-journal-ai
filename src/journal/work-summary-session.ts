@@ -1,9 +1,12 @@
 /**
  * Sequencing for the Work Summary section: one read on open, refreshes when
  * Notes or Tasks change, and a rollover when the calendar day moves. The
- * range is settled by the view when the Main Window opens and stays put for
- * every read; the view renders what this session delivers, and does not own
- * the coordination.
+ * range starts as the view's This-week preset and moves whenever the view's
+ * own date-range control says so; every read selects within whichever range
+ * is current when it is asked, and only the newest read may reach the view —
+ * so a slower read for an older range can never land over a newer selection.
+ * The view renders what this session delivers, and does not own the
+ * coordination.
  */
 
 import type { Desktop, Unlisten } from '@/platform/desktop'
@@ -28,6 +31,12 @@ export interface WorkSummarySession {
   start(): Promise<void>
   /** Gives up all listeners and the calendar rollover. */
   stop(): void
+  /**
+   * Moves the selected range and re-reads within it. The view owns the
+   * control; this only sequences the read, newest-read-wins as everywhere
+   * else. Never generates: reading is not asking the model.
+   */
+  setRange(next: DayRange): void
 }
 
 export function createWorkSummarySession({
@@ -40,7 +49,7 @@ export function createWorkSummarySession({
   journal: Promise<Journal>
   desktop: Desktop
   clock: Clock
-  /** The settled range every read selects within — owned by the view. */
+  /** The range the opening read selects within — owned by the view. */
   range: DayRange
   onChange: (state: WorkSummaryState) => void
 }): WorkSummarySession {
@@ -49,6 +58,9 @@ export function createWorkSummarySession({
   let unlisten: Unlisten[] = []
   let latestRead = 0
   let generation = 0
+  // Whichever range the view last chose. Refreshes re-read the data within
+  // it; they never move it.
+  let current = range
 
   function isCurrent(startGeneration: number): boolean {
     return running && generation === startGeneration
@@ -56,12 +68,15 @@ export function createWorkSummarySession({
 
   async function read(): Promise<void> {
     const readTicket = ++latestRead
+    // The range this read selects within, fixed while it is in flight: a
+    // newer move starts a newer read rather than rewriting this one.
+    const selecting = current
 
     try {
       const resolvedJournal = await journal
       const selection = await selectWorkSummary({
         journal: resolvedJournal,
-        range,
+        range: selecting,
       })
       if (!running || latestRead !== readTicket) return
       onChange({ state: 'ready', selection })
@@ -112,6 +127,11 @@ export function createWorkSummarySession({
       rollover = null
       for (const stop of unlisten) stop()
       unlisten = []
+    },
+
+    setRange(next: DayRange) {
+      current = next
+      if (running) void read()
     },
   }
 }

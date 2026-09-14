@@ -2088,6 +2088,16 @@ export function journalDayFor(instant: Date): string {
 }
 
 /**
+ * A Journal Day as a calendar's own kind of value. A `YYYY-MM-DD` label is a
+ * civil day rather than an instant, and `journalDayFor` reads a local one back
+ * out, so it is built as the local midnight of the day it names.
+ */
+export function dayAsDate(journalDay: string): Date {
+  const [year, month, day] = journalDay.split('-').map(Number)
+  return new Date(year, month - 1, day)
+}
+
+/**
  * Which of today's events are to become Notes on this sweep. Everything Import
  * decides is here, so a sweep is this list and nothing else:
  *

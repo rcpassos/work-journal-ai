@@ -14,6 +14,7 @@ import {
 } from 'lucide-react'
 import { Combobox as ComboboxPrimitive } from '@base-ui/react/combobox'
 import ProjectChip from '@/components/ProjectChip'
+import DayRangeField from '@/components/DayRangeField'
 import SearchField from '@/components/SearchField'
 import WindowTitleBar from '@/components/WindowTitleBar'
 import { useOffScreen } from '@/components/on-screen-context'
@@ -74,6 +75,7 @@ import {
 import { REVIEW_PROJECT_RULE } from '@/journal/review'
 import {
   constraintOf,
+  dayAsDate,
   decideKeystroke,
   formatJournalDay,
   formatProject,
@@ -94,7 +96,6 @@ import {
 } from '@/journal/journal'
 import type { Desktop } from '@/platform/desktop'
 import { keysOfHotkey, type HotkeyStatuses } from '@/settings/hotkey'
-import { formatDayRange } from './range-label'
 
 /**
  * Reading back what you did. Every rule of reading back — where the Filter
@@ -334,7 +335,7 @@ export default function HistoryView({
         {filter !== null && (
           <header className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-2 px-6 py-4 type-meta text-muted-foreground">
             <DayRangeField
-              filter={filter}
+              range={filter}
               onPick={pick}
               onChoosePreset={applyPreset}
             />
@@ -850,124 +851,6 @@ function RenameProjectDialog({
       </AlertDialogFooter>
     </AlertDialogContent>
   )
-}
-
-/**
- * Named ranges that set the day axis once and are then forgotten. Nothing
- * holds the one that was chosen: what the reader reads afterwards is the range
- * itself, which is the only thing that is still true a day later.
- */
-const PRESET_OPTIONS: ReadonlyArray<{ value: FilterPreset; label: string }> = [
-  { value: 'today', label: 'Today' },
-  { value: 'yesterday', label: 'Yesterday' },
-  { value: 'this-week', label: 'This week' },
-  { value: 'last-week', label: 'Last week' },
-  { value: 'this-month', label: 'This month' },
-  { value: 'last-month', label: 'Last month' },
-]
-
-/**
- * The Filter's day axis, whole: a button that reads the range in words, and
- * one popup holding both ways to change it — a named range, or two ends on a
- * calendar. One concept, one control.
- *
- * A day is picked in one click and is a whole day when it lands, which is why
- * nothing here holds a half-typed value: the partial-value dance the old date
- * inputs needed is gone with them rather than ported across.
- */
-function DayRangeField({
-  filter,
-  onPick,
-  onChoosePreset,
-}: {
-  filter: Filter
-  onPick: (from: string, to: string) => void
-  onChoosePreset: (preset: FilterPreset) => void
-}) {
-  const [open, setOpen] = useState(false)
-  // The first end of a range being picked, while the second is still to come.
-  // Null whenever the calendar is showing the Filter rather than a new range.
-  const [started, setStarted] = useState<Date | null>(null)
-
-  function show(next: boolean) {
-    setOpen(next)
-    if (!next) setStarted(null)
-  }
-
-  // The popup is portalled out of the header, so it has to be closed rather
-  // than hidden when this view leaves the screen. The Filter it would have
-  // moved is untouched; only a half-picked range goes with it.
-  useOffScreen(() => show(false))
-
-  function pickDay(day: Date) {
-    if (started === null) {
-      setStarted(day)
-      return
-    }
-
-    // Whichever end was clicked first: the core orders the range.
-    onPick(journalDayFor(started), journalDayFor(day))
-    show(false)
-  }
-
-  return (
-    <Popover open={open} onOpenChange={show}>
-      <PopoverTrigger
-        render={<Button variant="outline" size="sm" />}
-      >
-        <CalendarRangeIcon data-icon="inline-start" />
-        {/*
-          Named and read at once: a label that replaced the button's text
-          would announce "Days" and keep the range — the whole point of the
-          control — to itself.
-        */}
-        <span className="sr-only">Days</span>{' '}
-        {formatDayRange(filter.from, filter.to)}
-      </PopoverTrigger>
-      <PopoverContent align="start" className="w-auto gap-2 p-2">
-        <div className="grid grid-cols-3 gap-1">
-          {PRESET_OPTIONS.map((option) => (
-            <Button
-              key={option.value}
-              variant="ghost"
-              size="sm"
-              className="justify-start"
-              onClick={() => {
-                onChoosePreset(option.value)
-                show(false)
-              }}
-            >
-              {option.label}
-            </Button>
-          ))}
-        </div>
-        <Calendar
-          mode="range"
-          autoFocus
-          // Monday, as every Preset's week is — see ADR-0006.
-          weekStartsOn={1}
-          defaultMonth={dayAsDate(filter.to)}
-          selected={
-            started === null
-              ? { from: dayAsDate(filter.from), to: dayAsDate(filter.to) }
-              : { from: started, to: undefined }
-          }
-          onSelect={(_range, day) => pickDay(day)}
-          className="p-0"
-        />
-      </PopoverContent>
-    </Popover>
-  )
-}
-
-/**
- * A Journal Day as the calendar's own kind of value. A `YYYY-MM-DD` label is a
- * civil day rather than an instant, and `journalDayFor` reads a local one back
- * out, so it is built as the local midnight of the day it names.
- */
-function dayAsDate(journalDay: string): Date {
-  const [year, month, day] = journalDay.split('-').map(Number)
-  return new Date(year, month - 1, day)
 }
 
 /**

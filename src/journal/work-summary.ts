@@ -56,12 +56,13 @@ export interface WorkSummarySelection {
 }
 
 /**
- * Selects the complete input for a Work Summary: the settled range's Notes
- * and completions, plus every currently Open Task. The range arrives settled
- * — the This-week preset, Monday through today, fixed by the view when the
- * Main Window opens — so a window left open over midnight keeps describing
- * the week it opened in. Selection never touches History's Filter and needs
- * no Occupied Day: a week of Tasks alone selects fine.
+ * Selects the complete input for a Work Summary: the chosen range's Notes
+ * and completions, plus every currently Open Task. The range arrives chosen
+ * — initially the This-week preset, Monday through today, and afterwards
+ * whatever the view's own date-range control holds — so a window left open
+ * over midnight keeps describing the range it opened in until the user moves
+ * it. Selection never touches History's Filter and needs no Occupied Day: a
+ * range of Tasks alone selects fine.
  */
 export async function selectWorkSummary({
   journal,
@@ -91,9 +92,9 @@ export async function selectWorkSummary({
  * Whether a Generate would refuse without spending a call. The two halves are
  * the selected period — Notes, Tasks completed in it, and Task Occurrences
  * kept in it — and the current Open Tasks that stand on their own; only a
- * week with neither half is nothing to say. A kept recurring commitment is
- * real work, so a week whose only accomplishment is a completed occurrence is
- * not refused.
+ * period with neither half is nothing to say. A kept recurring commitment is
+ * real work, so a period whose only accomplishment is a completed occurrence
+ * is not refused.
  */
 export function workSummaryRefuses(selection: WorkSummarySelection): boolean {
   return (
@@ -119,9 +120,9 @@ export function workSummaryRefuses(selection: WorkSummarySelection): boolean {
  * Task read with newer Notes. No second serialisation: a second format would
  * eventually describe a journal the user does not have.
  *
- * A section with nothing in it is left out entirely, so a week of
+ * A section with nothing in it is left out entirely, so a period of
  * commitments alone carries no empty accomplishments heading, and vice versa.
- * A week with neither half reads as the clear empty result the section
+ * A period with neither half reads as the clear empty result the section
  * refuses to send or copy.
  */
 export function buildWorkSummaryMaterial(

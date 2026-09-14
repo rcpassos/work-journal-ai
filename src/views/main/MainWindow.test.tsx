@@ -299,6 +299,79 @@ describe('switching sections', () => {
     expect(days().textContent).toBe(narrowed)
   })
 
+  it('keeps Work Summary’s range and History’s Filter apart in both directions', async () => {
+    const user = userEvent.setup()
+    await showMainWindow({
+      captured: [MONDAY, { at: '2026-03-11T10:00:00', body: 'Wednesday' }],
+    })
+
+    // History opens on the most recent Occupied Day; the section is left
+    // there while Work Summary moves to a range of its own.
+    const historyOpening = days().textContent
+    expect(historyOpening).toContain(formatDayRange('2026-03-11', '2026-03-11'))
+
+    await user.click(
+      within(sidebar()).getByRole('button', { name: 'Work Summary' }),
+    )
+    await showsWorkSummary()
+    await user.click(screen.getByRole('button', { name: /^Days / }))
+    await user.click(await screen.findByRole('button', { name: 'Last week' }))
+    await waitForWorkSummaryDays(formatDayRange('2026-03-02', '2026-03-08'))
+
+    // History's Filter sat out the whole move.
+    await user.click(within(sidebar()).getByRole('button', { name: 'History' }))
+    await showsHistory()
+    expect(days().textContent).toBe(historyOpening)
+
+    // And narrowing History leaves the chosen Work Summary range alone: the
+    // trip back finds last week still on screen — on either axis.
+    await user.click(days())
+    await user.click(await dayCell('2026-03-09'))
+    await user.click(await dayCell('2026-03-11'))
+    const narrowed = days().textContent
+    expect(narrowed).toContain(formatDayRange('2026-03-09', '2026-03-11'))
+    await user.click(
+      within(screen.getByRole('banner')).getByRole('combobox', {
+        name: /^Project/,
+      }),
+    )
+    await user.click(await screen.findByRole('option', { name: 'Unfiled' }))
+
+    await user.click(
+      within(sidebar()).getByRole('button', { name: 'Work Summary' }),
+    )
+    await showsWorkSummary()
+    await waitForWorkSummaryDays(formatDayRange('2026-03-02', '2026-03-08'))
+
+    await user.click(within(sidebar()).getByRole('button', { name: 'History' }))
+    await showsHistory()
+    expect(days().textContent).toBe(narrowed)
+  })
+
+  it('opens Work Summary on a fresh This week in a recreated window', async () => {
+    const user = userEvent.setup()
+    const captured = [MONDAY, { at: '2026-03-11T10:00:00', body: 'Wednesday' }]
+    await showMainWindow({ captured })
+
+    await user.click(
+      within(sidebar()).getByRole('button', { name: 'Work Summary' }),
+    )
+    await showsWorkSummary()
+    await user.click(screen.getByRole('button', { name: /^Days / }))
+    await user.click(await screen.findByRole('button', { name: 'Last week' }))
+    await waitForWorkSummaryDays(formatDayRange('2026-03-02', '2026-03-08'))
+    cleanup()
+
+    // A recreated window builds every section over: the chosen range went
+    // with the closed one, and This week is back.
+    await showMainWindow({ captured })
+    await user.click(
+      within(sidebar()).getByRole('button', { name: 'Work Summary' }),
+    )
+    await showsWorkSummary()
+    await waitForWorkSummaryDays(formatDayRange('2026-03-09', '2026-03-11'))
+  })
+
   it('keeps a generated Work Summary through a trip to History and back', async () => {
     const user = userEvent.setup()
     await showMainWindow({
@@ -2229,6 +2302,16 @@ function days(): HTMLElement {
   return within(screen.getByRole('banner')).getByRole('button', {
     name: /^Days/,
   })
+}
+
+/** Work Summary's days control — on screen only while it is the section. */
+function workSummaryDays(): HTMLElement | null {
+  return screen.queryByRole('button', { name: /^Days / })
+}
+
+/** Until the section's own control reads the expected range. */
+async function waitForWorkSummaryDays(range: string): Promise<void> {
+  await expect.poll(() => workSummaryDays()?.textContent).toContain(range)
 }
 
 /** The Nudge, if History is showing one; undefined when nothing is waiting. */
