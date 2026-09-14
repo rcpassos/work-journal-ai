@@ -209,6 +209,19 @@ The copy control only — what the model writes is Settings' **Work Summary Prom
 - [ ] A generated summary names the range it was written from and when, and stays put while the section is left and returned to.
 - [ ] Changing the range or the week's notes and tasks marks the summary outdated without spending a call; generating again replaces it with the current range and time, while a failed retry keeps the previous prose.
 
+## What a Work Summary says
+
+The prose itself, which no deterministic test can judge: the suite proves what is *sent* and what the
+section *does*, never what the model wrote back. Read a few real summaries against these — a week with
+both halves, a past month whose Tasks are long since closed, and a range with only one half.
+
+- [ ] Accomplishments are synthesized and related work is connected, rather than the records read back one line at a time.
+- [ ] Work completed in the selected period is clearly separated from commitments that are open now — an older range never claims its current Open Tasks were open then.
+- [ ] A recurring Task reads correctly in both halves at once: the occurrences it kept in the range as accomplishments, its current open occurrence as a commitment.
+- [ ] Connections the records do not state are qualified as inference, not asserted as fact.
+- [ ] No priorities, next steps, or plan appear unless the records asked for them; overdue work is not treated as proof of importance or as a blocker.
+- [ ] An empty half is named as empty — a week with no completed work says so rather than inventing any.
+
 ## Settings
 
 - [ ] **Settings** in the Tray Menu opens the Main Window on the Settings section; `Escape` closes the Main Window, and re-opening it builds a fresh one.

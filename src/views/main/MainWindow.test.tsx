@@ -351,25 +351,38 @@ describe('switching sections', () => {
   it('opens Work Summary on a fresh This week in a recreated window', async () => {
     const user = userEvent.setup()
     const captured = [MONDAY, { at: '2026-03-11T10:00:00', body: 'Wednesday' }]
-    await showMainWindow({ captured })
+    const stored = {
+      startAtLogin: false,
+      modelBaseUrl: 'https://api.openai.com/v1',
+      model: 'gpt-test',
+    }
+    await showMainWindow({ captured, stored })
 
     await user.click(
       within(sidebar()).getByRole('button', { name: 'Work Summary' }),
     )
     await showsWorkSummary()
+    // Paid-for prose on screen when the window closes, so the recreated one
+    // can be asked whether it kept any of it.
+    await user.click(await screen.findByRole('button', { name: 'Generate' }))
+    await screen.findByText('The work summary the model wrote.')
     await user.click(screen.getByRole('button', { name: /^Days / }))
     await user.click(await screen.findByRole('button', { name: 'Last week' }))
     await waitForWorkSummaryDays(formatDayRange('2026-03-02', '2026-03-08'))
     cleanup()
 
     // A recreated window builds every section over: the chosen range went
-    // with the closed one, and This week is back.
-    await showMainWindow({ captured })
+    // with the closed one, and This week is back — and so did the prose, its
+    // provenance and its outdated marking. A summary is never a record.
+    await showMainWindow({ captured, stored })
     await user.click(
       within(sidebar()).getByRole('button', { name: 'Work Summary' }),
     )
     await showsWorkSummary()
     await waitForWorkSummaryDays(formatDayRange('2026-03-09', '2026-03-11'))
+    expect(screen.queryByText('The work summary the model wrote.')).toBeNull()
+    expect(screen.queryByText(/Generated /)).toBeNull()
+    expect(screen.queryByText(/Outdated/)).toBeNull()
   })
 
   it('keeps a generated Work Summary through a trip to History and back', async () => {
