@@ -17,6 +17,7 @@ import { createAppSettings } from '@/settings/app-settings'
 import type { WorkSummaryFailure } from '@/platform/desktop'
 import {
   buildWorkSummaryMaterial,
+  formatWorkSummaryGeneratedAt,
   selectWorkSummary,
 } from '@/journal/work-summary'
 import WorkSummaryView from './WorkSummaryView'
@@ -201,7 +202,7 @@ describe('Work Summary section', () => {
     await journal.delete(note!.id)
     expect(screen.getByText('1 Note')).toBeTruthy()
 
-    await user.click(screen.getByRole('button', { name: 'Copy material' }))
+    await user.click(screen.getByRole('button', { name: 'Copy Work Summary Material' }))
     await waitFor(() => {
       expect(desktop.clipboard).toContain('about to go')
     })
@@ -215,7 +216,7 @@ describe('Work Summary section', () => {
     await waitFor(() => {
       expect(screen.getByText('0 Notes')).toBeTruthy()
     })
-    await user.click(screen.getByRole('button', { name: 'Copy material' }))
+    await user.click(screen.getByRole('button', { name: 'Copy Work Summary Material' }))
     await waitFor(() => {
       expect(desktop.clipboard).not.toContain('about to go')
     })
@@ -320,9 +321,9 @@ describe('Work Summary section', () => {
     await journalWithBothHalves(journal, clock)
 
     renderWorkSummary({ journal, clock, desktop, settings })
-    await screen.findByRole('button', { name: 'Copy material' })
+    await screen.findByRole('button', { name: 'Copy Work Summary Material' })
 
-    await user.click(screen.getByRole('button', { name: 'Copy material' }))
+    await user.click(screen.getByRole('button', { name: 'Copy Work Summary Material' }))
 
     const expected = buildWorkSummaryMaterial(await selectWorkSummary({ journal, range: { from: '2026-03-09', to: '2026-03-12' } }))
     await waitFor(() => {
@@ -362,7 +363,7 @@ describe('Work Summary section', () => {
     // primary never changes identity: the summary stays one click past the
     // chevron.
     const copyMaterial = screen.getByRole('button', {
-      name: 'Copy material',
+      name: 'Copy Work Summary Material',
     }) as HTMLButtonElement
     expect(copyMaterial.disabled).toBe(false)
 
@@ -393,7 +394,7 @@ describe('Work Summary section', () => {
     await waitFor(() => {
       expect(desktop.clipboard).toBe('The work summary the model wrote.')
     })
-    await user.click(screen.getByRole('button', { name: 'Copy material' }))
+    await user.click(screen.getByRole('button', { name: 'Copy Work Summary Material' }))
     await waitFor(() => {
       expect(screen.getByRole('status').textContent).toBe(
         "Copied the selected notes and tasks to the clipboard.",
@@ -416,7 +417,7 @@ describe('Work Summary section', () => {
 
     renderWorkSummary({ journal, clock, desktop, settings })
     const copyMaterial = await screen.findByRole('button', {
-      name: 'Copy material',
+      name: 'Copy Work Summary Material',
     })
     await user.click(copyMaterial)
     await waitFor(() => {
@@ -443,7 +444,7 @@ describe('Work Summary section', () => {
 
     renderWorkSummary({ journal, clock, desktop, settings })
     const copyMaterial = await screen.findByRole('button', {
-      name: 'Copy material',
+      name: 'Copy Work Summary Material',
     })
     await user.click(copyMaterial)
     await waitFor(() => {
@@ -454,7 +455,7 @@ describe('Work Summary section', () => {
     }
 
     await user.click(
-      screen.getByRole('button', { name: 'Copy material' }),
+      screen.getByRole('button', { name: 'Copy Work Summary Material' }),
     )
 
     // The toast says the copy failed; the live region may not go on saying
@@ -518,7 +519,7 @@ describe('Work Summary section', () => {
     await screen.findByRole('alert')
 
     // No summary ever arrived; the material is still one click away.
-    await user.click(screen.getByRole('button', { name: 'Copy material' }))
+    await user.click(screen.getByRole('button', { name: 'Copy Work Summary Material' }))
     const expected = buildWorkSummaryMaterial(await selectWorkSummary({ journal, range: { from: '2026-03-09', to: '2026-03-12' } }))
     await waitFor(() => {
       expect(desktop.clipboard).toBe(expected)
@@ -532,7 +533,7 @@ describe('Work Summary section', () => {
 
     expect(await screen.findByText('Nothing to say yet.')).toBeTruthy()
     expect(
-      (screen.getByRole('button', { name: 'Copy material' }) as HTMLButtonElement)
+      (screen.getByRole('button', { name: 'Copy Work Summary Material' }) as HTMLButtonElement)
         .disabled,
     ).toBe(true)
   })
@@ -543,12 +544,12 @@ describe('Work Summary section', () => {
     await journalWithBothHalves(journal, clock)
 
     renderWorkSummary({ journal, clock, desktop, settings })
-    await screen.findByRole('button', { name: 'Copy material' })
+    await screen.findByRole('button', { name: 'Copy Work Summary Material' })
 
     // One visible copy button rather than two: the summary is behind the
     // chevron until one exists.
     expect(
-      screen.getAllByRole('button', { name: /copy (material|summary)/i }),
+      screen.getAllByRole('button', { name: /copy (work summary material|summary)/i }),
     ).toHaveLength(1)
 
     await user.click(
@@ -576,10 +577,10 @@ describe('Work Summary section', () => {
     // Still one visible copy button, and it never changes identity: the
     // summary joins the menu rather than relabelling the primary.
     expect(
-      screen.getAllByRole('button', { name: /copy (material|summary)/i }),
+      screen.getAllByRole('button', { name: /copy (work summary material|summary)/i }),
     ).toHaveLength(1)
     expect(
-      screen.getByRole('button', { name: 'Copy material' }),
+      screen.getByRole('button', { name: 'Copy Work Summary Material' }),
     ).toBeTruthy()
 
     await user.click(
@@ -605,9 +606,9 @@ describe('Work Summary section', () => {
     }
 
     renderWorkSummary({ journal, clock, desktop, settings })
-    await screen.findByRole('button', { name: 'Copy material' })
+    await screen.findByRole('button', { name: 'Copy Work Summary Material' })
 
-    await user.click(screen.getByRole('button', { name: 'Copy material' }))
+    await user.click(screen.getByRole('button', { name: 'Copy Work Summary Material' }))
 
     await waitFor(() => {
       if (
@@ -657,7 +658,7 @@ describe('Work Summary section', () => {
 
     renderWorkSummary({ journal, clock, desktop, settings })
     const copyMaterial = await screen.findByRole('button', {
-      name: 'Copy material',
+      name: 'Copy Work Summary Material',
     })
     await user.click(copyMaterial)
     await waitFor(() => {
@@ -671,7 +672,7 @@ describe('Work Summary section', () => {
     // A region announces on change: identical text is silence, exactly when
     // the reader most needs telling. A repeat still live says it is a
     // repeat — no re-read gets in between these two clicks.
-    await user.click(screen.getByRole('button', { name: 'Copy material' }))
+    await user.click(screen.getByRole('button', { name: 'Copy Work Summary Material' }))
     await waitFor(() => {
       expect(said().textContent).toBe(
         "Copied the selected notes and tasks to the clipboard. (2)",
@@ -692,7 +693,7 @@ describe('Work Summary section', () => {
 
     renderWorkSummary({ journal, clock, desktop, settings })
     const copyMaterial = await screen.findByRole('button', {
-      name: 'Copy material',
+      name: 'Copy Work Summary Material',
     })
 
     // Both clicks dispatched before either copy's write has resolved, so
@@ -1187,7 +1188,7 @@ describe('Work Summary section', () => {
         range: { from: '2026-03-02', to: '2026-03-08' },
       }),
     )
-    await user.click(screen.getByRole('button', { name: 'Copy material' }))
+    await user.click(screen.getByRole('button', { name: 'Copy Work Summary Material' }))
     await waitFor(() => {
       expect(desktop.clipboard).toBe(expected)
     })
@@ -1341,7 +1342,7 @@ describe('Work Summary section', () => {
         .disabled,
     ).toBe(true)
     expect(
-      (screen.getByRole('button', { name: 'Copy material' }) as HTMLButtonElement)
+      (screen.getByRole('button', { name: 'Copy Work Summary Material' }) as HTMLButtonElement)
         .disabled,
     ).toBe(true)
     expect(desktop.workSummaryRequests).toEqual([])
@@ -1413,7 +1414,7 @@ describe('Work Summary section', () => {
         .disabled,
     ).toBe(true)
     expect(
-      (screen.getByRole('button', { name: 'Copy material' }) as HTMLButtonElement)
+      (screen.getByRole('button', { name: 'Copy Work Summary Material' }) as HTMLButtonElement)
         .disabled,
     ).toBe(true)
     // And the greyed buttons say why: a read for the new range is in flight.
@@ -1525,6 +1526,387 @@ describe('Work Summary section', () => {
     expect(
       screen.getByText('The work summary the model wrote.'),
     ).toBeTruthy()
+    expect(desktop.workSummaryRequests).toHaveLength(1)
+  })
+})
+
+/**
+ * Snapshot provenance for #240: every generation keeps the range and the
+ * material it was asked from, shows that range and its generation time, and
+ * is marked outdated when the current selection no longer matches — without
+ * ever spending a call the user did not ask for.
+ */
+describe('Work Summary snapshot provenance', () => {
+  const WEEK = { from: '2026-03-09', to: '2026-03-12' }
+
+  it('labels each result with its original range and generation time', async () => {
+    const user = userEvent.setup()
+    const { journal, clock, desktop, settings } = await workSummaryAt()
+    await journalWithBothHalves(journal, clock)
+
+    renderWorkSummary({ journal, clock, desktop, settings })
+    await screen.findByRole('button', { name: 'Generate' })
+    await user.click(screen.getByRole('button', { name: 'Generate' }))
+    await screen.findByText('The work summary the model wrote.')
+
+    // The snapshot's own range, not whatever the control reads now — and the
+    // moment it was written, from the same clock the section runs on. Scoped
+    // through the Generated line so the Days button holding the same range
+    // cannot match instead.
+    const provenance = await screen.findByText(/Generated /)
+    expect(provenance.textContent).toContain(
+      formatDayRange(WEEK.from, WEEK.to),
+    )
+    expect(provenance.textContent).toContain(
+      formatWorkSummaryGeneratedAt(clock.now()),
+    )
+    expect(desktop.workSummaryRequests).toHaveLength(1)
+  })
+
+  it('marks the result outdated when the range moves, keeping its provenance and spending no call', async () => {
+    const user = userEvent.setup()
+    const { journal, clock, desktop, settings } = await workSummaryAt()
+    await journalWithBothHalves(journal, clock)
+
+    renderWorkSummary({ journal, clock, desktop, settings })
+    await screen.findByRole('button', { name: 'Generate' })
+    await user.click(screen.getByRole('button', { name: 'Generate' }))
+    await screen.findByText('The work summary the model wrote.')
+    expect(screen.queryByText(/Outdated/)).toBeNull()
+
+    await user.click(screen.getByRole('button', { name: /^Days / }))
+    await user.click(await screen.findByRole('button', { name: 'Last week' }))
+    await screen.findByText('0 Notes')
+
+    // The prose stays, still labelled with the week it was written from —
+    // and it now says it no longer matches the selection on screen.
+    expect(
+      screen.getByText('The work summary the model wrote.'),
+    ).toBeTruthy()
+    expect(screen.getByText(/Outdated/)).toBeTruthy()
+    expect(screen.getByText(/Generated /).textContent).toContain(
+      formatDayRange(WEEK.from, WEEK.to),
+    )
+    expect(desktop.workSummaryRequests).toHaveLength(1)
+  })
+
+  it('reads as current again when the range returns with its inputs untouched', async () => {
+    const user = userEvent.setup()
+    const { journal, clock, desktop, settings } = await workSummaryAt()
+    await journalWithBothHalves(journal, clock)
+
+    renderWorkSummary({ journal, clock, desktop, settings })
+    await screen.findByRole('button', { name: 'Generate' })
+    await user.click(screen.getByRole('button', { name: 'Generate' }))
+    await screen.findByText('The work summary the model wrote.')
+
+    // A peek at another range outdates at once…
+    await user.click(screen.getByRole('button', { name: /^Days / }))
+    await user.click(await screen.findByRole('button', { name: 'Last week' }))
+    await screen.findByText(/Outdated/)
+
+    // …but coming straight back, nothing edited, matches the snapshot
+    // exactly — so the marking clears rather than condemning valid prose
+    // into a call nobody needs.
+    await user.click(screen.getByRole('button', { name: /^Days / }))
+    await user.click(await screen.findByRole('button', { name: 'This week' }))
+    await screen.findByText('2 Notes')
+    await waitFor(() => {
+      expect(screen.queryByText(/Outdated/)).toBeNull()
+    })
+    expect(
+      screen.getByText('The work summary the model wrote.'),
+    ).toBeTruthy()
+    expect(desktop.workSummaryRequests).toHaveLength(1)
+  })
+
+  it('marks the result outdated when Note inputs change, and leaves it current on unchanged refreshes', async () => {
+    const user = userEvent.setup()
+    const { journal, clock, desktop, settings } = await workSummaryAt()
+    await journalWithBothHalves(journal, clock)
+
+    renderWorkSummary({ journal, clock, desktop, settings })
+    await screen.findByRole('button', { name: 'Generate' })
+    await user.click(screen.getByRole('button', { name: 'Generate' }))
+    await screen.findByText('The work summary the model wrote.')
+
+    // An ordinary refresh with unchanged inputs is not a change: focus
+    // re-reads, and the snapshot stays current.
+    desktop.focus()
+    await waitFor(() => {
+      expect(desktop.workSummaryRequests).toHaveLength(1)
+    })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(screen.queryByText(/Outdated/)).toBeNull()
+
+    // A new Note in the selected week is: once announced, the same prose is
+    // outdated rather than silently current.
+    await journal.capture('a late arrival')
+    desktop.announceJournalChanged()
+    await screen.findByText('3 Notes')
+    expect(screen.getByText(/Outdated/)).toBeTruthy()
+    expect(
+      screen.getByText('The work summary the model wrote.'),
+    ).toBeTruthy()
+    expect(desktop.workSummaryRequests).toHaveLength(1)
+  })
+
+  it('marks the result outdated when a Note is reworded or refiled away', async () => {
+    const user = userEvent.setup()
+    const { journal, clock, desktop, settings } = await workSummaryAt()
+    clock.set(new Date('2026-03-10T09:00:00'))
+    const note = await journal.capture('the original wording')
+    await journal.createTask('still open')
+    clock.set(new Date('2026-03-12T09:00:00'))
+
+    renderWorkSummary({ journal, clock, desktop, settings })
+    await screen.findByRole('button', { name: 'Generate' })
+    await user.click(screen.getByRole('button', { name: 'Generate' }))
+    await screen.findByText('The work summary the model wrote.')
+    expect(screen.queryByText(/Outdated/)).toBeNull()
+
+    // A rewording is a source change: once announced, the same prose is
+    // outdated rather than silently current.
+    await journal.editBody(note!.id, 'the reworded note')
+    desktop.announceJournalChanged()
+    await waitFor(() => {
+      expect(screen.getByText(/Outdated/)).toBeTruthy()
+    })
+    expect(desktop.workSummaryRequests).toHaveLength(1)
+  })
+
+  it('keeps the outdated marking when a refresh read fails', async () => {
+    const user = userEvent.setup()
+    const { journal, clock, desktop, settings } = await workSummaryAt()
+    await journalWithBothHalves(journal, clock)
+
+    let failNextDigest = false
+    const gated = {
+      ...journal,
+      digest: async (filter: { from: string; to: string }) => {
+        if (failNextDigest) throw new Error('the journal would not open')
+        return journal.digest(filter)
+      },
+    }
+
+    renderWorkSummary({ journal: gated, clock, desktop, settings })
+    await screen.findByText('2 Notes')
+    await user.click(screen.getByRole('button', { name: 'Generate' }))
+    await screen.findByText('The work summary the model wrote.')
+
+    // Inputs change first, proving the snapshot stale…
+    await journal.capture('a late arrival')
+    desktop.announceJournalChanged()
+    await screen.findByText('3 Notes')
+    expect(screen.getByText(/Outdated/)).toBeTruthy()
+
+    // …then the next refresh would not read at all: the alert says so, the
+    // prose stays, and the verdict stands — a read that cannot speak must not
+    // silently unmark what was already proven stale.
+    failNextDigest = true
+    desktop.announceJournalChanged()
+    expect(
+      await screen.findByText('The selected period could not be read.'),
+    ).toBeTruthy()
+    expect(
+      screen.getByText('The work summary the model wrote.'),
+    ).toBeTruthy()
+    expect(
+      screen.getByText(/no longer what's selected/),
+    ).toBeTruthy()
+    expect(desktop.workSummaryRequests).toHaveLength(1)
+  })
+
+  it('marks the result outdated when a Task is completed', async () => {
+    const user = userEvent.setup()
+    const { journal, clock, desktop, settings } = await workSummaryAt()
+    await journalWithBothHalves(journal, clock)
+    const open = await journal.createTask('about to be kept')
+
+    renderWorkSummary({ journal, clock, desktop, settings })
+    await screen.findByRole('button', { name: 'Generate' })
+    await user.click(screen.getByRole('button', { name: 'Generate' }))
+    await screen.findByText('The work summary the model wrote.')
+    expect(screen.queryByText(/Outdated/)).toBeNull()
+
+    await journal.completeTask(open.id)
+    desktop.announceTasksChanged()
+    await waitFor(() => {
+      expect(screen.getByText(/Outdated/)).toBeTruthy()
+    })
+    expect(desktop.workSummaryRequests).toHaveLength(1)
+  })
+
+  it('keeps the request’s provenance when the range moves during a pending call', async () => {
+    const user = userEvent.setup()
+    const { journal, clock, desktop, settings } = await workSummaryAt()
+    await journalWithBothHalves(journal, clock)
+
+    let release!: () => void
+    const held = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const answer = desktop.generateWorkSummary.bind(desktop)
+    desktop.generateWorkSummary = async (request) => {
+      await held
+      return answer(request)
+    }
+
+    renderWorkSummary({ journal, clock, desktop, settings })
+    await screen.findByRole('button', { name: 'Generate' })
+    await user.click(screen.getByRole('button', { name: 'Generate' }))
+    await screen.findByText('Writing with gpt-test…')
+
+    // The range moves while the call is in flight; its read lands first.
+    await user.click(screen.getByRole('button', { name: /^Days / }))
+    await user.click(await screen.findByRole('button', { name: 'Last week' }))
+    await screen.findByText('0 Notes')
+
+    release()
+    await screen.findByText('The work summary the model wrote.')
+
+    // The answer is labelled with the week it was asked from — never
+    // relabelled to the range that is current now — and marked outdated
+    // against it. One explicit action spent exactly one call.
+    expect(screen.getByText(/Generated /).textContent).toContain(
+      formatDayRange(WEEK.from, WEEK.to),
+    )
+    expect(screen.getByText(/Outdated/)).toBeTruthy()
+    expect(desktop.workSummaryRequests).toHaveLength(1)
+    expect(desktop.workSummaryRequests[0].userContent).toContain(
+      'shipped the migration',
+    )
+  })
+
+  it('keeps the request’s material when inputs change during a pending call', async () => {
+    const user = userEvent.setup()
+    const { journal, clock, desktop, settings } = await workSummaryAt()
+    await journalWithBothHalves(journal, clock)
+
+    let release!: () => void
+    const held = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const answer = desktop.generateWorkSummary.bind(desktop)
+    desktop.generateWorkSummary = async (request) => {
+      await held
+      return answer(request)
+    }
+
+    renderWorkSummary({ journal, clock, desktop, settings })
+    await screen.findByRole('button', { name: 'Generate' })
+    await user.click(screen.getByRole('button', { name: 'Generate' }))
+    await screen.findByText('Writing with gpt-test…')
+
+    // A Note lands in the selected week while the call is in flight; its
+    // refresh lands first.
+    await journal.capture('a late arrival')
+    desktop.announceJournalChanged()
+    await screen.findByText('3 Notes')
+
+    release()
+    await screen.findByText('The work summary the model wrote.')
+
+    // The answer describes the material it was asked from — without the
+    // arrival — and is marked outdated against the week on screen now. One
+    // explicit action spent exactly one call.
+    expect(desktop.workSummaryRequests).toHaveLength(1)
+    expect(desktop.workSummaryRequests[0].userContent).not.toContain(
+      'a late arrival',
+    )
+    expect(screen.getByText(/Generated /).textContent).toContain(
+      formatDayRange(WEEK.from, WEEK.to),
+    )
+    expect(screen.getByText(/Outdated/)).toBeTruthy()
+  })
+
+  it('preserves the previous result through a failed regeneration, then regenerates with new provenance', async () => {
+    const user = userEvent.setup()
+    const { journal, clock, desktop, settings } = await workSummaryAt()
+    await journalWithBothHalves(journal, clock)
+
+    renderWorkSummary({ journal, clock, desktop, settings })
+    await screen.findByRole('button', { name: 'Generate' })
+    await user.click(screen.getByRole('button', { name: 'Generate' }))
+    await screen.findByText('The work summary the model wrote.')
+
+    // Inputs change, then the explicit regeneration fails: the previous prose
+    // and its provenance — range and generation time — survive, still marked
+    // outdated.
+    await journal.capture('a late arrival')
+    desktop.announceJournalChanged()
+    await screen.findByText('3 Notes')
+    const generated = screen.getByText(/Generated /).textContent
+    desktop.workSummaryResponse = {
+      state: 'failed',
+      failure: { kind: 'timeout' },
+    }
+    await user.click(screen.getByRole('button', { name: 'Generate' }))
+    expect(
+      await screen.findByText('The model took longer than 60 seconds to answer. Try again.'),
+    ).toBeTruthy()
+    expect(
+      screen.getByText('The work summary the model wrote.'),
+    ).toBeTruthy()
+    expect(screen.getByText(/Generated /).textContent).toBe(generated)
+    expect(screen.getByText(/Generated /).textContent).toContain(
+      formatDayRange(WEEK.from, WEEK.to),
+    )
+    expect(screen.getByText(/Outdated/)).toBeTruthy()
+    expect(desktop.workSummaryRequests).toHaveLength(2)
+
+    // The retry succeeds: the new result carries its own provenance and is
+    // current again, with nothing spent beyond the two explicit clicks.
+    desktop.workSummaryResponse = {
+      state: 'generated',
+      markdown: 'The second summary, after the failure.',
+    }
+    await user.click(screen.getByRole('button', { name: 'Generate' }))
+    expect(
+      await screen.findByText('The second summary, after the failure.'),
+    ).toBeTruthy()
+    expect(screen.queryByText(/Outdated/)).toBeNull()
+    expect(desktop.workSummaryRequests).toHaveLength(3)
+  })
+
+  it('copies the outdated summary itself while material copies the current inputs', async () => {
+    const user = userEvent.setup()
+    const { journal, clock, desktop, settings } = await workSummaryAt()
+    await journalWithBothHalves(journal, clock)
+    clock.set(new Date('2026-03-05T09:00:00'))
+    await journal.capture('last week’s note')
+    clock.set(new Date('2026-03-12T09:00:00'))
+
+    renderWorkSummary({ journal, clock, desktop, settings })
+    await screen.findByText('2 Notes')
+    await user.click(screen.getByRole('button', { name: 'Generate' }))
+    await screen.findByText('The work summary the model wrote.')
+
+    await user.click(screen.getByRole('button', { name: /^Days / }))
+    await user.click(await screen.findByRole('button', { name: 'Last week' }))
+    await screen.findByText(/Outdated/)
+
+    // The summary copy is the snapshot's prose; the material copy is the
+    // selection on screen now.
+    await user.click(screen.getByRole('button', { name: 'More copy options' }))
+    await user.click(await screen.findByRole('menuitem', { name: 'Copy summary' }))
+    await waitFor(() => {
+      expect(desktop.clipboard).toBe('The work summary the model wrote.')
+    })
+
+    const expected = buildWorkSummaryMaterial(
+      await selectWorkSummary({
+        journal,
+        range: { from: '2026-03-02', to: '2026-03-08' },
+      }),
+    )
+    await user.click(
+      screen.getByRole('button', { name: 'Copy Work Summary Material' }),
+    )
+    await waitFor(() => {
+      expect(desktop.clipboard).toBe(expected)
+    })
+    expect(desktop.clipboard).toContain('last week’s note')
     expect(desktop.workSummaryRequests).toHaveLength(1)
   })
 })

@@ -14,6 +14,7 @@ import {
 } from '@/components/ui/menu'
 import { Toaster } from '@/components/ui/sonner'
 import {
+  formatDayRange,
   journalDayFor,
   rangeForDays,
   rangeForPreset,
@@ -28,12 +29,30 @@ import {
 } from '@/journal/work-summary-session'
 import {
   buildWorkSummaryMaterial,
+  formatWorkSummaryGeneratedAt,
   workSummaryRefuses,
   type WorkSummarySelection,
 } from '@/journal/work-summary'
 import type { Desktop, WorkSummaryFailure } from '@/platform/desktop'
 import type { AppSettings } from '@/settings/app-settings'
 import { workSummarySystemPrompt } from '@/settings/settings'
+
+/**
+ * A generated Work Summary with the snapshot it was written from — the
+ * selected range and the complete source material of that one request, plus
+ * when it arrived. The range and the material are what mark it outdated once
+ * the selection on screen no longer matches them; the response is never
+ * relabelled to a newer range, including when the range or the inputs moved
+ * while the call was in flight. Nothing here is persisted.
+ */
+interface GeneratedSummary {
+  markdown: string
+  model: string
+  from: string
+  to: string
+  material: string
+  generatedAt: Date
+}
 
 /**
  * The prose a model writes from the selected period's accomplishments and the
@@ -86,13 +105,8 @@ export default function WorkSummaryView({
       onChange: setState,
     }),
   )
-  // The summary on screen: what the model wrote, and which model wrote it —
-  // the latter so a replacement summary can say so. Nothing else about a call
-  // is kept, and nothing here is persisted.
-  const [summary, setSummary] = useState<{
-    markdown: string
-    model: string
-  } | null>(null)
+  // The summary on screen, with its snapshot beside it.
+  const [summary, setSummary] = useState<GeneratedSummary | null>(null)
   // The last copy's claim, said twice — a toast for whoever is looking, and
   // a live region for whoever is not — and naming its subject in the button's
   // own words. One claim, not one per copy: each landed copy replaces the
@@ -121,6 +135,43 @@ export default function WorkSummaryView({
       : null
   const copySaid =
     copyLive !== null ? said(copyLive.subject, copyLive.count) : ''
+  // Whether the summary on screen still describes the selection on screen.
+  // A moved range alone outdates it, and so does any change to the actual
+  // source inputs, compared as the rendered material rather than by object
+  // identity: an ordinary refresh that re-reads unchanged inputs renders the
+  // same material and leaves the snapshot current — and returning to the
+  // snapshot's own range with its inputs untouched reads as current again.
+  //
+  // Only the material half is remembered. A refresh that would not read
+  // carries no material to compare, so deriving would unmark prose already
+  // proven stale the moment the alert replaces the counts; the last verdict
+  // computed while readable stands in instead. The range half stays live —
+  // it needs no read — so peeking at another range still outdates at once.
+  const [rememberedVerdict, setRememberedVerdict] = useState<{
+    snapshot: GeneratedSummary | null
+    outdated: boolean
+  }>({ snapshot: null, outdated: false })
+  const currentMaterial =
+    state.state === 'ready' ? buildWorkSummaryMaterial(state.selection) : null
+  if (
+    summary !== null &&
+    currentMaterial !== null &&
+    (rememberedVerdict.snapshot !== summary ||
+      rememberedVerdict.outdated !== (currentMaterial !== summary.material))
+  ) {
+    setRememberedVerdict({
+      snapshot: summary,
+      outdated: currentMaterial !== summary.material,
+    })
+  }
+  const outdated =
+    summary !== null &&
+    (summary.from !== range.from ||
+      summary.to !== range.to ||
+      (currentMaterial !== null
+        ? currentMaterial !== summary.material
+        : rememberedVerdict.snapshot === summary &&
+          rememberedVerdict.outdated))
   // Between a range move and its read landing, the control already reads the
   // new range while the selection on screen is still the old one. Spending or
   // copying then would spend the previous period, so both wait for the read:
@@ -184,12 +235,18 @@ export default function WorkSummaryView({
 
   /**
    * Spends the call. What is sent is the selection on screen's own Digest
-   * and Tasks, so the model hears exactly what the section showed. Only a
-   * period with neither half is refused, and it is refused here, before
+   * and Tasks, so the model hears exactly what the section showed — and that
+   * same range and material are kept with the answer as its provenance. Only
+   * a period with neither half is refused, and it is refused here, before
    * anything could be spent.
    */
   async function generate(): Promise<void> {
     if (state.state !== 'ready' || inFlight.current) return
+    // The snapshot this request is asked from, fixed before anything async:
+    // a refresh or a range move landing while the call is in flight must not
+    // rewrite what the answer is labelled with.
+    const requested = state.selection
+    const requestedMaterial = buildWorkSummaryMaterial(requested)
     inFlight.current = true
     setFailure(null)
 
@@ -216,11 +273,23 @@ export default function WorkSummaryView({
         // a model is never asked under an empty system prompt — always under
         // the mandatory grounding rules, which no customization edits out.
         systemPrompt: workSummarySystemPrompt(stored.workSummaryPrompt),
-        userContent: buildWorkSummaryMaterial(state.selection),
+        userContent: requestedMaterial,
       })
 
       if (response.state === 'generated') {
-        setSummary({ markdown: response.markdown, model: stored.model })
+        // Labelled with the request's own range and material, not whatever is
+        // current now: a move or an edit during the call leaves this answer
+        // outdated rather than silently relabelled. A failed regeneration
+        // never reaches here, so the previous result stands.
+        const completed: GeneratedSummary = {
+          markdown: response.markdown,
+          model: stored.model,
+          from: requested.from,
+          to: requested.to,
+          material: requestedMaterial,
+          generatedAt: clock.now(),
+        }
+        setSummary(completed)
         // A new summary retires the copy claim with the prose it was about —
         // and only that one: a material claim outlives the prose.
         setCopyClaim((claim) =>
@@ -450,8 +519,8 @@ export default function WorkSummaryView({
             Outside the read state, exactly as the date control is: paid-for
             prose and the reason a call failed outlive whatever the current
             read says — a range that would not read must not take them with
-            it. (Whether the prose still matches the range on screen is #240's
-            outdated marking to say; never silent loss.)
+            it. Whether the prose still matches the range on screen is the
+            outdated marking beside it to say; never silent loss.
           */}
           {failure !== null && (
             <FailureLine failure={failure} onOpenSettings={onOpenSettings} />
@@ -460,6 +529,23 @@ export default function WorkSummaryView({
           {summary !== null && (
             <section className="flex flex-col gap-2">
               <h2 className="type-section">Written by {summary.model}</h2>
+              {/*
+                The snapshot's own range and generation time — never the range
+                currently selected, so a result is never silently relabelled.
+                The material copy beside Generate is the opposite: the
+                selection on screen now.
+              */}
+              <p className="type-meta text-muted-foreground">
+                For {formatDayRange(summary.from, summary.to)} · Generated{' '}
+                {formatWorkSummaryGeneratedAt(summary.generatedAt)}
+              </p>
+              {outdated && (
+                <p className="type-meta text-muted-foreground">
+                  Outdated — the notes and tasks this was written from are no
+                  longer what&apos;s selected. Generate again for the current
+                  selection.
+                </p>
+              )}
               <div className="rounded-md border border-border bg-card px-4 py-3 whitespace-pre-wrap type-body">
                 {summary.markdown}
               </div>
@@ -589,11 +675,11 @@ function count(value: number, noun: string): string {
 }
 
 /**
- * The section's one copy control: a split button whose primary is always the
- * selected period's material — the copy that works with no key, no network
- * and no waiting — and whose chevron menu holds the summary once one exists.
- * One visible button rather than two copy buttons on one screen, and one
- * whose identity never changes under the reader.
+ * The section's one copy control: a split button whose primary is always
+ * Work Summary Material — the copy that works with no key, no network and no
+ * waiting — and whose chevron menu holds the summary once one exists. One
+ * visible button rather than two copy buttons on one screen, and one whose
+ * identity never changes under the reader.
  */
 function CopySplit({
   summaryExists,
@@ -621,7 +707,7 @@ function CopySplit({
         disabled={materialRefused}
       >
         <ClipboardCopyIcon data-icon="inline-start" />
-        Copy material
+        Copy Work Summary Material
       </Button>
       {/*
         A real menu rather than a popover with buttons: arrow keys,

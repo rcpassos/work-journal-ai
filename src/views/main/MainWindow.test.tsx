@@ -407,6 +407,57 @@ describe('switching sections', () => {
     expect(screen.getByText('The work summary the model wrote.')).toBeTruthy()
   })
 
+  it('keeps a Work Summary’s provenance and outdated status through section navigation', async () => {
+    const user = userEvent.setup()
+    await showMainWindow({
+      captured: [
+        { at: '2026-03-08T10:00:00', body: 'Yesterday\u2019s work' },
+        { at: '2026-03-09T09:00:00', body: 'Today\u2019s own note' },
+      ],
+      stored: {
+        startAtLogin: false,
+        modelBaseUrl: 'https://api.openai.com/v1',
+        model: 'gpt-test',
+      },
+    })
+
+    await user.click(
+      within(sidebar()).getByRole('button', { name: 'Work Summary' }),
+    )
+    await showsWorkSummary()
+    await user.click(await screen.findByRole('button', { name: 'Generate' }))
+    await screen.findByText('The work summary the model wrote.')
+    await screen.findByText(/Generated /)
+
+    // A trip to History and back keeps the prose, its provenance and its
+    // current status: the window holds the section rather than rebuilding it.
+    await user.click(within(sidebar()).getByRole('button', { name: 'History' }))
+    await showsHistory()
+    await user.click(
+      within(sidebar()).getByRole('button', { name: 'Work Summary' }),
+    )
+    await showsWorkSummary()
+    expect(screen.getByText('The work summary the model wrote.')).toBeTruthy()
+    expect(screen.getByText(/Generated /)).toBeTruthy()
+    expect(screen.queryByText(/Outdated/)).toBeNull()
+
+    // A moved range outdates the snapshot; the trip back keeps that too —
+    // the outdated marking is section state, not a fresh read's verdict.
+    await user.click(screen.getByRole('button', { name: /^Days / }))
+    await user.click(await screen.findByRole('button', { name: 'Last week' }))
+    await waitForWorkSummaryDays(formatDayRange('2026-03-02', '2026-03-08'))
+    await screen.findByText(/Outdated/)
+    await user.click(within(sidebar()).getByRole('button', { name: 'History' }))
+    await showsHistory()
+    await user.click(
+      within(sidebar()).getByRole('button', { name: 'Work Summary' }),
+    )
+    await showsWorkSummary()
+    expect(screen.getByText('The work summary the model wrote.')).toBeTruthy()
+    expect(screen.getByText(/Generated /)).toBeTruthy()
+    expect(screen.getByText(/Outdated/)).toBeTruthy()
+  })
+
   it('opens Settings from a missing Model Access failure', async () => {
     const user = userEvent.setup()
     const { desktop } = await showMainWindow({

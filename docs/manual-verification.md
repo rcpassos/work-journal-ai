@@ -198,14 +198,16 @@ Run these on a first run — with no `settings.json` — so the defaults are the
 
 The copy control only — what the model writes is Settings' **Work Summary Prompt** items.
 
-- [ ] The section shows this week's range and a count for each half, one copy button reading **Copy material**, and a chevron beside it.
-- [ ] **Copy material** puts this week's Notes, the work completed this week and the current commitments on the clipboard, with no model call and no waiting.
+- [ ] The section shows this week's range and a count for each half, one copy button reading **Copy Work Summary Material**, and a chevron beside it.
+- [ ] **Copy Work Summary Material** puts this week's Notes, the work completed this week and the current commitments on the clipboard, with no model call and no waiting.
 - [ ] Its confirmation names this week's notes and tasks — not the bare word "material", which would read as nothing the user recognizes.
 - [ ] Before anything is generated, the chevron menu holds **Copy summary**, disabled, with **Generate a summary first.** readable beneath it.
-- [ ] After a summary is generated, the button still reads **Copy material** — it does not relabel itself — and **Copy summary** in the menu is now enabled.
+- [ ] After a summary is generated, the button still reads **Copy Work Summary Material** — it does not relabel itself — and **Copy summary** in the menu is now enabled.
 - [ ] **Copy summary** puts the prose on the clipboard, and its confirmation names the summary rather than the material.
-- [ ] Copy the summary, then copy material, then switch to another application and back: the confirmation goes empty and the earlier summary confirmation does not reappear.
-- [ ] On a week with nothing in either half, **Copy material** and **Generate** are both disabled.
+- [ ] Copy the summary, then copy the material, then switch to another application and back: the confirmation goes empty and the earlier summary confirmation does not reappear.
+- [ ] On a week with nothing in either half, **Copy Work Summary Material** and **Generate** are both disabled.
+- [ ] A generated summary names the range it was written from and when, and stays put while the section is left and returned to.
+- [ ] Changing the range or the week's notes and tasks marks the summary outdated without spending a call; generating again replaces it with the current range and time, while a failed retry keeps the previous prose.
 
 ## Settings
 
