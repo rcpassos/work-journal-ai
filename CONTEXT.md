@@ -212,7 +212,7 @@ The Filter's Notes and the work completed in the Filter's days as one lossless M
 _Avoid_: Packet, export, report, summary
 
 **Work Summary**:
-A personal assessment of accomplishments and related work from Notes filed in its selected date range, Tasks and Task Occurrences completed in that range, and all currently Open Tasks, including future and Unscheduled commitments explicitly presented as current rather than historical. Written from Work Summary Material, it distinguishes inferred connections from recorded facts and offers no unsolicited priorities or next steps.
+A personal assessment of accomplishments and related work from Notes filed in its selected date range, Tasks and Task Occurrences completed in that range, and all currently Open Tasks, including future and Unscheduled commitments explicitly presented as current rather than historical. Written from Work Summary Material, it distinguishes inferred connections from recorded facts and offers no unsolicited priorities or next steps. It is a snapshot, not a live view: each one is generated only on an explicit action, shows the range it was written from and when it was written, and is marked outdated once the selected range or the records behind it no longer match it — never silently relabelled to a newer range, and never regenerated on its own. A failed regeneration keeps the previous prose and its provenance. It lives as long as the Main Window that showed it and is never persisted or turned into a Note.
 _Avoid_: Standup Post, Digest
 
 **Export**:
