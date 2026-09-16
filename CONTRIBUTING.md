@@ -52,7 +52,7 @@ pnpm lint
 - [docs/manual-verification.md](docs/manual-verification.md) — the manual checklist; run it against a release build before calling a ticket done.
 - [docs/calendar-access.md](docs/calendar-access.md) — why Import needs a bundled build and why macOS re-prompts.
 - [docs/onboarding.md](docs/onboarding.md) — the confirmed Onboarding design.
-- [`site/index.html`](site/index.html) — the [download page](https://rp-pipecodes.github.io/work-journal-ai/) source, published by [`pages.yml`](.github/workflows/pages.yml) on every push to `main` that touches it.
+- [`site/index.html`](site/index.html) — the [download page](https://rcpassos.github.io/work-journal-ai/) source, published by [`pages.yml`](.github/workflows/pages.yml) on every push to `main` that touches it.
 
 Agent rules live in [AGENTS.md](AGENTS.md).
 

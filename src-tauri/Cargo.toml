@@ -6,7 +6,7 @@ version = "0.0.0"
 description = "A personal, local-first log of short work notes"
 authors = ["Rafael Passos"]
 license = "MIT"
-repository = "https://github.com/rp-pipecodes/work-journal-ai"
+repository = "https://github.com/rcpassos/work-journal-ai"
 edition = "2021"
 rust-version = "1.77.2"
 

@@ -9,7 +9,7 @@
       content="A personal, local-first macOS menu bar app. Capture short notes about what you did, keep tasks for what is still to do, and get yesterday written up as a standup post — by your own language model, or as plain Markdown without one."
     />
     <link rel="icon" type="image/svg+xml" href="favicon.svg" />
-    <link rel="canonical" href="https://rp-pipecodes.github.io/work-journal-ai/" />
+    <link rel="canonical" href="https://rcpassos.github.io/work-journal-ai/" />
 
     <meta property="og:title" content="Work Journal" />
     <meta
@@ -17,10 +17,13 @@
       content="A local-first log of short work notes and the tasks that go with them — read back as Markdown, with a standup post written from yesterday when you want one. Everything stays on your Mac."
     />
     <meta property="og:type" content="website" />
-    <meta property="og:url" content="https://rp-pipecodes.github.io/work-journal-ai/" />
+    <meta
+      property="og:url"
+      content="https://rcpassos.github.io/work-journal-ai/"
+    />
     <meta
       property="og:image"
-      content="https://rp-pipecodes.github.io/work-journal-ai/share-card.png"
+      content="https://rcpassos.github.io/work-journal-ai/share-card.png"
     />
     <meta property="og:image:width" content="1200" />
     <meta property="og:image:height" content="630" />
@@ -53,15 +56,16 @@
         --pine-deep: #0f3524;
         --pine-ink: #ffffff;
         --serif: Charter, "Bitstream Charter", "Sitka Text", Georgia, serif;
-        --sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI",
-          Inter, Helvetica, Arial, sans-serif;
-        --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
-          monospace;
+        --sans:
+          ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Inter,
+          Helvetica, Arial, sans-serif;
+        --mono:
+          ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
 
         --radius: 14px;
         --max: 68rem;
-        --shadow: 0 1px 2px rgb(19 25 21 / 0.06),
-          0 12px 32px -12px rgb(19 25 21 / 0.18);
+        --shadow:
+          0 1px 2px rgb(19 25 21 / 0.06), 0 12px 32px -12px rgb(19 25 21 / 0.18);
       }
 
       @media (prefers-color-scheme: dark) {
@@ -75,8 +79,8 @@
           --pine: #8fc7a3;
           --pine-deep: #a8d8b8;
           --pine-ink: #0e1712;
-          --shadow: 0 1px 2px rgb(0 0 0 / 0.4),
-            0 16px 40px -12px rgb(0 0 0 / 0.6);
+          --shadow:
+            0 1px 2px rgb(0 0 0 / 0.4), 0 16px 40px -12px rgb(0 0 0 / 0.6);
         }
       }
 
@@ -246,7 +250,9 @@
       .demo-add,
       .demo-tab,
       .copy-btn {
-        transition: background 0.15s ease, border-color 0.15s ease,
+        transition:
+          background 0.15s ease,
+          border-color 0.15s ease,
           transform 0.05s ease;
       }
 
@@ -882,7 +888,7 @@
           <span class="nav-version" id="nav-version" hidden></span>
           <a
             class="btn btn-pine btn-small"
-            href="https://github.com/rp-pipecodes/work-journal-ai/releases/latest"
+            href="https://github.com/rcpassos/work-journal-ai/releases/latest"
             >Download</a
           >
         </div>
@@ -898,15 +904,15 @@
               The day&rsquo;s work, written down before it evaporates.
             </h1>
             <p class="hero-lede">
-              Work Journal lives in the menu bar. One hotkey captures a
-              one-line Note about what you just did, another creates a Task
-              for what is still to do. At standup time, yesterday reads back
-              as Markdown &mdash; or as prose, written by your own model.
+              Work Journal lives in the menu bar. One hotkey captures a one-line
+              Note about what you just did, another creates a Task for what is
+              still to do. At standup time, yesterday reads back as Markdown
+              &mdash; or as prose, written by your own model.
             </p>
             <div class="hero-actions">
               <a
                 class="btn btn-pine"
-                href="https://github.com/rp-pipecodes/work-journal-ai/releases/latest"
+                href="https://github.com/rcpassos/work-journal-ai/releases/latest"
                 >Download for macOS</a
               >
               <a class="btn btn-ghost" href="#how">See how it reads back</a>
@@ -920,8 +926,8 @@
             <ul class="trust-list">
               <li>
                 <span class="trust-tick" aria-hidden="true">✓</span>
-                No account, no server. Notes and Tasks are a SQLite file on
-                your Mac.
+                No account, no server. Notes and Tasks are a SQLite file on your
+                Mac.
               </li>
               <li>
                 <span class="trust-tick" aria-hidden="true">✓</span>
@@ -929,8 +935,8 @@
               </li>
               <li>
                 <span class="trust-tick" aria-hidden="true">✓</span>
-                The network is touched only for a standup post you request
-                and an update you confirm.
+                The network is touched only for a standup post you request and
+                an update you confirm.
               </li>
             </ul>
           </div>
@@ -977,8 +983,13 @@
               </form>
               <pre class="demo-out" id="demo-out" aria-live="polite"></pre>
               <p class="demo-hint">
-                <span>Type a line and press <kbd>Enter</kbd> — stays here, in this page.</span>
-                <span id="demo-status">Yesterday&rsquo;s Digest, verbatim.</span>
+                <span
+                  >Type a line and press <kbd>Enter</kbd> — stays here, in this
+                  page.</span
+                >
+                <span id="demo-status"
+                  >Yesterday&rsquo;s Digest, verbatim.</span
+                >
               </p>
             </div>
           </section>
@@ -990,8 +1001,8 @@
           <div>
             <p class="fact-title">One line per Note</p>
             <p class="fact-body">
-              A remark, not a document. One line keeps capture instant and
-              every Digest a clean list of bullets.
+              A remark, not a document. One line keeps capture instant and every
+              Digest a clean list of bullets.
             </p>
           </div>
           <div>
@@ -1025,17 +1036,17 @@
             Capture in a keystroke, file as you type, read back as Markdown.
           </h2>
           <p class="section-lede">
-            Three moments in order &mdash; during the day, at the boundary,
-            the next morning. That order is the whole product, so it is the
-            one numbered list on this page.
+            Three moments in order &mdash; during the day, at the boundary, the
+            next morning. That order is the whole product, so it is the one
+            numbered list on this page.
           </p>
           <ol class="steps">
             <li class="step">
               <span class="step-num">01 — Capture</span>
               <h3>One line, then gone</h3>
               <p>
-                The Note hotkey opens a text field over whatever you are
-                doing. Write the line, press Enter, the window is gone.
+                The Note hotkey opens a text field over whatever you are doing.
+                Write the line, press Enter, the window is gone.
               </p>
               <p class="step-sample">#api fixed retry storm on checkout</p>
             </li>
@@ -1046,7 +1057,9 @@
                 Start the line with <code>#name</code> and the Note is filed
                 under that Project. Names you used are offered as you type.
               </p>
-              <p class="step-sample">#website rewrote hero, kept the xattr note</p>
+              <p class="step-sample">
+                #website rewrote hero, kept the xattr note
+              </p>
             </li>
             <li class="step">
               <span class="step-num">03 — Read back</span>
@@ -1055,7 +1068,9 @@
                 The tray copies Yesterday&rsquo;s Digest with no window open.
                 One click further gives the Standup Material or a Post.
               </p>
-              <p class="step-sample">## Yesterday&#10;- #api fixed retry storm…</p>
+              <p class="step-sample">
+                ## Yesterday&#10;- #api fixed retry storm…
+              </p>
             </li>
           </ol>
         </section>
@@ -1071,8 +1086,8 @@
           </h2>
           <p class="section-lede">
             The app&rsquo;s vocabulary is small on purpose: Notes recover work
-            that happened, Tasks hold work still to do. These groups sit side
-            by side &mdash; none comes before the other.
+            that happened, Tasks hold work still to do. These groups sit side by
+            side &mdash; none comes before the other.
           </p>
           <div class="cards">
             <article class="card">
@@ -1081,12 +1096,12 @@
               <ul>
                 <li>Capture from the hotkey, the tray menu, or relaunch.</li>
                 <li>
-                  Read any range &mdash; today, yesterday, this or last week
-                  or month &mdash; narrowed to one Project or not at all.
+                  Read any range &mdash; today, yesterday, this or last week or
+                  month &mdash; narrowed to one Project or not at all.
                 </li>
                 <li>
-                  Search every Note&rsquo;s text to jump to the day it is
-                  filed under.
+                  Search every Note&rsquo;s text to jump to the day it is filed
+                  under.
                 </li>
                 <li>Reword, refile to another day, or delete. No trash.</li>
               </ul>
@@ -1096,12 +1111,12 @@
               <h3>Commitments with a schedule</h3>
               <ul>
                 <li>
-                  Its own hotkey and an always-ready window; Enter commits
-                  one Task.
+                  Its own hotkey and an always-ready window; Enter commits one
+                  Task.
                 </li>
                 <li>
-                  A date, with a time to the minute &mdash; past dates are
-                  valid and read as overdue.
+                  A date, with a time to the minute &mdash; past dates are valid
+                  and read as overdue.
                 </li>
                 <li>
                   Daily, weekly, monthly, yearly, or every N &mdash; one open
@@ -1122,8 +1137,8 @@
                   nothing to configure.
                 </li>
                 <li>
-                  Standup Material one click in: Notes plus work kept plus
-                  open Tasks due. Paste it as-is with no model.
+                  Standup Material one click in: Notes plus work kept plus open
+                  Tasks due. Paste it as-is with no model.
                 </li>
                 <li>
                   Or a Standup Post in prose from exactly that material &mdash;
@@ -1141,25 +1156,29 @@
                 </li>
                 <li>Copy the range on screen; Export the whole journal.</li>
                 <li>
-                  Remap both hotkeys, follow the system theme, start at
-                  login, recover alert permission from Settings.
+                  Remap both hotkeys, follow the system theme, start at login,
+                  recover alert permission from Settings.
                 </li>
               </ul>
             </article>
           </div>
         </section>
 
-        <section class="download-panel" id="download" aria-labelledby="download-title">
+        <section
+          class="download-panel"
+          id="download"
+          aria-labelledby="download-title"
+        >
           <div>
             <h2 id="download-title">Download for macOS</h2>
             <p>
               Apple Silicon only. The build is unsigned, so macOS quarantines
-              the download &mdash; the command on the right clears it once.
-              From then on, Settings finds updates and installs them itself.
+              the download &mdash; the command on the right clears it once. From
+              then on, Settings finds updates and installs them itself.
             </p>
             <a
               class="btn btn-pine"
-              href="https://github.com/rp-pipecodes/work-journal-ai/releases/latest"
+              href="https://github.com/rcpassos/work-journal-ai/releases/latest"
               >Download for macOS</a
             >
             <p class="release-line" id="latest-release" hidden>
@@ -1168,18 +1187,18 @@
             </p>
           </div>
           <div>
-            <p class="req-title">After dragging it to Applications — required, once</p>
+            <p class="req-title">
+              After dragging it to Applications — required, once
+            </p>
             <div class="cmd-row">
-              <pre
-                class="cmd"
-                id="xattr-cmd"
-              >xattr -dr com.apple.quarantine "/Applications/Work Journal.app"</pre>
+              <pre class="cmd" id="xattr-cmd">
+xattr -dr com.apple.quarantine "/Applications/Work Journal.app"</pre>
               <button class="copy-btn" id="copy-cmd" type="button">Copy</button>
             </div>
             <p class="download-note">
               A copy you compiled yourself was never quarantined and needs
-              nothing. Updates need nothing either &mdash; the app unpacks
-              its own signed payload and restarts into it.
+              nothing. Updates need nothing either &mdash; the app unpacks its
+              own signed payload and restarts into it.
             </p>
           </div>
         </section>
@@ -1188,13 +1207,14 @@
           <div class="footer-row">
             <span>MIT licensed. Local-first means your words stay yours.</span>
             <nav aria-label="Project">
-              <a href="https://github.com/rp-pipecodes/work-journal-ai"
+              <a href="https://github.com/rcpassos/work-journal-ai"
                 >Source on GitHub</a
               >
-              <a href="https://github.com/rp-pipecodes/work-journal-ai/blob/main/CHANGELOG.md"
+              <a
+                href="https://github.com/rcpassos/work-journal-ai/blob/main/CHANGELOG.md"
                 >Changelog</a
               >
-              <a href="https://github.com/rp-pipecodes/work-journal-ai/releases"
+              <a href="https://github.com/rcpassos/work-journal-ai/releases"
                 >All releases</a
               >
             </nav>
@@ -1208,7 +1228,7 @@
       // /releases/latest, so a failed fetch stays silent rather than naming
       // a version that could be wrong.
       fetch(
-        "https://api.github.com/repos/rp-pipecodes/work-journal-ai/releases/latest",
+        "https://api.github.com/repos/rcpassos/work-journal-ai/releases/latest",
       )
         .then((response) => (response.ok ? response.json() : null))
         .then((release) => {
@@ -1234,9 +1254,7 @@
       (function () {
         var btn = document.getElementById("copy-cmd");
         btn.addEventListener("click", function () {
-          var text = document
-            .getElementById("xattr-cmd")
-            .textContent.trim();
+          var text = document.getElementById("xattr-cmd").textContent.trim();
           function done(ok) {
             btn.textContent = ok ? "Copied" : "Copy";
             if (ok) setTimeout(() => (btn.textContent = "Copy"), 1600);
@@ -1293,8 +1311,7 @@
         }
 
         function parse(line) {
-          if (/^#[A-Za-z0-9_-]+\s*$/.test(line.trim()))
-            return { bare: true };
+          if (/^#[A-Za-z0-9_-]+\s*$/.test(line.trim())) return { bare: true };
           var m = line.match(/^#([A-Za-z0-9_-]+)\s+([\s\S]+)$/);
           if (m) return { project: m[1].toLowerCase(), body: m[2].trim() };
           return { project: null, body: line.trim() };
@@ -1304,7 +1321,10 @@
           return notes
             .map((n) =>
               n.project
-                ? '- <span class="proj">#' + esc(n.project) + "</span> " + esc(n.body)
+                ? '- <span class="proj">#' +
+                  esc(n.project) +
+                  "</span> " +
+                  esc(n.body)
                 : "- " + esc(n.body),
             )
             .join("\n");
@@ -1342,7 +1362,7 @@
             esc(firstLine) +
             " and " +
             esc(String(notes.length - 1)) +
-            ' more lines worth of done. Today: the DMG and Mara’s review.”</span>\n' +
+            " more lines worth of done. Today: the DMG and Mara’s review.”</span>\n" +
             '<span class="dim">Read it before you copy it — prose may be wrong.</span>'
           );
         }
@@ -1365,10 +1385,7 @@
           b.addEventListener("click", () => {
             tab = b.dataset.tab;
             tabs.forEach((x) =>
-              x.setAttribute(
-                "aria-pressed",
-                x === b ? "true" : "false",
-              ),
+              x.setAttribute("aria-pressed", x === b ? "true" : "false"),
             );
             render();
           }),
