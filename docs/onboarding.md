@@ -1,6 +1,6 @@
 # Onboarding
 
-Confirmed design for [issue #174](https://github.com/rp-pipecodes/work-journal-ai/issues/174). All identified design questions are settled, and the user confirmed shared understanding on 2026-09-05. The design interview is complete; implementation is a separate task.
+Confirmed design for [issue #174](https://github.com/rcpassos/work-journal-ai/issues/174). All identified design questions are settled, and the user confirmed shared understanding on 2026-09-05. The design interview is complete; implementation is a separate task.
 
 ## Purpose and audience
 

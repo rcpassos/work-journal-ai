@@ -54,7 +54,7 @@ during development does too. This is designed for rather than worked around:
 Settings turns Import back off and says why, the journal keeps working
 untouched, and the app never nags.
 
-Measured in [#61](https://github.com/rp-pipecodes/work-journal-ai/issues/61)
+Measured in [#61](https://github.com/rcpassos/work-journal-ai/issues/61)
 against a real Google account, ad-hoc signed, `TeamIdentifier=not set`.
 
 ## Resetting the grant while testing

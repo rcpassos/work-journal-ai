@@ -4,7 +4,7 @@ A personal, local-first log of short work notes captured throughout the day, so 
 
 macOS on Apple Silicon only. No account, no server. Notes and Tasks live in a SQLite file on your Mac.
 
-**[Download for macOS](https://rp-pipecodes.github.io/work-journal-ai/)** — or [build it yourself](CONTRIBUTING.md#building-locally).
+**[Download for macOS](https://rcpassos.github.io/work-journal-ai/)** — or [build it yourself](CONTRIBUTING.md#building-locally).
 
 ## How it works
 
@@ -12,7 +12,7 @@ macOS on Apple Silicon only. No account, no server. Notes and Tasks live in a SQ
 2. **File** — start the line with `#name` and the Note is filed under that Project. Names you already used are offered as you type.
 3. **Read back** — the Tray Menu copies Yesterday's Digest with no window open. One click further gives the Work Summary Material or a Work Summary.
 
-The [download page](https://rp-pipecodes.github.io/work-journal-ai/) has a live demo of this loop.
+The [download page](https://rcpassos.github.io/work-journal-ai/) has a live demo of this loop.
 
 ## What it does
 
