@@ -3,10 +3,10 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Work Journal — a local-first log of work notes and tasks</title>
+    <title>Work Journal — jot work down as you do it</title>
     <meta
       name="description"
-      content="A personal, local-first macOS menu bar app. Capture short notes about what you did, keep tasks for what is still to do, and get yesterday written up as a standup post — by your own language model, or as plain Markdown without one."
+      content="One hotkey captures a Note, another creates a Task. Yesterday reads back as Markdown — or as prose from your own model. Local-first macOS menu bar app, no account, no server."
     />
     <link rel="icon" type="image/svg+xml" href="favicon.svg" />
     <link rel="canonical" href="https://rcpassos.github.io/work-journal-ai/" />
@@ -14,7 +14,7 @@
     <meta property="og:title" content="Work Journal" />
     <meta
       property="og:description"
-      content="A local-first log of short work notes and the tasks that go with them — read back as Markdown, with a standup post written from yesterday when you want one. Everything stays on your Mac."
+      content="One hotkey captures a Note, another creates a Task. Yesterday reads back as Markdown — or as prose from your own model. Everything stays on your Mac."
     />
     <meta property="og:type" content="website" />
     <meta
@@ -63,7 +63,7 @@
           ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
 
         --radius: 14px;
-        --max: 68rem;
+        --max: 62rem;
         --shadow:
           0 1px 2px rgb(19 25 21 / 0.06), 0 12px 32px -12px rgb(19 25 21 / 0.18);
       }
@@ -178,16 +178,6 @@
         display: block;
       }
 
-      .brand-badge {
-        font-family: var(--mono);
-        font-size: 0.7rem;
-        color: var(--slate);
-        border: 1px solid var(--line);
-        border-radius: 999px;
-        padding: 0.1rem 0.5rem;
-        white-space: nowrap;
-      }
-
       .nav-links {
         display: flex;
         gap: 1.25rem;
@@ -272,17 +262,20 @@
         border-color: var(--slate);
       }
 
-      /* Hero: thesis on the left, working journal on the right. */
+      /* Hero: centered thesis, working journal below in a single column
+         so the proof sits front and center. */
       .hero {
-        padding-top: 4rem;
-        padding-bottom: 3rem;
+        padding-top: 5rem;
+        padding-bottom: 4rem;
       }
 
       .hero-grid {
         display: grid;
-        grid-template-columns: 1.02fr 0.98fr;
-        gap: 3rem;
-        align-items: start;
+        grid-template-columns: 1fr;
+        gap: 2.5rem;
+        max-width: 44rem;
+        margin: 0 auto;
+        text-align: center;
       }
 
       .eyebrow {
@@ -313,7 +306,7 @@
         font-size: 1.16rem;
         line-height: 1.55;
         color: var(--slate);
-        margin: 0 0 1.75rem;
+        margin: 0 auto 1.75rem;
         max-width: 32rem;
         text-wrap: pretty;
       }
@@ -323,12 +316,14 @@
         flex-wrap: wrap;
         gap: 0.75rem;
         margin-bottom: 1rem;
+        justify-content: center;
       }
 
       .hero-note {
         font-size: 0.9rem;
         color: var(--slate);
-        margin: 0 0 1.75rem;
+        margin: 0 auto 1.75rem;
+        max-width: 32rem;
       }
 
       .visually-hidden {
@@ -342,11 +337,13 @@
 
       .trust-list {
         list-style: none;
-        margin: 0;
+        margin: 0 auto;
         padding: 0;
         display: grid;
         gap: 0.55rem;
         font-size: 0.96rem;
+        max-width: 32rem;
+        text-align: left;
       }
 
       .trust-list li {
@@ -368,6 +365,10 @@
         border-radius: var(--radius);
         box-shadow: var(--shadow);
         overflow: hidden;
+        text-align: left;
+        width: 100%;
+        max-width: 42rem;
+        margin: 0 auto;
       }
 
       .demo-chrome {
@@ -556,7 +557,7 @@
       /* Sections share one rhythm class only. Anchored sections clear the
          sticky nav instead of sliding under it. */
       .section {
-        padding-top: 4rem;
+        padding-top: 5.5rem;
         padding-bottom: 0.5rem;
         scroll-margin-top: 4.5rem;
       }
@@ -731,7 +732,7 @@
         background: #ffffff;
       }
 
-      .release-line {
+      .download-panel .release-line {
         font-family: var(--mono);
         font-size: 0.82rem;
         color: #9fb0a1;
@@ -775,13 +776,72 @@
         border-color: #eef3ec;
       }
 
-      .req-title {
+      .quarantine {
+        border: 1px solid #2c372e;
+        border-radius: 10px;
+        padding: 0.7rem 1rem;
+      }
+
+      .quarantine summary {
+        cursor: pointer;
         font-family: var(--mono);
-        font-size: 0.76rem;
-        letter-spacing: 0.06em;
-        text-transform: uppercase;
+        font-size: 0.82rem;
+        color: #eef3ec;
+      }
+
+      .quarantine .cmd-row {
+        margin-top: 0.7rem;
+      }
+
+      /* First run: numbered steps, full-width row of the
+         download panel so install and first use stay together. */
+      .first-run {
+        grid-column: 1 / -1;
+        margin: 0;
+        padding: 1.25rem 0 0;
+        border-top: 1px solid #2c372e;
+        list-style: none;
+        display: grid;
+        gap: 0.6rem;
+        counter-reset: firstrun;
+        font-size: 0.92rem;
+        color: #b9c4ba;
+      }
+
+      .first-run li {
+        display: flex;
+        gap: 0.7rem;
+        align-items: baseline;
+      }
+
+      .first-run li::before {
+        counter-increment: firstrun;
+        content: counter(firstrun, decimal-leading-zero);
+        font-family: var(--mono);
+        font-size: 0.78rem;
         color: #9fb0a1;
-        margin: 0 0 0.6rem;
+        flex-shrink: 0;
+      }
+
+      .first-run code {
+        font-family: var(--mono);
+        font-size: 0.85em;
+        background: #1a211b;
+        border: 1px solid #2c372e;
+        border-radius: 6px;
+        padding: 0.05rem 0.35rem;
+      }
+
+      /* About: first-person origin, anti-goal, done. */
+      .about-body {
+        max-width: 42rem;
+        color: var(--slate);
+        display: grid;
+        gap: 1rem;
+      }
+
+      .about-body p {
+        margin: 0;
       }
 
       .site-footer {
@@ -804,6 +864,11 @@
         display: flex;
         gap: 1.25rem;
         margin-left: auto;
+      }
+
+      .footer-made {
+        margin: 1.5rem 0 0;
+        font-size: 0.82rem;
       }
 
       /* Entrance: one quiet rise, never scattered. */
@@ -878,7 +943,6 @@
           <img src="logo.svg" alt="" />
           Work Journal
         </a>
-        <span class="brand-badge">macOS · Apple Silicon</span>
         <nav class="nav-links" aria-label="Page">
           <a href="#how">How it works</a>
           <a href="#capabilities">Capabilities</a>
@@ -899,15 +963,11 @@
       <div class="wrap hero" id="top">
         <div class="hero-grid">
           <div class="hero-copy">
-            <p class="eyebrow">Local-first work log · Notes + Tasks</p>
-            <h1 class="hero-title">
-              The day&rsquo;s work, written down before it evaporates.
-            </h1>
+            <p class="eyebrow">Local-first Notes + Tasks for macOS</p>
+            <h1 class="hero-title">jot work down as you do it.</h1>
             <p class="hero-lede">
-              Work Journal lives in the menu bar. One hotkey captures a one-line
-              Note about what you just did, another creates a Task for what is
-              still to do. At standup time, yesterday reads back as Markdown
-              &mdash; or as prose, written by your own model.
+              One hotkey captures a Note, another creates a Task. Yesterday
+              reads back as Markdown &mdash; or as prose from your own model.
             </p>
             <div class="hero-actions">
               <a
@@ -918,10 +978,7 @@
               <a class="btn btn-ghost" href="#how">See how it reads back</a>
             </div>
             <p class="hero-note">
-              Unsigned DMG &mdash; one
-              <code class="inline">xattr</code> command after install, then
-              in-app updates from there. Details at
-              <a href="#download">Download</a>.
+              macOS Apple Silicon · MIT · No account, no server.
             </p>
             <ul class="trust-list">
               <li>
@@ -1001,29 +1058,25 @@
           <div>
             <p class="fact-title">One line per Note</p>
             <p class="fact-body">
-              A remark, not a document. One line keeps capture instant and every
-              Digest a clean list of bullets.
+              Capture in seconds, reads back as clean bullets.
             </p>
           </div>
           <div>
             <p class="fact-title">Tasks beside Notes</p>
             <p class="fact-body">
-              Open work with dates, times, and repeats &mdash; grouped as
-              overdue, today, upcoming, unscheduled.
+              Dates, times, repeats. Past dates read as overdue.
             </p>
           </div>
           <div>
             <p class="fact-title">Markdown out</p>
             <p class="fact-body">
-              Copy any range, yesterday from the tray, or Export the whole
-              journal. Paste it into chat or an LLM.
+              Copy any range, yesterday from the tray, or Export all.
             </p>
           </div>
           <div>
             <p class="fact-title">Your model or none</p>
             <p class="fact-body">
-              Point it at any OpenAI-compatible endpoint for prose. The key
-              stays in your keychain; all else works without it.
+              Prose only if you point a key. Key stays in keychain.
             </p>
           </div>
         </div>
@@ -1057,9 +1110,7 @@
                 Start the line with <code>#name</code> and the Note is filed
                 under that Project. Names you used are offered as you type.
               </p>
-              <p class="step-sample">
-                #website rewrote hero, kept the xattr note
-              </p>
+              <p class="step-sample">#website rewrote hero, kept the xattr note</p>
             </li>
             <li class="step">
               <span class="step-num">03 — Read back</span>
@@ -1068,9 +1119,7 @@
                 The tray copies Yesterday&rsquo;s Digest with no window open.
                 One click further gives the Standup Material or a Post.
               </p>
-              <p class="step-sample">
-                ## Yesterday&#10;- #api fixed retry storm…
-              </p>
+              <p class="step-sample">## Yesterday&#10;- #api fixed retry storm…</p>
             </li>
           </ol>
         </section>
@@ -1096,14 +1145,11 @@
               <ul>
                 <li>Capture from the hotkey, the tray menu, or relaunch.</li>
                 <li>
-                  Read any range &mdash; today, yesterday, this or last week or
-                  month &mdash; narrowed to one Project or not at all.
+                  Read today, yesterday, this or last week or month, per
+                  Project or all.
                 </li>
-                <li>
-                  Search every Note&rsquo;s text to jump to the day it is filed
-                  under.
-                </li>
-                <li>Reword, refile to another day, or delete. No trash.</li>
+                <li>Search text to jump to the day it lives on.</li>
+                <li>Reword, refile, or delete. No trash.</li>
               </ul>
             </article>
             <article class="card">
@@ -1111,20 +1157,19 @@
               <h3>Commitments with a schedule</h3>
               <ul>
                 <li>
-                  Its own hotkey and an always-ready window; Enter commits one
+                  Its own hotkey and always-ready window. Enter commits one
                   Task.
                 </li>
                 <li>
-                  A date, with a time to the minute &mdash; past dates are valid
-                  and read as overdue.
+                  A date, with an optional time. Past dates read as overdue.
                 </li>
                 <li>
-                  Daily, weekly, monthly, yearly, or every N &mdash; one open
-                  occurrence, never a backlog of missed ones.
+                  Daily, weekly, monthly, yearly, or every N. One open
+                  occurrence, never a backlog.
                 </li>
                 <li>
-                  A dated Task with a time raises a local macOS alert. No
-                  sign-in, nothing sent anywhere.
+                  A dated Task with a time raises a local macOS alert. Nothing
+                  leaves your Mac.
                 </li>
               </ul>
             </article>
@@ -1133,16 +1178,12 @@
               <h3>Yesterday, written up when you want it</h3>
               <ul>
                 <li>
-                  Yesterday&rsquo;s Digest from the tray &mdash; Markdown,
-                  nothing to configure.
+                  Yesterday&rsquo;s Digest from the tray. Markdown, nothing to
+                  configure.
                 </li>
+                <li>Standup Material one click in. Paste as-is with no model.</li>
                 <li>
-                  Standup Material one click in: Notes plus work kept plus open
-                  Tasks due. Paste it as-is with no model.
-                </li>
-                <li>
-                  Or a Standup Post in prose from exactly that material &mdash;
-                  read it before copying; it may be wrong and is never kept.
+                  Or a Standup Post in prose. Read before copying; never kept.
                 </li>
               </ul>
             </article>
@@ -1151,16 +1192,31 @@
               <h3>The day, even what you forgot</h3>
               <ul>
                 <li>
-                  Today&rsquo;s macOS calendar meetings can become Notes on
-                  their own. Off until you pick the calendars.
+                  Today&rsquo;s calendar meetings can become Notes. Off until
+                  you pick calendars.
                 </li>
                 <li>Copy the range on screen; Export the whole journal.</li>
-                <li>
-                  Remap both hotkeys, follow the system theme, start at login,
-                  recover alert permission from Settings.
-                </li>
+                <li>Remap hotkeys, follow system theme, start at login.</li>
               </ul>
             </article>
+          </div>
+        </section>
+
+        <section class="section about" id="about" aria-labelledby="about-title">
+          <p class="section-kicker">About</p>
+          <h2 class="section-title" id="about-title">Built for standup time.</h2>
+          <div class="about-body">
+            <p>
+              I built Work Journal because every standup asked what I did
+              yesterday, and my answer came from memory and chat history. Now
+              it comes from one-line notes I typed as the work happened.
+            </p>
+            <p>
+              It isn&rsquo;t trying to be a project manager, a knowledge base,
+              or a second brain. Notes recover what happened, Tasks hold what
+              remains &mdash; everything else lives somewhere else.
+              That&rsquo;s it.
+            </p>
           </div>
         </section>
 
@@ -1172,9 +1228,8 @@
           <div>
             <h2 id="download-title">Download for macOS</h2>
             <p>
-              Apple Silicon only. The build is unsigned, so macOS quarantines
-              the download &mdash; the command on the right clears it once. From
-              then on, Settings finds updates and installs them itself.
+              Apple Silicon only. Unsigned build &mdash; clear it once, then
+              Settings updates itself.
             </p>
             <a
               class="btn btn-pine"
@@ -1187,25 +1242,37 @@
             </p>
           </div>
           <div>
-            <p class="req-title">
-              After dragging it to Applications — required, once
-            </p>
-            <div class="cmd-row">
-              <pre class="cmd" id="xattr-cmd">
+            <details class="quarantine">
+              <summary>Unsigned build? One command, once</summary>
+              <div class="cmd-row">
+                <pre class="cmd" id="xattr-cmd">
 xattr -dr com.apple.quarantine "/Applications/Work Journal.app"</pre>
-              <button class="copy-btn" id="copy-cmd" type="button">Copy</button>
-            </div>
-            <p class="download-note">
-              A copy you compiled yourself was never quarantined and needs
-              nothing. Updates need nothing either &mdash; the app unpacks its
-              own signed payload and restarts into it.
-            </p>
+                <button class="copy-btn" id="copy-cmd" type="button">
+                  Copy
+                </button>
+              </div>
+              <p class="download-note">
+                After dragging it to Applications. A copy you compiled yourself
+                was never quarantined and needs nothing.
+              </p>
+            </details>
           </div>
+          <ol class="first-run" aria-label="First run">
+            <li>Download, drag to Applications, clear quarantine once.</li>
+            <li>
+              Press the Note hotkey, type
+              <code>#test first note</code>, press Enter.
+            </li>
+            <li>
+              Tomorrow: tray menu &rarr; Copy Yesterday&rsquo;s Notes.
+              That&rsquo;s it.
+            </li>
+          </ol>
         </section>
 
         <footer class="site-footer">
           <div class="footer-row">
-            <span>MIT licensed. Local-first means your words stay yours.</span>
+            <span>MIT · Local-first means your words stay yours.</span>
             <nav aria-label="Project">
               <a href="https://github.com/rcpassos/work-journal-ai"
                 >Source on GitHub</a
@@ -1219,6 +1286,10 @@ xattr -dr com.apple.quarantine "/Applications/Work Journal.app"</pre>
               >
             </nav>
           </div>
+          <p class="footer-made">
+            Made by
+            <a href="https://rafaelpassos.com/">Rafael Passos</a>
+          </p>
         </footer>
       </div>
     </main>
