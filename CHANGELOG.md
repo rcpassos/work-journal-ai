@@ -2,6 +2,13 @@
 
 What changed in each released version, newest first. Every `vX.Y.Z` section here is published verbatim as that release's notes, and Settings shows those notes to a reader deciding whether to update — so each bullet is a plain sentence, with no Markdown emphasis. See [CONTRIBUTING.md](CONTRIBUTING.md#cutting-a-release).
 
+## 0.15.0 — 2026-09-20
+
+- The tray menu has a Check for Updates item, so an update can be looked for without opening Settings.
+- The app is coloured after its own logo: a warm neutral palette with the logo's amber as the accent, in both light and dark.
+- Settings is grouped into named sections, each a card with its rows divided by hairlines.
+- Each settings row explains itself through an info icon beside its name instead of carrying a paragraph of text at all times.
+
 ## 0.14.1 — 2026-09-16
 
 - The project now lives at github.com/rcpassos/work-journal-ai, and the app's repository links and update feed point there.
