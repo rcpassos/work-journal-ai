@@ -40,6 +40,7 @@ const VIEW_TASKS_MENU_ITEM: &str = "view-tasks";
 const VIEW_WORK_SUMMARY_MENU_ITEM: &str = "view-work-summary";
 const COPY_YESTERDAY_DIGEST_MENU_ITEM: &str = "copy-yesterday-digest";
 const SETTINGS_MENU_ITEM: &str = "settings";
+const CHECK_FOR_UPDATES_MENU_ITEM: &str = "check-for-updates";
 const MAIN_SETTINGS_MENU_ITEM: &str = "main-settings";
 const CLOSE_WINDOW_MENU_ITEM: &str = "close-window";
 const QUIT_MENU_ITEM: &str = "quit";
@@ -2211,6 +2212,15 @@ fn build_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
         None::<&str>,
     )?;
     let settings = MenuItem::with_id(app, SETTINGS_MENU_ITEM, "Settings", true, None::<&str>)?;
+    // The update check lives inside Settings, so the Tray Menu takes the user
+    // there rather than running a check with nowhere to show the answer.
+    let check_for_updates = MenuItem::with_id(
+        app,
+        CHECK_FOR_UPDATES_MENU_ITEM,
+        "Check for Updates…",
+        true,
+        None::<&str>,
+    )?;
     let readback_separator = PredefinedMenuItem::separator(app)?;
     let separator = PredefinedMenuItem::separator(app)?;
     let quit = MenuItem::with_id(app, QUIT_MENU_ITEM, "Quit", true, None::<&str>)?;
@@ -2226,6 +2236,7 @@ fn build_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
             &view_tasks,
             &view_work_summary,
             &settings,
+            &check_for_updates,
             &readback_separator,
             &copy_yesterday,
             &separator,
@@ -2261,7 +2272,7 @@ fn build_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
             VIEW_TASKS_MENU_ITEM => open_main_window(app, Some(TASKS_SECTION)),
             VIEW_WORK_SUMMARY_MENU_ITEM => open_main_window(app, Some(WORK_SUMMARY_SECTION)),
             COPY_YESTERDAY_DIGEST_MENU_ITEM => copy_yesterday_digest(app),
-            SETTINGS_MENU_ITEM => open_settings(app),
+            SETTINGS_MENU_ITEM | CHECK_FOR_UPDATES_MENU_ITEM => open_settings(app),
             QUIT_MENU_ITEM => app.exit(0),
             _ => {}
         });
