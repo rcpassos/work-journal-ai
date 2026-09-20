@@ -1869,7 +1869,7 @@ describe('Task Alerts', () => {
     }))
 
     const row = await screen.findByText('Task Alerts')
-    expect(row.closest('div')?.parentElement?.textContent).toContain('Allowed')
+    expect(row.closest('section')?.textContent).toContain('Allowed')
     expect(
       screen.queryByRole('button', { name: 'Open System Settings' }),
     ).toBeNull()
@@ -2484,5 +2484,89 @@ describe('the Work Summary Prompt', () => {
       .poll(() => screen.queryAllByRole('alert').length)
       .toBe(0)
     expect(stored.workSummaryPrompt).toBe('Write it anyway.')
+  })
+})
+
+/**
+ * What a setting means is one hover away rather than always on screen. The
+ * words themselves never left the page — only their visibility did — so what
+ * these check is that both readings still work: the sighted one that has to
+ * reach the ⓘ, and the read-aloud one that never sees it.
+ */
+describe('the ⓘ beside a setting', () => {
+  /** The ⓘ for a named setting, found the way a reader finds it. */
+  function about(label: string): HTMLElement {
+    return screen.getByRole('button', { name: `About ${label}` })
+  }
+
+  it('keeps the explanation in the page while the tooltip is closed', () => {
+    showSettings(fakeDesktop({ stored: { startAtLogin: false } }))
+
+    expect(
+      screen.getByText(
+        'A snapshot of the journal database — every Note and Task as stored.',
+      ),
+    ).toBeTruthy()
+    expect(document.querySelector('[data-slot="tooltip-content"]')).toBeNull()
+  })
+
+  it('leaves the setting name as the name of its control', () => {
+    showSettings(fakeDesktop({ stored: { startAtLogin: false } }))
+
+    // The ⓘ is a sibling of the heading, not a child of it: inside, its own
+    // name would join the heading's and so the control's.
+    expect(screen.getByRole('heading', { name: 'Backup' }).textContent).toBe(
+      'Backup',
+    )
+  })
+
+  it('is an ordinary tab stop, and says the explanation when focused', async () => {
+    showSettings(fakeDesktop({ stored: { startAtLogin: false } }))
+
+    const trigger = about('Backup')
+    expect(trigger.getAttribute('tabindex')).not.toBe('-1')
+
+    // Focus reached by keyboard, which is the only way a tooltip is worth
+    // opening on focus at all.
+    fireEvent.keyDown(document.body, { key: 'Tab' })
+    await act(async () => {
+      trigger.focus()
+    })
+
+    await expect
+      .poll(
+        () =>
+          document.querySelector('[data-slot="tooltip-content"]')?.textContent,
+      )
+      .toContain('A snapshot of the journal database')
+  })
+
+  it('never hides a failure behind a hover', async () => {
+    const stored: Record<string, unknown> = { startAtLogin: false }
+    const desktop = fakeDesktop({
+      stored,
+      openSettingsStore: async () => ({
+        async get<T>(key: string) {
+          return stored[key] as T | undefined
+        },
+        async has(key: string) {
+          return key in stored
+        },
+        async set(key: string, value: unknown) {
+          if (key === 'modelBaseUrl') throw new Error('the file is read-only')
+          stored[key] = value
+        },
+      }),
+    })
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    showSettings(desktop)
+
+    fireEvent.change(await screen.findByLabelText('Base URL'), {
+      target: { value: 'http://localhost:11434/v1' },
+    })
+
+    const alert = await screen.findByRole('alert')
+    expect(alert.closest('[data-slot="tooltip-content"]')).toBeNull()
   })
 })

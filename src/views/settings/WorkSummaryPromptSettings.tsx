@@ -5,7 +5,13 @@ import { useOnScreenToast } from '@/components/on-screen-toast'
 import { DEFAULT_WORK_SUMMARY_PROMPT } from '@/settings/settings'
 import type { AppSettings } from '@/settings/app-settings'
 import type { SettingsInitialState } from './SettingsInitialState'
-import { SettingsGroup, SettingsProblem, SettingsRow, notStored } from './SettingsGroup'
+import {
+  SettingsAside,
+  SettingsGroup,
+  SettingsProblem,
+  SettingsRow,
+  notStored,
+} from './SettingsGroup'
 import { saySettled } from './saySettled'
 
 /**
@@ -84,7 +90,7 @@ export default function WorkSummaryPromptSettings({
     <SettingsGroup>
       <SettingsRow
         label="Work Summary Prompt"
-        explanation="What voice and structure a Work Summary is written with. Factual-grounding rules are always sent with it and cannot be edited out. Left empty, the shipped voice is used — a model is never asked nothing."
+        explanation="What voice and structure a Work Summary is written with."
         controls="work-summary-prompt"
         stacked
       >
@@ -102,6 +108,12 @@ export default function WorkSummaryPromptSettings({
           </Button>
         </div>
       </SettingsRow>
+
+      <SettingsAside>
+        Factual-grounding rules are always sent with it and cannot be edited
+        out. Left empty, the shipped voice is used — a model is never asked
+        nothing.
+      </SettingsAside>
 
       {unsaved && (
         <SettingsProblem>{notStored('Work Summary Prompt')}</SettingsProblem>
