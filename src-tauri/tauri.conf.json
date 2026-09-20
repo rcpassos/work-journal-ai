@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "Work Journal",
-  "version": "0.14.1",
+  "version": "0.15.0",
   "identifier": "com.pipecodes.work-journal",
   "build": {
     "frontendDist": "../dist",
@@ -36,7 +36,9 @@
   },
   "plugins": {
     "sql": {
-      "preload": ["sqlite:work-journal.db"]
+      "preload": [
+        "sqlite:work-journal.db"
+      ]
     },
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IERCNzkxQzI1QUUwN0Q3MzYKUldRMjF3ZXVKUng1MndNK3lZVnR1N0k5ZElaalhPNHYwUFBkY1JURDZhY1FCVk5ubXlhd2s3N08K",
