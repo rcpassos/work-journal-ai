@@ -13,7 +13,7 @@ import {
 import { useOnScreen } from '@/components/on-screen-context'
 import { useOnScreenToast } from '@/components/on-screen-toast'
 import type { Desktop } from '@/platform/desktop'
-import { SettingsGroup, SettingsRow } from './SettingsGroup'
+import { SettingsAside, SettingsGroup, SettingsRow } from './SettingsGroup'
 
 /**
  * When a local instant is said, it is said the way the journal says days and
@@ -204,7 +204,7 @@ export default function BackupSettings({ desktop }: { desktop: Desktop }) {
     <SettingsGroup>
       <SettingsRow
         label="Backup"
-        explanation="A snapshot of the journal database — every Note and Task as stored. Taken automatically at launch into a backups folder beside it, so it shares the disk's fate; Back up now goes wherever you say, which is the copy that leaves this machine. Your API Key, Hotkeys and settings are never included."
+        explanation="A snapshot of the journal database — every Note and Task as stored."
       >
         <div className="flex items-center gap-2">
           <Button
@@ -221,9 +221,16 @@ export default function BackupSettings({ desktop }: { desktop: Desktop }) {
         </div>
       </SettingsRow>
 
+      <SettingsAside>
+        Taken automatically at launch into a backups folder beside the
+        journal, so it shares the disk's fate; Back up now goes wherever you
+        say, which is the copy that leaves this machine. Your API Key, Hotkeys
+        and settings are never included.
+      </SettingsAside>
+
       <SettingsRow
         label="Restore"
-        explanation="Return the journal to an earlier backup. The current journal is kept as a rollback file beside it and never deleted, and the app restarts into the restored one. Your API Key, Hotkeys and settings are not restored."
+        explanation="Return the journal to an earlier backup."
       >
         <div className="flex items-center gap-2">
           <Button
@@ -240,6 +247,12 @@ export default function BackupSettings({ desktop }: { desktop: Desktop }) {
           </Button>
         </div>
       </SettingsRow>
+
+      <SettingsAside>
+        The current journal is kept as a rollback file beside it and never
+        deleted, and the app restarts into the restored one. Your API Key,
+        Hotkeys and settings are not restored.
+      </SettingsAside>
 
       <AlertDialog
         open={confirmingRestore}

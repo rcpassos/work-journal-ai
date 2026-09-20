@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Separator } from '@/components/ui/separator'
 import { CHANGELOG } from '@/settings/changelog'
 import { Toaster } from '@/components/ui/sonner'
+import { TooltipProvider } from '@/components/ui/tooltip'
 import {
   SettingsGroup,
   SettingsRow,
+  SettingsSection,
 } from './SettingsGroup'
 import WindowTitleBar from '@/components/WindowTitleBar'
 import type { Journal } from '@/journal/journal'
@@ -34,11 +35,11 @@ import ChangelogSettings from './ChangelogSettings'
  * own their controls, state and platform interactions so new settings can be
  * added without making this composition root larger.
  *
- * Laid out the way macOS lays settings out: what the setting is on the left,
- * the control that changes it on the right, and a separator wherever the
- * subject changes. Every control here is the app's own — a native widget
- * brings its own font, height and focus ring, and belongs to the OS rather
- * than to this window.
+ * Laid out the way macOS lays settings out: four named sections, each one card
+ * of hairline-divided groups, with what the setting is on the left and the
+ * control that changes it on the right. Every control here is the app's own —
+ * a native widget brings its own font, height and focus ring, and belongs to
+ * the OS rather than to this window.
  *
  * The window behind this view is created on demand and genuinely closed on
  * dismiss, so the view loads once on mount and needs no reset — see
@@ -101,109 +102,105 @@ export default function SettingsView({
     >
       <WindowTitleBar />
 
-      {/* Everything the window says scrolls; the strip above it does not. The
-          first row keeps the clear space it always had, measured from under
-          the strip rather than from the top of the window. */}
-      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-6 pt-5 pb-5">
-        <HotkeySettings
-          desktop={desktop}
-          initialSettings={initialSettings}
-        />
-        <Separator />
+      {/* Every ⓘ on the page shares one provider, so a reader moving down the
+          rows is told what the next setting is without waiting again. */}
+      <TooltipProvider delay={400}>
+        {/* Everything the window says scrolls; the strip above it does not. The
+            first section keeps the clear space it always had, measured from
+            under the strip rather than from the top of the window. */}
+        <div className="flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto px-6 pt-5 pb-5">
+          <SettingsSection title="Capture">
+            <HotkeySettings desktop={desktop} initialSettings={initialSettings} />
 
-        <ThemeSettings />
-        <Separator />
+            <ThemeSettings />
 
-        <StartAtLoginSettings
-          desktop={desktop}
-          settings={settings}
-          initialSettings={initialSettings}
-        />
-        <Separator />
+            <StartAtLoginSettings
+              desktop={desktop}
+              settings={settings}
+              initialSettings={initialSettings}
+            />
+          </SettingsSection>
 
-        <MeetingImportSettings
-          desktop={desktop}
-          settings={settings}
-          initialSettings={initialSettings}
-        />
-        <Separator />
+          <SettingsSection title="Journal">
+            <MeetingImportSettings
+              desktop={desktop}
+              settings={settings}
+              initialSettings={initialSettings}
+            />
 
-        <TaskAlertSettings
-          desktop={desktop}
-          initialSettings={initialSettings}
-        />
-        <Separator />
+            <TaskAlertSettings
+              desktop={desktop}
+              initialSettings={initialSettings}
+            />
 
-        <ModelAccessSettings
-          desktop={desktop}
-          settings={settings}
-          initialSettings={initialSettings}
-        />
-        <Separator />
+            <ExportSettings desktop={desktop} journal={journal} />
 
-        {/* The prompt a model writes from sits beside where that model is
-            reached: both belong to the same call, and the field is plain
-            text while the Key is not. */}
-        <WorkSummaryPromptSettings
-          settings={settings}
-          initialSettings={initialSettings}
-        />
-        <Separator />
+            {/* Beside Export, which it is deliberately not: Export is the
+                human-readable way out, Backup the snapshot — see the two
+                entries in CONTEXT.md and ADR 0032. */}
+            <BackupSettings desktop={desktop} />
+          </SettingsSection>
 
-        <ExportSettings desktop={desktop} journal={journal} />
-        <Separator />
+          <SettingsSection title="Intelligence">
+            <ModelAccessSettings
+              desktop={desktop}
+              settings={settings}
+              initialSettings={initialSettings}
+            />
 
-        {/* Beside Export, which it is deliberately not: Export is the
-            human-readable way out, Backup the snapshot — see the two
-            entries in CONTEXT.md and ADR 0032. */}
-        <BackupSettings desktop={desktop} />
-        <Separator />
+            {/* The prompt a model writes from sits beside where that model is
+                reached: both belong to the same call, and the field is plain
+                text while the Key is not. */}
+            <WorkSummaryPromptSettings
+              settings={settings}
+              initialSettings={initialSettings}
+            />
+          </SettingsSection>
 
-        {/* Beside the version in the footer: both are about the build rather
-            than about the journal it holds. */}
-        <UpdateSettings desktop={desktop} />
+          <SettingsSection title="About">
+            {/* Beside the version in the footer: both are about the build
+                rather than about the journal it holds. */}
+            <UpdateSettings desktop={desktop} />
 
-        <Separator />
+            {/* Under the way into the next version, because it is what the
+                last one did. The version is null until it has been read, and
+                the changelog opens at its own newest entry until then. */}
+            <ChangelogSettings
+              versions={CHANGELOG}
+              running={appIdentity?.version ?? ''}
+            />
 
-        {/* Under the way into the next version, because it is what the last
-            one did. The version is null until it has been read, and the
-            changelog opens at its own newest entry until then. */}
-        <ChangelogSettings
-          versions={CHANGELOG}
-          running={appIdentity?.version ?? ''}
-        />
-        <Separator />
+            {/* The introduction itself, offered again. An action rather than a
+                setting: it changes nothing that is saved, so it sits with the
+                window's other actions rather than with a group that reads or
+                writes a value. */}
+            <SettingsGroup>
+              <SettingsRow
+                label="Onboarding"
+                explanation="See the introduction and the optional setup again, with your current Hotkeys and settings."
+              >
+                <Button variant="outline" onClick={onReplayOnboarding}>
+                  Replay introduction
+                </Button>
+              </SettingsRow>
+            </SettingsGroup>
+          </SettingsSection>
 
-        {/* The introduction itself, offered again. An action rather than a
-            setting: it changes nothing that is saved, so it sits with the
-            window's other actions rather than with a group that reads or
-            writes a value. */}
-        <SettingsGroup>
-          <SettingsRow
-            label="Onboarding"
-            explanation="See the introduction and the optional setup again, with your current Hotkeys and settings."
-          >
-            <Button variant="outline" onClick={onReplayOnboarding}>
-              Replay introduction
-            </Button>
-          </SettingsRow>
-        </SettingsGroup>
-
-        {appIdentity !== null && (
-          <>
-            <Separator className="mt-auto" />
+          {appIdentity !== null && (
             <footer
               aria-label="Application version"
-              className="flex items-center justify-center gap-2 py-3 type-meta text-muted-foreground"
+              className="mt-auto flex items-center justify-center gap-2 pt-2 type-meta text-muted-foreground"
             >
               <span>{appIdentity.version}</span>
-              {appIdentity.isDevelopment && <Badge variant="outline">Dev</Badge>}
+              {appIdentity.isDevelopment && (
+                <Badge variant="outline">Dev</Badge>
+              )}
             </footer>
-          </>
-        )}
+          )}
 
-        <Toaster />
-      </div>
+          <Toaster />
+        </div>
+      </TooltipProvider>
     </div>
   )
 }
