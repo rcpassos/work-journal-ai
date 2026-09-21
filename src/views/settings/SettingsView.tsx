@@ -107,8 +107,15 @@ export default function SettingsView({
       <TooltipProvider delay={400}>
         {/* Everything the window says scrolls; the strip above it does not. The
             first section keeps the clear space it always had, measured from
-            under the strip rather than from the top of the window. */}
-        <div className="flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto px-6 pt-5 pb-5">
+            under the strip rather than from the top of the window.
+
+            `relative` so this is the containing block of what it holds: every
+            row's explanation is screen-reader-only text, which is positioned
+            absolutely, and an absolute box is only clipped by the scroller
+            that is its containing block. Without it those explanations sit at
+            their static positions outside the scroller, the page itself grows
+            to reach the last one, and the window gets a second scrollbar. */}
+        <div className="relative flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto px-6 pt-5 pb-5">
           <SettingsSection title="Capture">
             <HotkeySettings desktop={desktop} initialSettings={initialSettings} />
 
