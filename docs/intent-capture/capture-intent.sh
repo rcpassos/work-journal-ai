@@ -31,7 +31,7 @@ case "$tool" in
     jq -c --arg timestamp "$timestamp" '
       select(.hook_event_name == "UserPromptSubmit")
       | select((.session_id | type) == "string")
-      | select((.prompt | type) == "string" and .prompt != "")
+      | select((.prompt | type) == "string")
       | {
           tool: "claude-code",
           session_id: .session_id,
@@ -49,8 +49,10 @@ case "$tool" in
       | select((.["thread-id"] | type) == "string")
       | select((.["turn-id"] | type) == "string")
       | select((.["input-messages"] | type) == "array")
-      | ([.["input-messages"][] | select(type == "string")] | join("\n")) as $text
-      | select($text != "")
+      | (
+          [.["input-messages"][] | select(type == "string")]
+          | if length > 0 then .[-1] else "" end
+        ) as $text
       | {
           tool: "codex",
           thread_id: .["thread-id"],

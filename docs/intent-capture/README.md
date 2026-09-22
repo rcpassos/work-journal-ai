@@ -22,7 +22,7 @@ The file contains the text of your prompts. Keep it in a private location and ou
 
 ## Claude Code
 
-Claude Code's `UserPromptSubmit` event fires once per submitted prompt, before Claude processes it. The snippet records the event's `prompt`, `session_id`, and `cwd`. This event does not provide a turn ID or say whether the session is interactive, so `turn_id` and `interactive` are `null`.
+Claude Code's `UserPromptSubmit` event fires once per submitted prompt, before Claude processes it. The snippet records the event's `prompt`, `session_id`, and `cwd`, including an empty prompt string if one is provided. This event does not provide a turn ID or say whether the session is interactive, so `turn_id` and `interactive` are `null`.
 
 `SessionEnd` is deliberately not used. It provides session metadata, a reason, and a transcript path, but no prompt text. Reading that transcript would reintroduce the undocumented session-file parsing this experiment avoids.
 
@@ -54,7 +54,7 @@ Add this event to `~/.claude/settings.json`, merging it into any existing `hooks
 
 ## Codex
 
-Codex's `notify` command runs for `agent-turn-complete`, once per completed turn. Its JSON payload includes `thread-id`, `turn-id`, `cwd`, `input-messages`, and an optional `client`. The snippet joins the turn's user messages in order with a newline into one `text` value. It stores the raw `client`; `interactive` is `true` for `codex-tui` and `null` when the payload does not establish interactivity.
+Codex's `notify` command runs for `agent-turn-complete`, once per completed turn. Its JSON payload includes `thread-id`, `turn-id`, `cwd`, `input-messages`, and an optional `client`. In the current Codex implementation, `input-messages` is taken from the model's retained conversation input and may repeat prompts from earlier turns. The snippet records only the final user-message string, the latest prompt in that history, so earlier prompts are not counted again. It stores the raw `client`; `interactive` is `true` for `codex-tui` and `null` when the payload does not establish interactivity.
 
 Add this line to `~/.codex/config.toml`, replacing `/Users/YOU` with your home directory:
 
@@ -66,6 +66,6 @@ Codex appends its notification JSON as the final command argument and launches t
 
 ## Reading the file
 
-Each line is one hook event, not a proposed Note. Claude records a prompt at submission; Codex records the same turn's messages when the turn completes, because that is when `notify` fires. `timestamp` is when the local handler starts, in UTC. Use the session or thread ID to group turns. The week of real use and its reading belong to the user; record the results on issue #264 before deciding what a day of intent should become.
+Each line is one hook event, not a proposed Note. Claude records a prompt at submission; Codex records the latest user message when the turn completes, because that is when `notify` fires. `timestamp` is when the local handler starts, in UTC. Use the session or thread ID to group turns. The week of real use and its reading belong to the user; record the results on issue #264 before deciding what a day of intent should become.
 
-References: [Claude Code hooks](https://code.claude.com/docs/en/hooks), [Codex configuration reference](https://developers.openai.com/codex/config-reference), and the [Codex notify payload implementation](https://github.com/openai/codex/blob/main/codex-rs/hooks/src/legacy_notify.rs).
+References: [Claude Code hooks](https://code.claude.com/docs/en/hooks), [Codex configuration reference](https://developers.openai.com/codex/config-reference), [Codex turn handling](https://github.com/openai/codex/blob/main/codex-rs/core/src/session/turn.rs), and the [Codex notify payload implementation](https://github.com/openai/codex/blob/main/codex-rs/hooks/src/legacy_notify.rs).
