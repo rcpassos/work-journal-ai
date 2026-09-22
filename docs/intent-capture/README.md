@@ -2,7 +2,7 @@
 
 These snippets collect a week of local measurements for issue [#263](https://github.com/rcpassos/work-journal-ai/issues/263). They append directly to a plain JSON Lines file. They do not call Work Journal, write Notes, or touch its database. The app ships none of this.
 
-The shared record has the tool name, the tool's session or thread ID, a turn ID when the tool provides one, a UTC `timestamp` for when the hook ran, the working directory, the user's text, and an `interactive` value when the tool exposes enough information to identify it. It contains no Project name. Each event is one physical JSON line; embedded line breaks in prompt text are JSON-escaped.
+The shared record has the tool name, the tool's session or thread ID, a turn ID when the tool provides one, a UTC `timestamp` for when the hook ran, the working directory, the text string exposed by the hook, and an `interactive` value when the tool exposes enough information to identify it. It contains no Project name. Each event is one physical JSON line; embedded line breaks in prompt text are JSON-escaped.
 
 ## Install
 
@@ -54,7 +54,9 @@ Add this event to `~/.claude/settings.json`, merging it into any existing `hooks
 
 ## Codex
 
-Codex's `notify` command runs for `agent-turn-complete`, once per completed turn. Its JSON payload includes `thread-id`, `turn-id`, `cwd`, `input-messages`, and an optional `client`. In the current Codex implementation, `input-messages` is taken from the model's retained conversation input and may repeat prompts from earlier turns. The snippet records only the final user-message string, the latest prompt in that history, so earlier prompts are not counted again. It stores the raw `client`; `interactive` is `true` for `codex-tui` and `null` when the payload does not establish interactivity.
+Codex's `notify` command runs for `agent-turn-complete`, once per completed turn. Its JSON payload includes `thread-id`, `turn-id`, `cwd`, `input-messages`, and an optional `client`. In the current Codex implementation, `input-messages` is taken from the model's retained conversation input and may repeat prompts from earlier turns. The snippet records only the final string in that array, so earlier prompts are not counted again. It stores the raw `client`; `interactive` is `true` for `codex-tui` and `null` when the payload does not establish interactivity.
+
+An upstream report for Codex CLI 0.153.4 describes `agent-turn-complete` notifications from hidden background task-title generation. Those events share the normal event and client values, and the payload has no origin field. The snippet keeps them because filtering by prompt wording could also discard a real user prompt. If these generated prompts appear during the week, mark and report them separately from typed prompts.
 
 Add this line to `~/.codex/config.toml`, replacing `/Users/YOU` with your home directory:
 
@@ -66,6 +68,6 @@ Codex appends its notification JSON as the final command argument and launches t
 
 ## Reading the file
 
-Each line is one hook event, not a proposed Note. Claude records a prompt at submission; Codex records the latest user message when the turn completes, because that is when `notify` fires. `timestamp` is when the local handler starts, in UTC. Use the session or thread ID to group turns. The week of real use and its reading belong to the user; record the results on issue #264 before deciding what a day of intent should become.
+Each line is one hook event, not a proposed Note. Claude records a prompt at submission; Codex records the final `input-messages` string when the turn completes, because that is when `notify` fires. `timestamp` is when the local handler starts, in UTC. Use the session or thread ID to group turns. The week of real use and its reading belong to the user; record the results on issue #264 before deciding what a day of intent should become.
 
-References: [Claude Code hooks](https://code.claude.com/docs/en/hooks), [Codex configuration reference](https://developers.openai.com/codex/config-reference), [Codex turn handling](https://github.com/openai/codex/blob/main/codex-rs/core/src/session/turn.rs), and the [Codex notify payload implementation](https://github.com/openai/codex/blob/main/codex-rs/hooks/src/legacy_notify.rs).
+References: [Claude Code hooks](https://code.claude.com/docs/en/hooks), [Codex configuration reference](https://developers.openai.com/codex/config-reference), [Codex turn handling](https://github.com/openai/codex/blob/main/codex-rs/core/src/session/turn.rs), the [Codex notify payload implementation](https://github.com/openai/codex/blob/main/codex-rs/hooks/src/legacy_notify.rs), and the [Codex title-generation notification report](https://github.com/openai/codex/issues/43384).
