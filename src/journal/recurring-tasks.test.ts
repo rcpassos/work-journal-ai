@@ -17,7 +17,7 @@ import {
   type Task,
   type TaskOccurrence,
 } from './journal'
-import { fixedClock, migrationSql, openTestDatabase } from './testing/database'
+import { fixedClock, migrationAt, openTestDatabase } from './testing/database'
 
 // Every test drives the core through its public operations, against the same
 // SQL the app ships — including the index that permits exactly one Open
@@ -1272,7 +1272,9 @@ describe('the schema keeps one occurrence per slot', () => {
     // Production is sqlx, which enables foreign keys by default. The harness
     // must match, or these tests run against a laxer database than ships.
     database.exec('PRAGMA foreign_keys = ON')
-    const migrations = migrationSql().slice(0, 6)
+    const migrations = Array.from({ length: 6 }, (_, position) =>
+      migrationAt(position),
+    )
     for (const sql of migrations) database.exec(sql)
 
     // The whole of a script at once, the way sqlx runs a migration — one
@@ -1302,6 +1304,15 @@ describe('the schema keeps one occurrence per slot', () => {
       },
     }
     return { driver, execScript, close: () => database.close() }
+  }
+
+  /**
+   * Migration 7 by position — the seventh file is the one under test here,
+   * applied by hand onto the version 6 shape. Never the last file: later
+   * migrations exist, and the last file is no longer this one.
+   */
+  function migration7(): string {
+    return migrationAt(6)
   }
 
   /**
@@ -1365,7 +1376,7 @@ describe('the schema keeps one occurrence per slot', () => {
     openJournals.push(close)
     await seedDuplicatedSlot(driver)
 
-    execScript(migrationSql().at(-1)!)
+    execScript(migration7())
 
     const rows = await driver.select<{ id: string; completed_at: string }>(
       `SELECT id, completed_at FROM task_occurrences
@@ -1403,7 +1414,7 @@ describe('the schema keeps one occurrence per slot', () => {
       [],
     )
 
-    execScript(migrationSql().at(-1)!)
+    execScript(migration7())
 
     const open = await driver.select<{ advanced_from: string }>(
       `SELECT advanced_from FROM task_occurrences WHERE id = 'occ-open'`,
@@ -1416,7 +1427,7 @@ describe('the schema keeps one occurrence per slot', () => {
     const { driver, execScript, close } = await journalAtVersion6()
     openJournals.push(close)
     await seedDuplicatedSlot(driver)
-    execScript(migrationSql().at(-1)!)
+    execScript(migration7())
 
     const occurrences = await driver.select<{
       id: string
@@ -1473,7 +1484,7 @@ describe('the schema keeps one occurrence per slot', () => {
       [],
     )
 
-    expect(() => execScript(migrationSql().at(-1)!)).not.toThrow()
+    expect(() => execScript(migration7())).not.toThrow()
 
     const rows = await driver.select<{ id: string; completed_at: string | null }>(
       `SELECT id, completed_at FROM task_occurrences

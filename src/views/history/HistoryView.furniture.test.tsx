@@ -8,7 +8,7 @@ import {
   dayCell,
   installMeasurementStubs,
   showHistory,
-  type HotkeyAnswer,
+  type HistoryOptions,
 } from './testing/history-view'
 
 // The furniture around the list: the heading that says which day a run of
@@ -175,7 +175,7 @@ describe('the Nudge', () => {
 /** History as this file reads it: opened, with the header's two controls. */
 async function showFurniture(
   captured: Array<{ at: string; body: string }>,
-  answer: HotkeyAnswer = {},
+  answer: HistoryOptions = {},
 ) {
   const opened = await showHistory(captured, answer)
 

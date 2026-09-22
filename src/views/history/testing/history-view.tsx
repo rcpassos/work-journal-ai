@@ -23,30 +23,42 @@ export function closeTestDatabases() {
 }
 
 /**
- * What the desktop should say when the window asks about the Hotkey. Only the
- * empty state asks, and the answer is the whole of what it teaches.
+ * What the harness is asked for beside the Captures: how the desktop should
+ * answer the Hotkey question, and which Notes arrive by another origin.
  */
-export interface HotkeyAnswer {
+export interface HistoryOptions {
   hotkey?: HotkeyStatuses
   /** The OS refusing the question, rather than answering it unfavourably. */
   refuseHotkeyStatus?: boolean
+  /**
+   * Notes that arrive after the Captures and before History reads — an
+   * Import or an Observe, neither of which is a Capture the harness seeds.
+   */
+  arrive?: (core: Journal) => Promise<unknown>
 }
 
-/** History opened over the given Captures, already showing its first list. */
+/** History opened over the given journal, already showing its first list. */
 export async function showHistory(
   captured: Array<{ at: string; body: string }>,
-  { hotkey, refuseHotkeyStatus = false }: HotkeyAnswer = {},
+  { hotkey, refuseHotkeyStatus = false, arrive }: HistoryOptions = {},
 ) {
   const { driver, core, clock, notes } = await journalHolding(captured)
+  await arrive?.(core)
 
   const desktop = fakeDesktop({ driver, hotkey })
   if (refuseHotkeyStatus) {
     desktop.hotkeyStatus = () => Promise.reject(new Error('no answer'))
   }
   render(<HistoryView desktop={desktop} journal={Promise.resolve(core)} />)
-  await firstListShown(captured.length)
+  await firstListShown(await journalSize(core))
 
   return { desktop, core, clock, notes }
+}
+
+/** How many Notes the journal holds — what tells the wait there is a list at all. */
+async function journalSize(core: Journal): Promise<number> {
+  const all = await core.notesForFilter({ from: '2000-01-01', to: '2100-01-01' })
+  return all.length
 }
 
 /**

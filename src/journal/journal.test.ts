@@ -1,4 +1,5 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { DatabaseSync } from 'node:sqlite'
 import {
   ANY_PROJECT,
   createJournal,
@@ -38,12 +39,14 @@ import {
   type CalendarEvent,
   type Journal,
   type ProjectConstraint,
+  type SqlDriver,
+  type SourceEvent,
   type Task,
   type TaskGroup,
   type TaskGroupName,
   type TaskOccurrence,
 } from './journal'
-import { fixedClock, migrationSql, openTestDatabase } from './testing/database'
+import { fixedClock, migrationAt, migrationSql, openTestDatabase } from './testing/database'
 
 // Every test drives the core through its public operations and asserts on what
 // comes back out. Nothing here asserts that a particular query ran.
@@ -60,7 +63,7 @@ async function journalAt(instant: string) {
   const { driver, close } = await openTestDatabase()
   openJournals.push(close)
   const clock = fixedClock(instant)
-  return { journal: createJournal({ clock, driver }), clock }
+  return { journal: createJournal({ clock, driver }), clock, driver }
 }
 
 /**
@@ -2143,9 +2146,12 @@ describe('importMeeting', () => {
   it('files the meeting under the morning it happened in, not the evening it was swept in', async () => {
     const { journal } = await journalAt('2026-03-09T18:40:00')
 
-    const note = await journal.importMeeting(
-      event({ title: 'Weekly sync', startsAt: '2026-03-09T09:30', endsAt: '2026-03-09T10:00' }),
-    )
+    const weekly = event({
+      title: 'Weekly sync',
+      startsAt: '2026-03-09T09:30',
+      endsAt: '2026-03-09T10:00',
+    })
+    const note = await journal.importMeeting(weekly)
 
     expect(note).toMatchObject({
       body: 'Weekly sync',
@@ -2153,6 +2159,9 @@ describe('importMeeting', () => {
       journalDay: '2026-03-09',
       editedAt: null,
       origin: 'import',
+      // Written with the Note from now on: the meeting key, under its source.
+      source: 'import',
+      sourceKey: meetingKey(weekly),
     })
     expect(note!.capturedAt).toBe(local('2026-03-09T09:30').toISOString())
   })
@@ -2217,9 +2226,11 @@ describe('importMeeting', () => {
 
   it('is edited, refiled and filed like any other Note', async () => {
     const { journal } = await journalAt('2026-03-09T18:40:00')
-    const note = await journal.importMeeting(
-      event({ startsAt: '2026-03-09T09:30', endsAt: '2026-03-09T10:00' }),
-    )
+    const weekly = event({
+      startsAt: '2026-03-09T09:30',
+      endsAt: '2026-03-09T10:00',
+    })
+    const note = await journal.importMeeting(weekly)
 
     const reworded = await journal.editBody(note!.id, 'Standup: agreed the cutover')
     const refiled = await journal.refile(reworded.id, '2026-03-10')
@@ -2233,6 +2244,8 @@ describe('importMeeting', () => {
     })
     // Provenance survives every correction, exactly as it does for a Capture.
     expect(filed.capturedAt).toBe(note!.capturedAt)
+    expect(filed.source).toBe('import')
+    expect(filed.sourceKey).toBe(meetingKey(weekly))
   })
 
   it('does not count towards the day the tray reports', async () => {
@@ -2257,6 +2270,345 @@ describe('importMeeting', () => {
     const digest = await journal.digest(rangeForJournalDay('2026-03-09'))
     expect(digest.markdown).toBe('- Weekly sync\n- the migration landed')
     expect(digest.noteCount).toBe(2)
+  })
+})
+
+/** One event from a source the journal watches, as `observe` takes it in. */
+function commitEvent(overrides: Partial<SourceEvent> = {}): SourceEvent {
+  return {
+    source: 'commit',
+    eventKey: '6f47772@work-journal-ai',
+    body: 'Fix the second scrollbar on Settings',
+    happenedAt: local('2026-03-09T23:40').toISOString(),
+    project: null,
+    ...overrides,
+  }
+}
+
+describe('observe', () => {
+  it('becomes a Note that records its source, on the day the work happened', async () => {
+    // Swept after midnight, for work done the night before — the case that
+    // decides whether identity and filing follow the work or the sweep.
+    const { journal } = await journalAt('2026-03-10T00:15:00')
+
+    const note = await journal.observe(commitEvent())
+
+    expect(note).toMatchObject({
+      body: 'Fix the second scrollbar on Settings',
+      project: null,
+      editedAt: null,
+      origin: 'observe',
+      source: 'commit',
+      sourceKey: '6f47772@work-journal-ai',
+      journalDay: '2026-03-09',
+    })
+    expect(note!.capturedAt).toBe(local('2026-03-09T23:40').toISOString())
+
+    // And every Note read back carries it too.
+    const [read] = await notesOn(journal, '2026-03-09')
+    expect(read).toMatchObject({
+      origin: 'observe',
+      source: 'commit',
+      sourceKey: '6f47772@work-journal-ai',
+    })
+
+    // The sweep's own day holds nothing: Journal Day derives from the work.
+    expect(await notesOn(journal, '2026-03-10')).toEqual([])
+  })
+
+  it('refuses an event it has already handled, and deleting the Note refuses it for good', async () => {
+    const { journal } = await journalAt('2026-03-09T18:40:00')
+    const taken = commitEvent()
+
+    const note = await journal.observe(taken)
+    expect(await journal.observe(taken)).toBeNull()
+
+    // Deletion is how the user refuses the event: the handled row outlives
+    // the Note, so the next sweep cannot bring it back.
+    await journal.delete(note!.id)
+    expect(await journal.observe(taken)).toBeNull()
+    expect(await notesOn(journal, '2026-03-09')).toEqual([])
+  })
+
+  it('never lets one source collide with another over the same event key', async () => {
+    const { journal } = await journalAt('2026-03-09T18:40:00')
+    const at = local('2026-03-09T09:30').toISOString()
+
+    const asCommit = await journal.observe(
+      commitEvent({ eventKey: 'shared-key', happenedAt: at, body: 'Fix the scrollbar' }),
+    )
+    const asMeeting = await journal.observe(
+      commitEvent({ source: 'import', eventKey: 'shared-key', happenedAt: at, body: 'Weekly sync' }),
+    )
+
+    expect(asCommit).not.toBeNull()
+    expect(asMeeting).not.toBeNull()
+    // The source decides the origin, so the meeting's is an Import as ever.
+    expect(asMeeting!.origin).toBe('import')
+    expect(await notesOn(journal, '2026-03-09')).toHaveLength(2)
+
+    // And each source is still refused on its own.
+    expect(
+      await journal.observe(
+        commitEvent({ eventKey: 'shared-key', happenedAt: at, body: 'Fix the scrollbar' }),
+      ),
+    ).toBeNull()
+  })
+
+  it('writes the handled row and the Note in one transaction, so an interruption leaves neither', async () => {
+    const { driver, close } = await openTestDatabase()
+    openJournals.push(close)
+    const clock = fixedClock('2026-03-09T18:40:00')
+    const interrupted: SqlDriver = {
+      ...driver,
+      async transaction() {
+        throw new Error('interrupted before the commit')
+      },
+    }
+    const sweeping = createJournal({ clock, driver: interrupted })
+
+    await expect(sweeping.observe(commitEvent())).rejects.toThrow('interrupted')
+
+    // What a real interruption leaves behind: neither write survived,
+    // because neither was ever made outside the transaction — so the event
+    // is not lost (the sweep may take it again) and no Note stands alone
+    // against a handled row that never came.
+    const journal = createJournal({ clock, driver })
+    expect(await notesOn(journal, '2026-03-09')).toEqual([])
+    expect(await journal.observe(commitEvent())).not.toBeNull()
+  })
+
+  it('writes the handled row first, so a come-apart can only ever lose an event', async () => {
+    const { journal, driver } = await journalAt('2026-03-09T18:40:00')
+    const transaction = vi.spyOn(driver, 'transaction')
+
+    await journal.observe(commitEvent())
+
+    const [statements] = transaction.mock.calls[0]
+    expect(statements).toHaveLength(2)
+    expect(statements[0].sql).toContain('handled_events')
+    expect(statements[0].params.slice(0, 2)).toEqual([
+      'commit',
+      '6f47772@work-journal-ai',
+    ])
+  })
+
+  it('never changes where it came from, however it is corrected', async () => {
+    const { journal } = await journalAt('2026-03-09T18:40:00')
+    const note = await journal.observe(commitEvent())
+
+    const reworded = await journal.editBody(note!.id, 'Fixed the second scrollbar')
+    const refiled = await journal.refile(reworded.id, '2026-03-10')
+    const filed = await journal.editProject(refiled.id, 'habic')
+
+    expect(filed).toMatchObject({
+      origin: 'observe',
+      source: 'commit',
+      sourceKey: '6f47772@work-journal-ai',
+    })
+    expect(filed.capturedAt).toBe(note!.capturedAt)
+  })
+
+  it('does not count towards the day the tray reports', async () => {
+    const { journal } = await journalAt('2026-03-09T18:40:00')
+
+    await journal.capture('the migration landed')
+    await journal.observe(commitEvent())
+
+    expect(await journal.capturedNoteCount('2026-03-09')).toBe(1)
+  })
+
+  it('is read by Digest, Export and Search with no change of their own, and rendered once', async () => {
+    const { journal } = await journalAt('2026-03-09T18:40:00')
+    await journal.capture('the migration landed')
+    await journal.observe(commitEvent())
+
+    // In Captured At order, among the rest, with nothing marking it apart.
+    const digest = await journal.digest(rangeForJournalDay('2026-03-09'))
+    expect(digest.markdown).toBe(
+      '- the migration landed\n- Fix the second scrollbar on Settings',
+    )
+    expect(digest.noteCount).toBe(2)
+
+    const exported = await journal.exportJournal()
+    expect(exported.noteCount).toBe(2)
+    expect(
+      exported.markdown.match(/Fix the second scrollbar on Settings/g),
+    ).toHaveLength(1)
+
+    expect(
+      (await journal.notesMatching('scrollbar')).map((note) => note.body),
+    ).toEqual(['Fix the second scrollbar on Settings'])
+  })
+})
+
+describe("a Note's source", () => {
+  it('is nothing at all on a Note the user typed', async () => {
+    const { journal } = await journalAt('2026-03-09T10:00:00')
+
+    const note = await journal.capture('the migration landed')
+
+    expect(note).toMatchObject({ origin: 'capture', source: null, sourceKey: null })
+    const [read] = await notesOn(journal, '2026-03-09')
+    expect(read).toMatchObject({ source: null, sourceKey: null })
+  })
+
+  it('stays null on an Imported Note written before sources were recorded', async () => {
+    const { journal, driver } = await journalAt('2026-03-09T18:40:00')
+
+    // Exactly the columns a Note written before migration 0008 carried.
+    await driver.execute(
+      `INSERT INTO notes (id, body, captured_at, journal_day, origin)
+       VALUES (?, ?, ?, ?, ?)`,
+      ['old-note', 'Weekly sync', '2026-03-09T09:30:00.000Z', '2026-03-09', 'import'],
+    )
+
+    const [read] = await notesOn(journal, '2026-03-09')
+    expect(read).toMatchObject({
+      origin: 'import',
+      source: null,
+      sourceKey: null,
+    })
+  })
+})
+
+describe('migration 0008', () => {
+  /**
+   * A journal exactly as migration 7 left it — one Imported Note, one
+   * handled meeting — taken through the third-origin migration by the same
+   * file the app ships.
+   */
+  function journalBefore0008(): DatabaseSync {
+    const database = new DatabaseSync(':memory:')
+    for (let position = 0; position < 7; position += 1) {
+      database.exec(migrationAt(position))
+    }
+    database.exec(`
+      INSERT INTO notes (id, body, captured_at, journal_day, edited_at, project, origin)
+      VALUES ('old', 'Weekly sync', '2026-03-09T09:30:00.000Z', '2026-03-09', NULL, 'habic', 'import')
+    `)
+    database.exec(`
+      INSERT INTO imported_meetings (event_key, handled_at)
+      VALUES ('event-1@2026-03-09T09:30:00.000Z', '2026-03-09T18:40:00.000Z')
+    `)
+    database.exec(migrationAt(7))
+    return database
+  }
+
+  function columnNames(database: DatabaseSync, table: string): string[] {
+    return (
+      database
+        .prepare(`SELECT name FROM pragma_table_info('${table}')`)
+        .all() as Array<{ name: string }>
+    ).map((row) => row.name)
+  }
+
+  it('rebuilds notes keeping every column in order and appending the source pair after origin', () => {
+    const database = journalBefore0008()
+
+    expect(columnNames(database, 'notes')).toEqual([
+      'id',
+      'body',
+      'captured_at',
+      'journal_day',
+      'edited_at',
+      'project',
+      'origin',
+      'source',
+      'source_key',
+    ])
+
+    // The rows arrive whole: same Note, same filing, no source of its own.
+    const note = database
+      .prepare('SELECT * FROM notes WHERE id = ?')
+      .get('old') as Record<string, unknown>
+    expect(note).toMatchObject({
+      body: 'Weekly sync',
+      project: 'habic',
+      origin: 'import',
+      source: null,
+      source_key: null,
+    })
+
+    // And both indexes are back, or the day filter and the Project axis
+    // would read a table with nothing indexed on it.
+    const indexes = (
+      database
+        .prepare(
+          `SELECT name FROM sqlite_master
+           WHERE type = 'index' AND tbl_name = 'notes' AND name LIKE 'notes_%'`,
+        )
+        .all() as Array<{ name: string }>
+    ).map((row) => row.name)
+    expect(indexes).toEqual(
+      expect.arrayContaining(['notes_journal_day', 'notes_project']),
+    )
+
+    database.close()
+  })
+
+  it('accepts the third origin and the source pair, and refuses what is not one', () => {
+    const database = journalBefore0008()
+
+    database.exec(`
+      INSERT INTO notes (id, body, captured_at, journal_day, origin, source, source_key)
+      VALUES ('observed', 'Fix the second scrollbar on Settings',
+              '2026-03-09T23:40:00.000Z', '2026-03-09', 'observe', 'commit', '6f47772')
+    `)
+    expect(() =>
+      database.exec(`
+        INSERT INTO notes (id, body, captured_at, journal_day, origin)
+        VALUES ('bogus', 'a line', '2026-03-09T10:00:00.000Z', '2026-03-09', 'summarise')
+      `),
+    ).toThrow()
+
+    // The pair travels together: a source without its key could never be
+    // matched against a handled event.
+    expect(() =>
+      database.exec(`
+        INSERT INTO notes (id, body, captured_at, journal_day, origin, source)
+        VALUES ('half', 'a line', '2026-03-09T10:00:00.000Z', '2026-03-09', 'observe', 'commit')
+      `),
+    ).toThrow()
+
+    database.close()
+  })
+
+  it('carries every handled meeting across as a handled event of the import source, and drops the old table', () => {
+    const database = journalBefore0008()
+
+    const handled = database
+      .prepare('SELECT source, event_key, handled_at FROM handled_events')
+      .all()
+    expect(handled).toEqual([
+      {
+        source: 'import',
+        event_key: 'event-1@2026-03-09T09:30:00.000Z',
+        handled_at: '2026-03-09T18:40:00.000Z',
+      },
+    ])
+
+    const tables = (
+      database
+        .prepare(`SELECT name FROM sqlite_master WHERE type = 'table'`)
+        .all() as Array<{ name: string }>
+    ).map((row) => row.name)
+    expect(tables).not.toContain('imported_meetings')
+
+    // Keyed on the pair, so a duplicate of either half alone is refused...
+    expect(() =>
+      database.exec(`
+        INSERT INTO handled_events (source, event_key, handled_at)
+        VALUES ('import', 'event-1@2026-03-09T09:30:00.000Z', '2026-03-09T19:00:00.000Z')
+      `),
+    ).toThrow()
+    // ...while the same key of another source stands beside it.
+    database.exec(`
+      INSERT INTO handled_events (source, event_key, handled_at)
+      VALUES ('commit', 'event-1@2026-03-09T09:30:00.000Z', '2026-03-09T19:00:00.000Z')
+    `)
+
+    database.close()
   })
 })
 
