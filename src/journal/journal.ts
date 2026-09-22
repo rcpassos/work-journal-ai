@@ -42,11 +42,12 @@ export interface SqlDriver {
 }
 
 /**
- * The two ways a Note comes into existence, and there is no third — see
+ * How a Note came into existence — see
  * docs/adr/0010-notes-have-two-origins.md. `capture` is the user typing one;
- * `import` is a meeting swept off their calendar without being asked.
+ * `import` is a meeting swept off their calendar; `observe` records work that
+ * already happened without asking the user to write it down.
  */
-export type NoteOrigin = 'capture' | 'import'
+export type NoteOrigin = 'capture' | 'import' | 'observe'
 
 export interface Note {
   id: string
@@ -63,10 +64,14 @@ export interface Note {
   journalDay: string
   /** Null until the Note is changed after capture. */
   editedAt: string | null
+  /** The source that produced this Note, or null for a Captured or old Note. */
+  source: string | null
+  /** The source event identity, or null for a Captured or old Note. */
+  sourceKey: string | null
   /**
-   * Which of the two ways this Note came into existence. Ordinary in every
-   * other respect: an Imported Note is edited, refiled and deleted like any
-   * other, and only History renders it any differently.
+   * Which of the three ways this Note came into existence. Imported and
+   * Observed Notes are edited, refiled and deleted like any other; History
+   * renders both muted, and shows a stored source on hover.
    */
   origin: NoteOrigin
 }
@@ -289,6 +294,20 @@ export interface CalendarEvent {
   isDeclined: boolean
 }
 
+/** A work event already selected by its source and ready to become a Note. */
+export interface ObservedEvent {
+  /** Which source the event belongs to, so event keys cannot collide. */
+  source: string
+  /** Stable identity within `source`. */
+  eventKey: string
+  /** The event's single-line Body. */
+  body: string
+  /** The instant the work happened, not when the event was found. */
+  happenedAt: Date | string
+  /** Optional Project filing. Null leaves the Note Unfiled. */
+  project?: string | null
+}
+
 /**
  * The range of Journal Days currently being viewed, inclusive at both ends. A
  * single day is a range whose ends are equal. One of the Filter's two axes,
@@ -388,6 +407,13 @@ export interface Journal {
    * all is `meetingsToImport`'s question, not this one's.
    */
   importMeeting(event: CalendarEvent): Promise<Note | null>
+  /**
+   * Turns one already-selected source event into an Observed Note, or returns
+   * null when the same source event has been handled before. Its identity stays
+   * in the journal after its Note is deleted, so a later sweep cannot bring it
+   * back.
+   */
+  observe(event: ObservedEvent): Promise<Note | null>
   /**
    * Rewords a Note, so the journal reads correctly later. Captured At is
    * untouched — provenance survives every correction — and the Note is marked
@@ -656,6 +682,8 @@ interface NoteRow {
   journal_day: string
   edited_at: string | null
   origin: string
+  source: string | null
+  source_key: string | null
 }
 
 /**
@@ -989,30 +1017,32 @@ const DELETE_OCCURRENCES_OF_TASK = `
 `
 
 const INSERT_NOTE = `
-  INSERT INTO notes (id, body, project, captured_at, journal_day, edited_at, origin)
-  VALUES (?, ?, ?, ?, ?, NULL, ?)
+  INSERT INTO notes (
+    id, body, project, captured_at, journal_day, edited_at, origin, source, source_key
+  )
+  VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?)
 `
 
 /**
- * A meeting the sweep has handled. Written before the Note it becomes, and
- * never removed: the row outliving the Note is the whole point, since deleting
- * an Imported Note is how the user refuses its meeting for good.
+ * A source event the journal has handled. Written before the Note it becomes,
+ * and never removed: the row outliving the Note is the whole point, since
+ * deleting an Imported or Observed Note refuses its event for good.
  */
-const INSERT_IMPORTED_MEETING = `
-  INSERT INTO imported_meetings (event_key, handled_at)
-  VALUES (?, ?)
+const INSERT_HANDLED_EVENT = `
+  INSERT INTO handled_events (source, event_key, handled_at)
+  VALUES (?, ?, ?)
 `
 
-/** Whether this occurrence has been swept before, whatever became of the Note. */
-const SELECT_IMPORTED_MEETING = `
-  SELECT event_key
-  FROM imported_meetings
-  WHERE event_key = ?
+/** Whether this source event has been handled, whatever became of its Note. */
+const SELECT_HANDLED_EVENT = `
+  SELECT source, event_key
+  FROM handled_events
+  WHERE source = ? AND event_key = ?
 `
 
 /** Every read returns a whole Note; only the predicate and the order differ. */
 const SELECT_NOTES = `
-  SELECT id, body, project, captured_at, journal_day, edited_at, origin
+  SELECT id, body, project, captured_at, journal_day, edited_at, origin, source, source_key
   FROM notes
 `
 
@@ -1224,6 +1254,91 @@ export function createJournal({
     return advanced
   }
 
+  /**
+   * Records the source identity first and the Note second in one transaction.
+   * The source row outlives the Note, so deleting the Note is a permanent
+   * refusal of that event. A concurrent sweep that wins the unique key first
+   * is the same refusal as one found by the read below.
+   */
+  async function recordSourceEvent({
+    source,
+    eventKey,
+    body,
+    happenedAt,
+    project,
+    origin,
+  }: {
+    source: string
+    eventKey: string
+    body: string
+    happenedAt: Date
+    project: string | null
+    origin: Exclude<NoteOrigin, 'capture'>
+  }): Promise<Note | null> {
+    if (source.trim() === '' || eventKey.trim() === '') {
+      throw new Error('A source event needs both a source and an event key.')
+    }
+
+    const [handled] = await driver.select<{ source: string; event_key: string }>(
+      SELECT_HANDLED_EVENT,
+      [source, eventKey],
+    )
+    if (handled !== undefined) {
+      return null
+    }
+
+    assertOneLine(body)
+    if (isBlank(body)) {
+      throw new Error('A Body cannot be empty.')
+    }
+
+    const occurredAt = new Date(happenedAt.getTime())
+    const note: Note = {
+      id: crypto.randomUUID(),
+      body,
+      project: project === null ? null : projectName(project),
+      capturedAt: occurredAt.toISOString(),
+      journalDay: journalDayFor(occurredAt),
+      editedAt: null,
+      origin,
+      source,
+      sourceKey: eventKey,
+    }
+
+    try {
+      await driver.transaction([
+        {
+          sql: INSERT_HANDLED_EVENT,
+          params: [source, eventKey, clock.now().toISOString()],
+        },
+        {
+          sql: INSERT_NOTE,
+          params: [
+            note.id,
+            note.body,
+            note.project,
+            note.capturedAt,
+            note.journalDay,
+            note.origin,
+            note.source,
+            note.sourceKey,
+          ],
+        },
+      ])
+    } catch (error) {
+      const [handledAfterConflict] = await driver.select<{
+        source: string
+        event_key: string
+      }>(SELECT_HANDLED_EVENT, [source, eventKey])
+      if (handledAfterConflict !== undefined) {
+        return null
+      }
+      throw error
+    }
+
+    return note
+  }
+
   return {
     async capture(text) {
       assertOneLine(text)
@@ -1244,6 +1359,8 @@ export function createJournal({
         journalDay: journalDayFor(capturedAt),
         editedAt: null,
         origin: 'capture',
+        source: null,
+        sourceKey: null,
       }
 
       await driver.execute(INSERT_NOTE, [
@@ -1253,53 +1370,38 @@ export function createJournal({
         note.capturedAt,
         note.journalDay,
         note.origin,
+        note.source,
+        note.sourceKey,
       ])
 
       return note
     },
 
     async importMeeting(event) {
-      const key = meetingKey(event)
-      const [handled] = await driver.select<{ event_key: string }>(
-        SELECT_IMPORTED_MEETING,
-        [key],
-      )
-      if (handled !== undefined) {
-        return null
-      }
-
       const began = new Date(event.startsAt)
-      const note: Note = {
-        id: crypto.randomUUID(),
+      return recordSourceEvent({
+        source: 'calendar',
+        eventKey: meetingKey(event),
         body: meetingBody(event.title),
-        // Always Unfiled: the calendars carry no Project meaning, so there is
-        // nothing to derive — see docs/adr/0010-notes-have-two-origins.md.
+        happenedAt: began,
         project: null,
-        // The instant the meeting began, not the instant it was stored.
-        capturedAt: began.toISOString(),
-        journalDay: journalDayFor(began),
-        editedAt: null,
         origin: 'import',
-      }
+      })
+    },
 
-      // Handled first, and deliberately: an interruption between the two writes
-      // loses one meeting, where the other order would resurrect a Note the
-      // user may have already deleted. A missed meeting is a gap; a resurrected
-      // one is the app overruling the user.
-      await driver.execute(INSERT_IMPORTED_MEETING, [
-        key,
-        clock.now().toISOString(),
-      ])
-      await driver.execute(INSERT_NOTE, [
-        note.id,
-        note.body,
-        note.project,
-        note.capturedAt,
-        note.journalDay,
-        note.origin,
-      ])
-
-      return note
+    async observe(event) {
+      const happenedAt =
+        event.happenedAt instanceof Date
+          ? new Date(event.happenedAt.getTime())
+          : new Date(event.happenedAt)
+      return recordSourceEvent({
+        source: event.source,
+        eventKey: event.eventKey,
+        body: event.body,
+        happenedAt,
+        project: event.project == null ? null : event.project,
+        origin: 'observe',
+      })
     },
 
     async editBody(id, body) {
@@ -3584,9 +3686,13 @@ function toNote(row: NoteRow): Note {
     capturedAt: row.captured_at,
     journalDay: row.journal_day,
     editedAt: row.edited_at,
-    // A row written before Import existed has no origin of its own; the column
-    // defaults for those, and anything else at all is read as typed rather than
-    // silently rendering a Note the user wrote as one they did not.
-    origin: row.origin === 'import' ? 'import' : 'capture',
+    // Old or unrecognized values read as typed rather than silently rendering
+    // a Note the user wrote as one they did not.
+    origin:
+      row.origin === 'import' || row.origin === 'observe'
+        ? row.origin
+        : 'capture',
+    source: row.source,
+    sourceKey: row.source_key,
   }
 }

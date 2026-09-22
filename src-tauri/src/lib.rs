@@ -523,6 +523,12 @@ fn migrations() -> Vec<Migration> {
             sql: include_str!("../migrations/0007_task_occurrences_one_kept_per_slot.sql"),
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 8,
+            description: "observed note origin and event sources",
+            sql: include_str!("../migrations/0008_observed_note_origin_and_event_sources.sql"),
+            kind: MigrationKind::Up,
+        },
     ]
 }
 

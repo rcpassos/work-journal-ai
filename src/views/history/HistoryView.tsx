@@ -224,10 +224,11 @@ export default function HistoryView({
   }, [desktop, session])
 
   useEffect(() => {
-    // The other way the list stops being true: a sweep imported today's
-    // meetings, which never nudges. This window's own corrections are heard
-    // here too, and cost one extra read that finds the list exactly as it left
-    // it — cheaper than a second event that means almost the same thing.
+    // The other way the list stops being true: a sweep imported meetings or
+    // observed source events, which never nudges. This window's corrections
+    // are heard here too, and cost one extra read that finds the list exactly
+    // as it left it — cheaper than a second event that means almost the same
+    // thing.
     const subscription = desktop.onJournalChanged(() => {
       void session.refresh()
     })
@@ -550,12 +551,13 @@ function NoteLine({
         <button
           type="button"
           onClick={onEdit}
+          title={note.source ?? undefined}
           className={`min-w-0 flex-1 cursor-text rounded-sm py-0.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring/30 ${
             // A Note nobody typed reads quieter than one they did, so a
             // scan-and-delete pass down the day is fast. No icon and no
             // label: the weight is the whole of the difference, and a Digest
             // shows none of it — see docs/adr/0010-notes-have-two-origins.md.
-            note.origin === 'import' ? 'text-muted-foreground' : ''
+            note.origin === 'capture' ? '' : 'text-muted-foreground'
           }`}
         >
           <ProjectChip project={note.project} className="mr-2" />

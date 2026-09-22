@@ -1076,7 +1076,7 @@ describe('Restore', () => {
     const desktop = fakeDesktop({ stored: { startAtLogin: false } })
     desktop.chosenRestoreCandidate = '/Volumes/Offsite/work-journal-20260903T084500.db'
     desktop.restoreError =
-      'the backup needs migration version 7, newer than this build understands (6)'
+      'the backup needs migration version 9, newer than this build understands (8)'
     vi.spyOn(console, 'error').mockImplementation(() => {})
 
     showSettings(desktop)
@@ -1087,10 +1087,10 @@ describe('Restore', () => {
     await expect
       .poll(() => toasts().join(' | '))
       .toBe(
-        'the backup needs migration version 7, newer than this build understands (6)',
+        'the backup needs migration version 9, newer than this build understands (8)',
       )
     expect(restoreStatus()).toBe(
-      'the backup needs migration version 7, newer than this build understands (6)',
+      'the backup needs migration version 9, newer than this build understands (8)',
     )
     // Refused: nothing staged, no restart.
     expect(desktop.stagedRestores).toEqual([])

@@ -1,12 +1,15 @@
 // @vitest-environment jsdom
 
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
-import { cleanup, screen, within } from '@testing-library/react'
+import { cleanup, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import HistoryView from './HistoryView'
+import { fakeDesktop } from '@/platform/testing/desktop'
 import {
   closeTestDatabases,
   dayCell,
   installMeasurementStubs,
+  journalHolding,
   noteById,
   showHistory,
 } from './testing/history-view'
@@ -59,6 +62,35 @@ describe('a Note row', () => {
     expect(
       within(corrected).getByTitle('Changed since it was captured'),
     ).toBeTruthy()
+  })
+
+  it('mutes an Observed Note and shows its source only on hover', async () => {
+    const { driver, core } = await journalHolding([])
+    await core.capture('typed note')
+    await core.observe({
+      source: 'work-journal-ai',
+      eventKey: '6f47772',
+      body: 'shipped the migration',
+      happenedAt: '2026-03-09T11:00:00.000Z',
+    })
+    expect(
+      (await core.notesForFilter({ from: '2026-03-09', to: '2026-03-09' })).map(
+        (note) => note.body,
+      ),
+    ).toEqual(['shipped the migration', 'typed note'])
+    const desktop = fakeDesktop({ driver })
+    render(<HistoryView desktop={desktop} journal={Promise.resolve(core)} />)
+    await screen.findByRole('banner')
+    expect(screen.getByRole('main').textContent).toContain('shipped the migration')
+
+    const observedButton = (await screen.findByText('shipped the migration'))
+      .closest('button')!
+    const capturedButton = screen.getByText('typed note').closest('button')!
+    expect(observedButton.className).toContain('text-muted-foreground')
+    expect(capturedButton.className).not.toContain('text-muted-foreground')
+    expect(observedButton.getAttribute('title')).toBe('work-journal-ai')
+    expect(capturedButton.getAttribute('title')).toBeNull()
+    expect(screen.queryByText('Observed')).toBeNull()
   })
 })
 

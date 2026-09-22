@@ -154,10 +154,12 @@ export interface HistorySession {
   noteArrived(journalDay: string): Promise<void>
   /**
    * The Notes are no longer what they were, and not because the user typed
-   * one: a sweep imported today's meetings, or another window corrected
-   * something. Re-reads what is on screen and never nudges — a Nudge means
-   * "you wrote something on another day", which is a fact about the user, and
-   * a sweep is not the user; see docs/adr/0010-notes-have-two-origins.md.
+   * one: a sweep imported meetings or observed source events, or another
+   * window corrected something. Re-reads what is on screen and never nudges —
+   * a Nudge means "you wrote something on another day", which is a fact about
+   * the user, and
+   * an Import or Observe sweep is not the user; see
+   * docs/adr/0010-notes-have-two-origins.md.
    */
   refresh(): Promise<void>
   /** The other way: the day gained content and the reader does not care. */

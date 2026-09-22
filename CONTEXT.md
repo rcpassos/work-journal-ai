@@ -5,7 +5,7 @@ A personal, local-first log of short work notes captured throughout the day, so 
 ## Language
 
 **Note**:
-A single dated line of text about the user's work. The unit of everything — there is no smaller or larger record. Always has a Body from the moment it exists. May be filed under one Project; may be Unfiled. Comes into existence one of exactly two ways: a Capture or an Import.
+A single dated line of text about the user's work. The unit of everything — there is no smaller or larger record. Always has a Body from the moment it exists. May be filed under one Project; may be Unfiled. Comes into existence by Capture, Import or Observe. A Note may keep the source and source event key that produced it; editing or refiling never changes those.
 _Avoid_: Entry, log, item, memo
 
 **Task**:
@@ -84,15 +84,27 @@ The act of writing a Note by hand. Ends in either one committed Note or nothing 
 _Avoid_: Entry, input, quick add
 
 **Captured Note**:
-A Note the user typed. What the journal is for, and the only kind that counts as having journalled — a day of Imported Notes and no Captured Notes is a day nothing was said about.
+A Note the user typed. What the journal is for, and the only kind that counts as having journalled — a day of Imported or Observed Notes and no Captured Notes is a day nothing was said about.
 
 **Import**:
-The act of turning a meeting on the user's calendar into a Note, without being asked. The second and only other origin of a Note. Unlike a Capture it has no author present, so what it produces is always distinguishable from what was typed.
+The act of turning a meeting on the user's calendar into a Note, without being asked. One of three Note origins. Unlike a Capture it has no author present, so what it produces is always distinguishable from what was typed.
 _Avoid_: Sync, ingest, intake
 
 **Imported Note**:
-A Note made by an Import. Its Body is the calendar event's title, verbatim, and its Captured At is when the meeting began. Always Unfiled — the calendars it comes from carry no Project meaning, so there is nothing to file it under. Ordinary in every other respect — editable, refilable and deletable like any Note. Rendered muted in History, with no icon and no label, so a scan-and-delete pass down the day is fast; a Digest shows no difference at all. Declined events never become one, nor do events covering the whole local day — whether or not the calendar marks them all-day, since an out-of-office block running local midnight to midnight does not, and would otherwise arrive as a meeting that began at 00:00.
+A Note made by an Import. Its Body is the calendar event's title, verbatim, and its Captured At is when the meeting began. New Imported Notes retain their calendar source and event key. Always Unfiled — the calendars it comes from carry no Project meaning, so there is nothing to file it under. Ordinary in every other respect — editable, refilable and deletable like any Note. Rendered muted in History, with no icon and no label, so a scan-and-delete pass down the day is fast; a Digest shows no difference at all. Declined events never become one, nor do events covering the whole local day — whether or not the calendar marks them all-day, since an out-of-office block running local midnight to midnight does not, and would otherwise arrive as a meeting that began at 00:00.
 _Avoid_: Meeting note, event, calendar entry
+
+**Observe**:
+The act of turning an already-selected source event about work that happened into a Note, without asking the user to write it. The third Note origin. It carries the instant the work happened and the event's stable key; the handled key remains even if its Note is deleted, so deletion refuses that event permanently. The source chooses the Body and optional Project. Observe does not follow later changes to its source.
+_Avoid_: Import, sync, inferred note
+
+**Observed Note**:
+A Note made by Observe. Its Body and Captured At come from the source event, and its source plus event key are stored as provenance. It is editable, refilable and deletable like any Note; those actions never change its source. Rendered muted in History, with its source available on hover, but with no difference in a Digest, Export or other Material. It never counts toward the Tray Count.
+_Avoid_: Generated note, source record
+
+**Observed Source**:
+The source identity paired with one event key in the journal's permanent handled-event list. That pair is the event identity: two sources may use the same event key without colliding. The handled row remains after an Observed Note is deleted, so the same event cannot return.
+_Avoid_: Source note, source record
 
 **Draft**:
 Nothing. Text typed during a Capture but not committed does not exist — abandoning a Capture discards it, and the next Capture starts empty.
@@ -158,7 +170,7 @@ _Avoid_: App icon, taskbar, activation policy
 ## Time
 
 **Captured At**:
-The instant the Note is about — when a Captured Note was typed, or when an Imported Note's meeting began. Never changes, never editable — provenance, not filing. Not the instant the Note was stored, which for an Import can be hours later and would sort a whole day wrongly.
+The instant the Note is about — when a Captured Note was typed, when an Imported Note's meeting began, or when an Observed Note's work happened. Never changes, never editable — provenance, not filing. Not the instant the Note was stored, which for an Import or Observe can be later and would sort a whole day wrongly.
 
 **Journal Day**:
 The single day a Note is filed under. Decided when the Note comes into existence as the local calendar day of Captured At, and thereafter the user's to change. Not recomputed from Captured At, so it never shifts under a timezone change.

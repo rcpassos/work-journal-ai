@@ -1261,6 +1261,11 @@ describe('exporting a Recurring Task', () => {
 })
 
 describe('the schema keeps one occurrence per slot', () => {
+  /** Migration 7 is the slot de-duplication script; migration 8 adds Observe. */
+  function migration7(): string {
+    return migrationSql()[6]!
+  }
+
   /**
    * An in-memory database built by migrations 1–6 alone — the shape a journal
    * carried before migration 7 — so the de-duplication runs against what the
@@ -1365,7 +1370,7 @@ describe('the schema keeps one occurrence per slot', () => {
     openJournals.push(close)
     await seedDuplicatedSlot(driver)
 
-    execScript(migrationSql().at(-1)!)
+    execScript(migration7())
 
     const rows = await driver.select<{ id: string; completed_at: string }>(
       `SELECT id, completed_at FROM task_occurrences
@@ -1403,7 +1408,7 @@ describe('the schema keeps one occurrence per slot', () => {
       [],
     )
 
-    execScript(migrationSql().at(-1)!)
+    execScript(migration7())
 
     const open = await driver.select<{ advanced_from: string }>(
       `SELECT advanced_from FROM task_occurrences WHERE id = 'occ-open'`,
@@ -1416,7 +1421,7 @@ describe('the schema keeps one occurrence per slot', () => {
     const { driver, execScript, close } = await journalAtVersion6()
     openJournals.push(close)
     await seedDuplicatedSlot(driver)
-    execScript(migrationSql().at(-1)!)
+    execScript(migration7())
 
     const occurrences = await driver.select<{
       id: string
@@ -1473,7 +1478,7 @@ describe('the schema keeps one occurrence per slot', () => {
       [],
     )
 
-    expect(() => execScript(migrationSql().at(-1)!)).not.toThrow()
+    expect(() => execScript(migration7())).not.toThrow()
 
     const rows = await driver.select<{ id: string; completed_at: string | null }>(
       `SELECT id, completed_at FROM task_occurrences

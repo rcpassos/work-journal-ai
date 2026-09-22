@@ -46,7 +46,7 @@ pub const DATABASE_FILE_NAME: &str = "work-journal.db";
 /// snapshot is accepted and migrated forward by the immutable list; a newer
 /// one is refused before anything is touched. Every future migration raises
 /// this.
-pub const SUPPORTED_MIGRATION_VERSION: i64 = 7;
+pub const SUPPORTED_MIGRATION_VERSION: i64 = 8;
 
 /// The staged file a validated candidate is copied to, beside the live
 /// journal. Not a snapshot name, so pruning never touches it, and never
@@ -629,6 +629,53 @@ fn expected_schema(version: i64) -> &'static [(&'static str, &'static [&'static 
                 "edited_at",
                 "project",
                 "origin",
+                "source",
+                "source_key",
+            ],
+        ),
+        (
+            "handled_events",
+            &["source", "event_key", "handled_at"],
+        ),
+        (
+            "tasks",
+            &[
+                "id",
+                "description",
+                "created_at",
+                "completed_at",
+                "scheduled_date",
+                "scheduled_time",
+                "recurrence_unit",
+                "recurrence_interval",
+                "recurrence_weekdays",
+                "recurrence_anchor_date",
+            ],
+        ),
+        (
+            "task_occurrences",
+            &[
+                "id",
+                "task_id",
+                "scheduled_date",
+                "scheduled_time",
+                "completed_at",
+                "created_at",
+                "advanced_from",
+            ],
+        ),
+    ];
+    const VERSION_7: &[(&str, &[&str])] = &[
+        (
+            "notes",
+            &[
+                "id",
+                "body",
+                "captured_at",
+                "journal_day",
+                "edited_at",
+                "project",
+                "origin",
             ],
         ),
         ("imported_meetings", &["event_key", "handled_at"]),
@@ -663,7 +710,8 @@ fn expected_schema(version: i64) -> &'static [(&'static str, &'static [&'static 
     // Migration 1 creates `notes`; 2 appends `project`; 3 appends `origin`
     // and creates `imported_meetings`; 4 creates `tasks`; 5 appends its
     // schedule; 6 appends its recurrence and creates `task_occurrences`;
-    // 7 adds an index and no table or column of its own.
+    // 7 adds an index; 8 rebuilds Notes to allow `observe`, adds provenance
+    // and moves handled meeting keys into source-qualified `handled_events`.
     match version {
         1 => &[("notes", &["id", "body", "captured_at", "journal_day", "edited_at"])],
         2 => &[(
@@ -703,7 +751,8 @@ fn expected_schema(version: i64) -> &'static [(&'static str, &'static [&'static 
                 ],
             ),
         ],
-        6 => LATEST,
+        6 | 7 => VERSION_7,
+        8 => LATEST,
         _ => LATEST,
     }
 }
@@ -1330,9 +1379,9 @@ mod tests {
         std::fs::read(path).expect("could not read the candidate")
     }
 
-    /// The six migration files, in version order — the very files
+    /// The migration files, in version order — the very files
     /// `migrations()` in `lib.rs` serves plugin-sql.
-    const REAL_MIGRATIONS: [&str; 7] = [
+    const REAL_MIGRATIONS: [&str; 8] = [
         include_str!("../migrations/0001_create_notes.sql"),
         include_str!("../migrations/0002_notes_project.sql"),
         include_str!("../migrations/0003_note_origin_and_imported_meetings.sql"),
@@ -1340,6 +1389,7 @@ mod tests {
         include_str!("../migrations/0005_task_schedule.sql"),
         include_str!("../migrations/0006_task_recurrence.sql"),
         include_str!("../migrations/0007_task_occurrences_one_kept_per_slot.sql"),
+        include_str!("../migrations/0008_observed_note_origin_and_event_sources.sql"),
     ];
 
     /// Seeds `pool` with the real schema up to `up_to`, recording each
@@ -1893,26 +1943,45 @@ mod tests {
         let elsewhere = TempDir::new("restore-migrate-candidate");
         let candidate = elsewhere.path.join("candidate.db");
         write_journal_file(&candidate, SUPPORTED_MIGRATION_VERSION - 1, "the old journal").await;
+        let old_url = format!("sqlite:{}?mode=rwc", candidate.display());
+        let old = SqlitePool::connect(&old_url)
+            .await
+            .expect("could not open the older snapshot");
+        sqlx::query(
+            "INSERT INTO imported_meetings (event_key, handled_at)
+             VALUES ('calendar-event@2026-09-21T09:30:00.000Z', '2026-09-21T18:40:00.000Z')",
+        )
+        .execute(&old)
+        .await
+        .expect("could not seed the old handled meeting");
+        old.close().await;
         stage_restore(&candidate, &config.path)
             .await
             .expect("an older snapshot must stage");
         apply_staged_restore(&config.path, SystemTime::now()).expect("apply must succeed");
 
         // The existing immutable list brings the restored file forward: the
-        // version 7 DDL — the same file `migrations()` in `lib.rs` serves
-        // plugin-sql for version 7 — applies cleanly on top of it.
+        // version 8 DDL — the same file `migrations()` in `lib.rs` serves
+        // plugin-sql for version 8 — applies cleanly on top of it.
         let url = format!("sqlite:{}?mode=rwc", live.display());
         let pool = SqlitePool::connect(&url).await.expect("could not open");
-        let migration: &str = include_str!("../migrations/0007_task_occurrences_one_kept_per_slot.sql");
+        let migration: &str = include_str!("../migrations/0008_observed_note_origin_and_event_sources.sql");
         sqlx::query(migration)
             .execute(&pool)
             .await
-            .expect("the older snapshot must be migratable to version 7");
-        let (count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM task_occurrences")
+            .expect("the older snapshot must be migratable to version 8");
+        let (count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM handled_events")
             .fetch_one(&pool)
             .await
             .expect("the migrated table must read back");
-        assert_eq!(count, 0);
+        assert_eq!(count, 1);
+        let (source, event_key): (String, String) =
+            sqlx::query_as("SELECT source, event_key FROM handled_events")
+                .fetch_one(&pool)
+                .await
+                .expect("the migrated handled event must read back");
+        assert_eq!(source, "calendar");
+        assert_eq!(event_key, "calendar-event@2026-09-21T09:30:00.000Z");
         pool.close().await;
     });
 
@@ -1979,8 +2048,8 @@ mod tests {
         // accepted and must stay migratable. A migration that adds a table,
         // or a column to an existing table, without teaching `expected_schema`
         // fails here. The helper below hardcodes one entry per migration
-        // file, and `.take()` truncates silently — so an eighth migration
-        // would compare a v7 schema against `expected_schema(8)` and pass
+        // file, and `.take()` truncates silently — so a ninth migration
+        // would compare a v8 schema against `expected_schema(9)` and pass
         // exactly when the guard is needed. The lengths move together or this
         // fails first.
         assert_eq!(REAL_MIGRATIONS.len(), crate::migrations().len());
@@ -2087,6 +2156,24 @@ mod tests {
             .await
             .expect("could not create the source journal");
         seed_real_schema(&pool, SUPPORTED_MIGRATION_VERSION, "the snapshot note").await;
+        sqlx::query(
+            "INSERT INTO notes (
+                 id, body, captured_at, journal_day, edited_at, origin, source, source_key
+             ) VALUES (
+                 'observed', 'shipped the migration', '2026-09-22T09:30:00.000Z',
+                 '2026-09-22', NULL, 'observe', 'work-journal-ai', '6f47772'
+             )",
+        )
+        .execute(&pool)
+        .await
+        .expect("could not seed the Observed Note");
+        sqlx::query(
+            "INSERT INTO handled_events (source, event_key, handled_at)
+             VALUES ('work-journal-ai', '6f47772', '2026-09-22T10:00:00.000Z')",
+        )
+        .execute(&pool)
+        .await
+        .expect("could not seed the handled event");
 
         let elsewhere = TempDir::new("round-trip-snapshot");
         let snapshot = elsewhere.path.join("work-journal-20260903T084500.db");
@@ -2127,6 +2214,23 @@ mod tests {
             .await
             .expect("the snapshot Note did not read back");
         assert_eq!(body, "the snapshot note");
+        let (source, source_key, origin): (String, String, String) = sqlx::query_as(
+            "SELECT source, source_key, origin FROM notes WHERE id = 'observed'",
+        )
+        .fetch_one(&restored)
+        .await
+        .expect("the Observed Note did not read back");
+        assert_eq!(source, "work-journal-ai");
+        assert_eq!(source_key, "6f47772");
+        assert_eq!(origin, "observe");
+        let (handled_source, handled_key): (String, String) = sqlx::query_as(
+            "SELECT source, event_key FROM handled_events",
+        )
+        .fetch_one(&restored)
+        .await
+        .expect("the handled event did not read back");
+        assert_eq!(handled_source, "work-journal-ai");
+        assert_eq!(handled_key, "6f47772");
         restored.close().await;
     });
 

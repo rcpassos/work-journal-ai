@@ -129,7 +129,11 @@ describe('capture', () => {
 
     const captured = await journal.capture('rewrote the digest grouping')
 
-    expect(captured?.body).toBe('rewrote the digest grouping')
+    expect(captured).toMatchObject({
+      body: 'rewrote the digest grouping',
+      source: null,
+      sourceKey: null,
+    })
     const stored = await notesOn(journal, '2026-03-12')
     expect(stored.map((note) => note.body)).toEqual([
       'rewrote the digest grouping',
@@ -2142,10 +2146,12 @@ describe('meetingsToImport', () => {
 describe('importMeeting', () => {
   it('files the meeting under the morning it happened in, not the evening it was swept in', async () => {
     const { journal } = await journalAt('2026-03-09T18:40:00')
-
-    const note = await journal.importMeeting(
-      event({ title: 'Weekly sync', startsAt: '2026-03-09T09:30', endsAt: '2026-03-09T10:00' }),
-    )
+    const meeting = event({
+      title: 'Weekly sync',
+      startsAt: '2026-03-09T09:30',
+      endsAt: '2026-03-09T10:00',
+    })
+    const note = await journal.importMeeting(meeting)
 
     expect(note).toMatchObject({
       body: 'Weekly sync',
@@ -2153,6 +2159,8 @@ describe('importMeeting', () => {
       journalDay: '2026-03-09',
       editedAt: null,
       origin: 'import',
+      source: 'calendar',
+      sourceKey: meetingKey(meeting),
     })
     expect(note!.capturedAt).toBe(local('2026-03-09T09:30').toISOString())
   })
@@ -2230,6 +2238,10 @@ describe('importMeeting', () => {
       journalDay: '2026-03-10',
       project: 'habic',
       origin: 'import',
+      source: 'calendar',
+      sourceKey: meetingKey(
+        event({ startsAt: '2026-03-09T09:30', endsAt: '2026-03-09T10:00' }),
+      ),
     })
     // Provenance survives every correction, exactly as it does for a Capture.
     expect(filed.capturedAt).toBe(note!.capturedAt)
