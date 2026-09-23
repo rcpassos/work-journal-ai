@@ -4,6 +4,7 @@ import {
   ANY_PROJECT,
   createJournal,
   applyPrediction,
+  commitEventKey,
   decideArrival,
   decideKeystroke,
   describeCopiedDigest,
@@ -361,6 +362,16 @@ describe('projectPredictions', () => {
 
     expect(await journal.projectPredictions('')).toEqual(['work'])
   })
+
+  it('offers a Project a Project Mapping holds, with no Note under it at all', async () => {
+    const { journal } = await journalAt('2026-03-12T09:30:00')
+
+    await journal.setProjectMapping('/code/work-journal-ai/.git', 'journal')
+
+    expect(await journal.projectPredictions('')).toEqual(['journal'])
+    expect(await journal.projectPredictions('j')).toEqual(['journal'])
+    expect(await journal.projectPredictions('w')).toEqual([])
+  })
 })
 
 describe('projectsInUse', () => {
@@ -392,6 +403,114 @@ describe('projectsInUse', () => {
     await journal.delete(only!.id)
 
     expect(await journal.projectsInUse()).toEqual(['work'])
+  })
+
+  it('names a Project a Project Mapping holds, with no Note under it at all', async () => {
+    const { journal } = await journalAt('2026-03-12T09:30:00')
+
+    await journal.setProjectMapping('/code/work-journal-ai/.git', 'journal')
+
+    expect(await journal.projectsInUse()).toEqual(['journal'])
+  })
+})
+
+describe('project mappings', () => {
+  it('names the Project one repository’s Notes arrive filed under, and Unfiled without one', async () => {
+    const { journal } = await journalAt('2026-03-12T09:30:00')
+
+    expect(await journal.projectMapping('/code/work-journal-ai/.git')).toBeNull()
+
+    await journal.setProjectMapping(
+      '/code/work-journal-ai/.git',
+      'work-journal-ai',
+    )
+
+    expect(await journal.projectMapping('/code/work-journal-ai/.git')).toBe(
+      'work-journal-ai',
+    )
+  })
+
+  it('is keyed on the repository, so one repository mapped from any of its worktrees is one mapping', async () => {
+    const { journal } = await journalAt('2026-03-12T09:30:00')
+    // The identity every worktree of one repository answers with: its common
+    // directory. The mapping names that, never the directory picked.
+    await journal.setProjectMapping('/code/work-journal-ai/.git', 'journal')
+
+    expect(await journal.projectMapping('/code/work-journal-ai/.git')).toBe(
+      'journal',
+    )
+  })
+
+  it('stores a name the way a Note’s Project is stored, and refuses what is not one', async () => {
+    const { journal } = await journalAt('2026-03-12T09:30:00')
+
+    await journal.setProjectMapping('/code/work-journal-ai/.git', '  HaBiC  ')
+
+    expect(await journal.projectMapping('/code/work-journal-ai/.git')).toBe(
+      'habic',
+    )
+
+    for (const name of ['', 'not a name', '#habic', 'ha bic']) {
+      await expect(
+        journal.setProjectMapping('/code/site/.git', name),
+      ).rejects.toThrow(/project/i)
+    }
+    expect(await journal.projectMapping('/code/site/.git')).toBeNull()
+  })
+
+  it('changes a mapping, and removes it back to Unfiled', async () => {
+    const { journal } = await journalAt('2026-03-12T09:30:00')
+    await journal.setProjectMapping('/code/work-journal-ai/.git', 'habic')
+
+    await journal.setProjectMapping('/code/work-journal-ai/.git', 'work')
+    expect(await journal.projectMapping('/code/work-journal-ai/.git')).toBe(
+      'work',
+    )
+
+    await journal.setProjectMapping('/code/work-journal-ai/.git', null)
+    expect(await journal.projectMapping('/code/work-journal-ai/.git')).toBeNull()
+  })
+
+  it('keeps the Project named after its last Note is deleted', async () => {
+    const { journal } = await journalAt('2026-03-12T09:30:00')
+    const only = await journal.capture('#habic shipped')
+    await journal.setProjectMapping('/code/work-journal-ai/.git', 'habic')
+
+    await journal.delete(only!.id)
+
+    expect(await journal.projectsInUse()).toEqual(['habic'])
+    expect(await journal.projectPredictions('')).toEqual(['habic'])
+  })
+
+  it('drops the name once the mapping is gone and no Note holds it', async () => {
+    const { journal } = await journalAt('2026-03-12T09:30:00')
+    await journal.setProjectMapping('/code/work-journal-ai/.git', 'habic')
+    await journal.capture('#work done')
+
+    await journal.setProjectMapping('/code/work-journal-ai/.git', null)
+
+    expect(await journal.projectsInUse()).toEqual(['work'])
+  })
+
+  it('are never written back to when an Observed Note is refiled by hand', async () => {
+    const { journal } = await journalAt('2026-03-09T10:00:00')
+    await journal.setProjectMapping('/code/work-journal-ai/.git', 'journal')
+    const observed = await journal.observe({
+      source: 'commit',
+      eventKey: commitEventKey('b1', '/code/work-journal-ai/.git'),
+      body: 'The third Note origin',
+      happenedAt: '2026-03-09T09:00:00.000Z',
+      project: 'journal',
+    })
+
+    await journal.editProject(observed!.id, 'by-hand')
+
+    // The Note is the reader's to file; the mapping decides how work arrives
+    // and answers only to the repository's row in Settings.
+    expect(await journal.projectMapping('/code/work-journal-ai/.git')).toBe(
+      'journal',
+    )
+    expect((await notesOn(journal, '2026-03-09'))[0]?.project).toBe('by-hand')
   })
 })
 
@@ -759,6 +878,55 @@ describe('renameProject', () => {
       'work',
       'work',
     ])
+  })
+
+  it('rewrites the Project Mappings naming the source in the same operation', async () => {
+    const { journal } = await journalAt('2026-03-12T09:30:00')
+    await journal.capture('#habic shipped auth')
+    await journal.setProjectMapping('/code/work-journal-ai/.git', 'habic')
+    await journal.setProjectMapping('/code/site/.git', 'habic')
+
+    await journal.renameProject('habic', 'work')
+
+    expect(await journal.projectMapping('/code/work-journal-ai/.git')).toBe(
+      'work',
+    )
+    expect(await journal.projectMapping('/code/site/.git')).toBe('work')
+    // Nothing else was rewritten: a mapping is the name it carries and
+    // nothing more.
+    expect(
+      (await journal.notesForFilter({ from: '2026-03-12', to: '2026-03-12' }))[0]
+        ?.project,
+    ).toBe('work')
+  })
+
+  it('renames a stream only Project Mappings name, and merges nothing it should not', async () => {
+    const { journal } = await journalAt('2026-03-12T09:30:00')
+    await journal.setProjectMapping('/code/work-journal-ai/.git', 'habic')
+    await journal.setProjectMapping('/code/site/.git', 'work')
+    await journal.capture('#work invoiced')
+
+    await journal.renameProject('habic', 'work')
+
+    // Merged into the target, and afterwards a mapping is a mapping: nothing
+    // distinguishes the one that was merged from the one that was filed.
+    expect(await journal.projectMapping('/code/work-journal-ai/.git')).toBe(
+      'work',
+    )
+    expect(await journal.projectMapping('/code/site/.git')).toBe('work')
+    expect(await journal.projectsInUse()).toEqual(['work'])
+  })
+
+  it('refuses a source no Note and no mapping names', async () => {
+    const { journal } = await journalAt('2026-03-12T09:30:00')
+    await journal.setProjectMapping('/code/work-journal-ai/.git', 'habic')
+    await journal.capture('#work invoiced')
+
+    await expect(journal.renameProject('nowhere', 'work')).rejects.toThrow(
+      /no Notes|in use/i,
+    )
+
+    expect(await journal.projectsInUse()).toEqual(['habic', 'work'])
   })
 
   it('does nothing, and marks nothing edited, when the target is the source', async () => {

@@ -241,11 +241,15 @@ Against a release build and a repository with commits of your own from today.
 
 - [ ] **Add your commits to the journal** reads off on a fresh install and offers no repositories until turned on; turning it on toasts.
 - [ ] **Add Repository…** opens a folder picker (no path field); the chosen repository appears by name with your addresses offered unticked.
-- [ ] Nothing arrives until an address is ticked; after ticking, a commit you make now appears in History within five minutes — muted, and hovering it says `Commit <short hash> · <repository>`.
+- [ ] The row carries a **Project** field, empty — Unfiled — and typing at it offers the repository's name first; nothing is mapped until one of the offered names is picked or a name is typed and Enter is pressed.
+- [ ] Nothing arrives until an address is ticked; after ticking, a commit you make now appears in History within five minutes — muted, under the Project the row names, and hovering it says `Commit <short hash> · <repository>`.
+- [ ] A second repository left Unfiled produces Unfiled Observed Notes: no Project is ever guessed from a repository's name or path.
+- [ ] Renaming that Project in History rewrites the field in Settings with it — and refiling one Observed Note by hand changes only that Note: the next commit still arrives under the mapped Project.
 - [ ] A commit from before Observing was turned on never arrives.
-- [ ] Choosing a second worktree of a listed repository toasts "Already added as <name>." and adds nothing.
+- [ ] Choosing a second worktree of a listed repository toasts "Already added as <name>." and adds nothing; removing the repository and adding it again from its other worktree keeps the same Project.
 - [ ] A prefix such as `Release ` skips a release commit; clearing it lets the commit arrive at the next sweep.
 - [ ] Deleting an Observed Note and waking the machine does not bring it back.
+- [ ] With no Notes in the journal at all, a repository mapped to a Project shows that Project in History's empty state, and the pencil beside it renames it.
 - [ ] `git status` in the repository is unchanged afterwards: nothing was written to it.
 
 ## Capture after midnight

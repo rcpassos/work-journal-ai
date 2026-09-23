@@ -63,9 +63,10 @@ export interface HistorySnapshot {
    */
   filter: Filter | null
   /**
-   * Every Project currently on a Note, for the constraint picker to offer.
-   * Journal-wide rather than Filter-wide: a picker that only listed what is
-   * already in view would be a picker that cannot be used to leave it.
+   * Every Project the journal still names — on a Note or held by a Project
+   * Mapping — for the constraint picker to offer. Journal-wide rather than
+   * Filter-wide: a picker that only listed what is already in view would be a
+   * picker that cannot be used to leave it.
    */
   projects: string[]
   history: HistoryState
@@ -287,23 +288,27 @@ export function createHistorySession({
   /** Where History opens, and where it returns once the first Note exists. */
   async function open(): Promise<void> {
     const ticket = ++latestRead
-    let opening: Filter | null
     try {
       const core = await journal
       // The Filter opens on the most recent Occupied Day, whenever that was;
-      // with no Notes at all there is no day to open on.
-      opening = await core.defaultRange()
+      // with no Notes at all there is no day to open on. The Projects come
+      // with it either way — they are the journal's, not the day's, and a
+      // Project held only by a Project Mapping has to be named, and
+      // renameable, in the empty state too.
+      const [opening, projects] = await Promise.all([
+        core.defaultRange(),
+        core.projectsInUse(),
+      ])
       if (latestRead !== ticket) return
+
+      if (opening === null) {
+        show({ projects, history: { state: 'empty' } })
+        return
+      }
+      await moveTo(opening)
     } catch (error) {
       giveUp(error, ticket)
-      return
     }
-
-    if (opening === null) {
-      show({ history: { state: 'empty' } })
-      return
-    }
-    await moveTo(opening)
   }
 
   async function moveTo(range: DayRange): Promise<void> {
@@ -543,9 +548,17 @@ export function createHistorySession({
         return
       }
 
-      // The constraint may just have been moved to the target, and no list is
-      // on screen when the journal has yet to hold a Note; either way this is
-      // the ordinary act of narrowing, and everything it re-reads and ends.
+      // No Notes at all: there is no list to re-read, but the Projects have
+      // just changed and the empty state is naming them — so that state's own
+      // read is what answers.
+      if (snapshot.filter === null) {
+        await open()
+        return
+      }
+
+      // The constraint may just have been moved to the target, and either way
+      // this is the ordinary act of narrowing, and everything it re-reads and
+      // ends.
       await narrowTo(project)
     },
 

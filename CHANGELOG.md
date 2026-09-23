@@ -4,6 +4,8 @@ What changed in each released version, newest first. Every `vX.Y.Z` section here
 
 ## Unreleased
 
+- Each repository in Settings now carries the Project its commits are filed under: its own name is offered first, and nothing is filed under anything unless you pick or type it.
+- Renaming a Project renames what the repositories mapped to it are filed under too, and a Project one of them holds stays around — discoverable and renameable — until nothing names it.
 - Hovering a meeting in History says it came from your calendar, for meetings imported from now on.
 - Settings can add your commits to the journal: choose repositories and the addresses that are you, and each commit you make becomes a Note on the day you authored it.
 - Commits from before you turn it on, or from while it or a repository was off, are never added.

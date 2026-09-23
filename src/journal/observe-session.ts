@@ -52,16 +52,22 @@ export interface ObserveSession {
  * the instant they were authored, not skipped by a prefix the user wrote, and
  * with a subject to say. A skipped commit becomes nothing at all — no Note and
  * no handled row — so removing its prefix lets it arrive within the lookback.
- * Always Unfiled: nothing is ever inferred from a path.
+ *
+ * Each Note arrives filed under the repository's Project Mapping, as it reads
+ * when the commit becomes a Note — or Unfiled when the repository has none.
+ * Nothing is ever inferred from a path.
  */
 export function commitsToObserve({
   observing,
   listed,
   commits,
+  project,
 }: {
   observing: Observing
   listed: ObservedRepository
   commits: Commit[]
+  /** The Project this repository maps to. Null is Unfiled. */
+  project: string | null
 }): SourceEvent[] {
   return commits
     .filter(
@@ -77,7 +83,7 @@ export function commitsToObserve({
       // break becomes a space rather than the commit becoming nothing.
       body: subject.replace(/[\r\n]+/g, ' '),
       happenedAt: new Date(authoredAt).toISOString(),
-      project: null,
+      project,
     }))
 }
 
@@ -129,7 +135,16 @@ export function createObserveSession({
           if (read.state !== 'read') continue
 
           const core = await journal
-          for (const event of commitsToObserve({ observing, listed, commits: read.commits })) {
+          // What this repository's Notes arrive filed under. Read here and
+          // never written back: a Note the user has refiled by hand is
+          // already handled, and no later sweep touches it again.
+          const project = await core.projectMapping(listed.repository)
+          for (const event of commitsToObserve({
+            observing,
+            listed,
+            commits: read.commits,
+            project,
+          })) {
             if (!running) return
             // Per commit, so one the journal refuses never stops the ones
             // behind it — on this sweep and on every sweep after it.

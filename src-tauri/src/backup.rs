@@ -46,7 +46,7 @@ pub const DATABASE_FILE_NAME: &str = "work-journal.db";
 /// snapshot is accepted and migrated forward by the immutable list; a newer
 /// one is refused before anything is touched. Every future migration raises
 /// this.
-pub const SUPPORTED_MIGRATION_VERSION: i64 = 8;
+pub const SUPPORTED_MIGRATION_VERSION: i64 = 9;
 
 /// The staged file a validated candidate is copied to, beside the live
 /// journal. Not a snapshot name, so pruning never touches it, and never
@@ -663,6 +663,54 @@ fn expected_schema(version: i64) -> &'static [(&'static str, &'static [&'static 
                 "advanced_from",
             ],
         ),
+        ("project_mappings", &["repository", "project"]),
+    ];
+    // The schema as migration 8 left it, kept whole because an older snapshot
+    // is validated against the version it claims: before migration 9 added
+    // the Project Mapping table.
+    const V8: &[(&str, &[&str])] = &[
+        (
+            "notes",
+            &[
+                "id",
+                "body",
+                "captured_at",
+                "journal_day",
+                "edited_at",
+                "project",
+                "origin",
+                "source",
+                "source_key",
+            ],
+        ),
+        ("handled_events", &["source", "event_key", "handled_at"]),
+        (
+            "tasks",
+            &[
+                "id",
+                "description",
+                "created_at",
+                "completed_at",
+                "scheduled_date",
+                "scheduled_time",
+                "recurrence_unit",
+                "recurrence_interval",
+                "recurrence_weekdays",
+                "recurrence_anchor_date",
+            ],
+        ),
+        (
+            "task_occurrences",
+            &[
+                "id",
+                "task_id",
+                "scheduled_date",
+                "scheduled_time",
+                "completed_at",
+                "created_at",
+                "advanced_from",
+            ],
+        ),
     ];
     // The schema as migration 7 left it, kept whole because an older snapshot
     // is validated against the version it claims: `notes` before migration 8
@@ -714,7 +762,8 @@ fn expected_schema(version: i64) -> &'static [(&'static str, &'static [&'static 
     // schedule; 6 appends its recurrence and creates `task_occurrences`;
     // 7 adds an index and no table or column of its own; 8 rebuilds `notes`
     // to append `source` and `source_key` with a third origin value, and
-    // replaces `imported_meetings` with `handled_events`.
+    // replaces `imported_meetings` with `handled_events`; 9 creates
+    // `project_mappings`.
     match version {
         1 => &[("notes", &["id", "body", "captured_at", "journal_day", "edited_at"])],
         2 => &[(
@@ -755,6 +804,7 @@ fn expected_schema(version: i64) -> &'static [(&'static str, &'static [&'static 
             ),
         ],
         6 | 7 => V7,
+        8 => V8,
         _ => LATEST,
     }
 }
@@ -1381,9 +1431,9 @@ mod tests {
         std::fs::read(path).expect("could not read the candidate")
     }
 
-    /// The eight migration files, in version order — the very files
+    /// The nine migration files, in version order — the very files
     /// `migrations()` in `lib.rs` serves plugin-sql.
-    const REAL_MIGRATIONS: [&str; 8] = [
+    const REAL_MIGRATIONS: [&str; 9] = [
         include_str!("../migrations/0001_create_notes.sql"),
         include_str!("../migrations/0002_notes_project.sql"),
         include_str!("../migrations/0003_note_origin_and_imported_meetings.sql"),
@@ -1392,6 +1442,7 @@ mod tests {
         include_str!("../migrations/0006_task_recurrence.sql"),
         include_str!("../migrations/0007_task_occurrences_one_kept_per_slot.sql"),
         include_str!("../migrations/0008_note_origin_observe_and_handled_events.sql"),
+        include_str!("../migrations/0009_project_mappings.sql"),
     ];
 
     /// Seeds `pool` with the real schema up to `up_to`, recording each
@@ -1400,7 +1451,8 @@ mod tests {
     /// than a hand-written approximation of it. `write_journal_file` and
     /// `real_journal_file` both come through here. From version 8 the journal
     /// also holds a handled event, so a round trip can prove the rows that
-    /// outlive a Note survive it.
+    /// outlive a Note survive it — and from version 9 a Project Mapping, so
+    /// the filing a repository arrives with survives it too.
     async fn seed_real_schema(pool: &SqlitePool, up_to: i64, marker: &str) {
         sqlx::query(
             "CREATE TABLE IF NOT EXISTS _sqlx_migrations (
@@ -1447,6 +1499,15 @@ mod tests {
             .execute(pool)
             .await
             .expect("could not seed the handled event");
+        }
+        if up_to >= 9 {
+            sqlx::query(
+                "INSERT INTO project_mappings (repository, project)
+                 VALUES ('/code/work-journal-ai/.git', 'work-journal-ai')",
+            )
+            .execute(pool)
+            .await
+            .expect("could not seed the project mapping");
         }
     }
 
@@ -1962,30 +2023,41 @@ mod tests {
         apply_staged_restore(&config.path, SystemTime::now()).expect("apply must succeed");
 
         // The existing immutable list brings the restored file forward: the
-        // version 8 DDL — the same file `migrations()` in `lib.rs` serves
-        // plugin-sql for version 8 — applies cleanly on top of it.
+        // DDL of every version the snapshot predates — the same files
+        // `migrations()` in `lib.rs` serves plugin-sql — applies cleanly on
+        // top of it.
         let url = format!("sqlite:{}?mode=rwc", live.display());
         let pool = SqlitePool::connect(&url).await.expect("could not open");
-        let migration: &str =
-            include_str!("../migrations/0008_note_origin_observe_and_handled_events.sql");
-        sqlx::query(migration)
-            .execute(&pool)
-            .await
-            .expect("the older snapshot must be migratable to version 8");
+        for ddl in REAL_MIGRATIONS
+            .iter()
+            .skip((SUPPORTED_MIGRATION_VERSION - 1) as usize)
+        {
+            sqlx::query(ddl)
+                .execute(&pool)
+                .await
+                .expect("the older snapshot must be migratable to the supported version");
+        }
         let (count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM task_occurrences")
             .fetch_one(&pool)
             .await
             .expect("the migrated table must read back");
         assert_eq!(count, 0);
 
-        // The rebuild keeps every Note exactly as it was, giving a Note
-        // written before sources were recorded a null source of its own.
+        // The newest table is there to read: the Project Mapping, which
+        // decides how a repository's work arrives filed.
+        let (mappings,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM project_mappings")
+            .fetch_one(&pool)
+            .await
+            .expect("the mapping table must read back");
+        assert_eq!(mappings, 0);
+
+        // And every Note is kept exactly as it was across the migration.
         let (body, source, source_key): (String, Option<String>, Option<String>) = sqlx::query_as(
             "SELECT body, source, source_key FROM notes WHERE id = 'n1'",
         )
         .fetch_one(&pool)
         .await
-        .expect("the Note must survive the rebuild");
+        .expect("the Note must survive the migration");
         assert_eq!(body, "the old journal");
         assert!(source.is_none() && source_key.is_none());
         pool.close().await;
@@ -2212,6 +2284,16 @@ mod tests {
                 .expect("the snapshot's handled event did not read back");
         assert_eq!(source, "calendar");
         assert_eq!(event_key, "event-1@2026-09-03T08:45:00.000Z");
+
+        // And its Project Mapping, which decides the filing of every Note
+        // that repository produces from here on.
+        let (repository, project): (String, String) =
+            sqlx::query_as("SELECT repository, project FROM project_mappings")
+                .fetch_one(&restored)
+                .await
+                .expect("the snapshot's project mapping did not read back");
+        assert_eq!(repository, "/code/work-journal-ai/.git");
+        assert_eq!(project, "work-journal-ai");
         restored.close().await;
     });
 

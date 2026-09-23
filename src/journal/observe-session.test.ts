@@ -92,6 +92,21 @@ async function list(settings: AppSettings, name: string, identities = [ME]) {
   )
 }
 
+/** The same, from one directory of a repository — one worktree of it. */
+async function listFrom(settings: AppSettings, path: string, repository: string) {
+  await settings.updateObserving((observing, now) =>
+    setIdentities(
+      addRepository(
+        observing,
+        { path, repository, identities: [], ignoredPrefixes: [] },
+        now,
+      ),
+      repository,
+      [ME],
+    ),
+  )
+}
+
 async function turn(settings: AppSettings, enabled: boolean) {
   await settings.updateObserving((observing, now) => turnObserving(observing, enabled, now))
 }
@@ -100,6 +115,14 @@ async function turn(settings: AppSettings, enabled: boolean) {
 async function bodiesOn(journal: Journal, journalDay: string) {
   const notes = await journal.notesForFilter(rangeForJournalDay(journalDay))
   return notes.map((note) => note.body).reverse()
+}
+
+/** What one day's Notes arrived filed under, oldest first. */
+async function filingOn(journal: Journal, journalDay: string) {
+  const notes = await journal.notesForFilter(rangeForJournalDay(journalDay))
+  return notes
+    .map((note) => ({ body: note.body, project: note.project }))
+    .reverse()
 }
 
 /** Lets a sweep the session started on its own finish before asserting. */
@@ -187,6 +210,146 @@ describe('a day of commits', () => {
     // Once for the Note that arrived, and not again for a sweep that found
     // nothing new.
     expect(changed).toBe(1)
+  })
+})
+
+describe('the Project Mapping', () => {
+  it('files a day of commits across two mapped repositories under the right Project, on the right day', async () => {
+    const { journal, clock, settings, session } = await observeSessionAt(
+      '2026-03-09T08:00:00',
+      {
+        '/code/work-journal-ai': repository('work-journal-ai', [
+          commit('b2', 'Fix the second scrollbar on Settings', '2026-03-09T22:10'),
+          commit('b1', 'Observe: the third Note origin', '2026-03-09T21:30'),
+        ]),
+        '/code/site': repository('site', [
+          commit('s1', 'Publish the changelog page', '2026-03-09T21:45'),
+        ]),
+      },
+    )
+    await turn(settings, true)
+    await list(settings, 'work-journal-ai')
+    await list(settings, 'site')
+    await journal.setProjectMapping('/code/work-journal-ai/.git', 'journal')
+    await journal.setProjectMapping('/code/site/.git', 'site')
+
+    clock.set(new Date('2026-03-09T23:00:00'))
+    await session.start()
+
+    expect(await filingOn(journal, '2026-03-09')).toEqual([
+      { body: 'Observe: the third Note origin', project: 'journal' },
+      { body: 'Publish the changelog page', project: 'site' },
+      { body: 'Fix the second scrollbar on Settings', project: 'journal' },
+    ])
+  })
+
+  it('files two worktrees of one repository under the same Project', async () => {
+    const worktree = {
+      repository: '/code/work-journal-ai/.git',
+      commits: [] as FakeCommit[],
+    }
+    const { journal, desktop, clock, settings, session } = await observeSessionAt(
+      '2026-03-09T08:00:00',
+      {
+        '/code/work-journal-ai': {
+          ...worktree,
+          commits: [commit('b1', 'From the first worktree', '2026-03-09T09:00')],
+        },
+        '/code/work-journal-ai-262': {
+          ...worktree,
+          commits: [commit('b2', 'From the second worktree', '2026-03-09T10:00')],
+        },
+      },
+    )
+    await turn(settings, true)
+    await listFrom(settings, '/code/work-journal-ai', '/code/work-journal-ai/.git')
+    await journal.setProjectMapping('/code/work-journal-ai/.git', 'journal')
+
+    clock.set(new Date('2026-03-09T11:00:00'))
+    await session.start()
+
+    expect(await filingOn(journal, '2026-03-09')).toEqual([
+      { body: 'From the first worktree', project: 'journal' },
+    ])
+
+    // The repository taken off the list and added again from its other
+    // worktree — a different directory, the same repository. The mapping keys
+    // on the repository, so the second worktree's commit is filed under it
+    // without anything being mapped again.
+    await settings.updateObserving((observing, now) =>
+      removeRepository(observing, '/code/work-journal-ai/.git', now),
+    )
+    await listFrom(
+      settings,
+      '/code/work-journal-ai-262',
+      '/code/work-journal-ai/.git',
+    )
+
+    clock.set(new Date('2026-03-09T12:00:00'))
+    desktop.wake()
+    await flushSweep()
+
+    expect(await filingOn(journal, '2026-03-09')).toEqual([
+      { body: 'From the first worktree', project: 'journal' },
+      { body: 'From the second worktree', project: 'journal' },
+    ])
+  })
+
+  it('leaves a repository with no mapping Unfiled, inferring nothing from its path', async () => {
+    const { journal, clock, settings, session } = await observeSessionAt(
+      '2026-03-09T08:00:00',
+      {
+        '/code/work-journal-ai': repository('work-journal-ai', [
+          commit('b1', 'Nothing from a path', '2026-03-09T09:00'),
+        ]),
+      },
+    )
+    await turn(settings, true)
+    await list(settings, 'work-journal-ai')
+
+    clock.set(new Date('2026-03-09T12:00:00'))
+    await session.start()
+
+    // The directory is called work-journal-ai, and the repository with it —
+    // and that names nothing here.
+    expect(await filingOn(journal, '2026-03-09')).toEqual([
+      { body: 'Nothing from a path', project: null },
+    ])
+  })
+
+  it('never moves a Note the user has filed by hand, however often it sweeps', async () => {
+    const { journal, desktop, clock, settings, session } = await observeSessionAt(
+      '2026-03-09T08:00:00',
+      {
+        '/code/work-journal-ai': repository('work-journal-ai', [
+          commit('b1', 'Mine', '2026-03-09T09:00'),
+        ]),
+      },
+    )
+    await turn(settings, true)
+    await list(settings, 'work-journal-ai')
+    await journal.setProjectMapping('/code/work-journal-ai/.git', 'journal')
+
+    clock.set(new Date('2026-03-09T12:00:00'))
+    await session.start()
+    const [observed] = await journal.notesForFilter(
+      rangeForJournalDay('2026-03-09'),
+    )
+    await journal.editProject(observed!.id, 'by-hand')
+    await journal.setProjectMapping('/code/work-journal-ai/.git', 'elsewhere')
+
+    clock.set(new Date('2026-03-09T14:00:00'))
+    desktop.wake()
+    await flushSweep()
+
+    // The Note is filed where the reader put it, there is still only one of
+    // it, and the mapping says what new work will arrive as.
+    expect(await filingOn(journal, '2026-03-09')).toEqual([
+      { body: 'Mine', project: 'by-hand' },
+    ])
+    expect(await journal.projectMapping('/code/work-journal-ai/.git')).toBe(
+      'elsewhere',
+    )
   })
 })
 

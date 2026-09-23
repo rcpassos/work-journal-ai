@@ -81,6 +81,64 @@ describe('opening', () => {
   })
 })
 
+describe('the empty journal', () => {
+  it('names a Project that exists only as a mapping, and renames it', async () => {
+    const { session, core } = await sessionOver([])
+    // A repository mapped before anything has been captured: the journal has
+    // no Notes at all, and still names this Project.
+    await core.setProjectMapping('/code/work-journal-ai/.git', 'work-journal-ai')
+
+    await session.open()
+
+    expect(session.snapshot().history).toEqual({ state: 'empty' })
+    expect(session.snapshot().filter).toBeNull()
+    expect(session.snapshot().projects).toEqual(['work-journal-ai'])
+
+    await session.renameProject('work-journal-ai', 'journal')
+
+    expect(await core.projectMapping('/code/work-journal-ai/.git')).toBe(
+      'journal',
+    )
+    expect(session.snapshot().projects).toEqual(['journal'])
+  })
+
+  it('names it again after the window is closed and reopened', async () => {
+    const { session, core } = await sessionOver([])
+    await core.setProjectMapping('/code/work-journal-ai/.git', 'work-journal-ai')
+    await session.open()
+
+    // The window is closed and a new one opens: a new session over the same
+    // journal, taking the path that goes through History's empty state.
+    const seen: HistorySnapshot[] = []
+    const reopened = createHistorySession({
+      journal: Promise.resolve(core),
+      clipboard: async () => {},
+      announceChange: () => {},
+      onChange: (snapshot) => seen.push(snapshot),
+    })
+
+    await reopened.open()
+
+    expect(reopened.snapshot().history).toEqual({ state: 'empty' })
+    expect(reopened.snapshot().projects).toEqual(['work-journal-ai'])
+
+    await reopened.renameProject('work-journal-ai', 'journal')
+
+    expect(await core.projectMapping('/code/work-journal-ai/.git')).toBe(
+      'journal',
+    )
+    expect(reopened.snapshot().projects).toEqual(['journal'])
+  })
+
+  it('holds no Projects at all until something names one', async () => {
+    const { session } = await sessionOver([])
+
+    await session.open()
+
+    expect(session.snapshot().projects).toEqual([])
+  })
+})
+
 describe('moving the Filter', () => {
   it('reads the Notes of the range it was moved to', async () => {
     const { session } = await sessionOver([
@@ -199,6 +257,16 @@ describe('narrowing the Filter by Project', () => {
     await session.open()
 
     expect(session.snapshot().projects).toEqual(['api', 'billing'])
+  })
+
+  it('offers a Project only a Project Mapping names, whatever the Filter shows', async () => {
+    const { session, core } = await friday()
+    // One repository mapped to a stream nothing has been said under yet.
+    await core.setProjectMapping('/code/site/.git', 'site')
+
+    await session.open()
+
+    expect(session.snapshot().projects).toEqual(['api', 'billing', 'site'])
   })
 
   it('shows one Project without moving the days', async () => {

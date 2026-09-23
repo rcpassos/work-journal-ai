@@ -533,6 +533,12 @@ fn migrations() -> Vec<Migration> {
             sql: include_str!("../migrations/0008_note_origin_observe_and_handled_events.sql"),
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 9,
+            description: "project mappings",
+            sql: include_str!("../migrations/0009_project_mappings.sql"),
+            kind: MigrationKind::Up,
+        },
     ]
 }
 
