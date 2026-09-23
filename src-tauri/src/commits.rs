@@ -278,6 +278,15 @@ impl Git {
         if !path.is_dir() {
             return Err(RepositoryUnreadable::NotARepository);
         }
+        // A macOS privacy refusal lets a folder be found and entered and
+        // refuses what is in it, so git would call it "not a git repository".
+        // Reading it is the question that tells the two apart — EACCES and
+        // EPERM alike come back as `PermissionDenied`.
+        if let Err(error) = std::fs::read_dir(path) {
+            if error.kind() == std::io::ErrorKind::PermissionDenied {
+                return Err(RepositoryUnreadable::Denied);
+            }
+        }
 
         let output = self.run(
             path,
@@ -287,8 +296,6 @@ impl Git {
             let said = String::from_utf8_lossy(&output.stderr);
             return Err(if said.contains("not a git repository") {
                 RepositoryUnreadable::NotARepository
-            } else if said.contains("Permission denied") {
-                RepositoryUnreadable::Denied
             } else {
                 RepositoryUnreadable::GitUnavailable
             });
@@ -946,6 +953,12 @@ mod tests {
         lock(0o755).unwrap();
         std::fs::set_permissions(&repository, std::fs::Permissions::from_mode(0o000)).unwrap();
         let inside = reason(&read_by(&repository, &[ME], at(0)));
+        // Found and entered, but its contents refused — the shape of a macOS
+        // privacy refusal, where `stat` and `cd` work and reading does not.
+        // git itself still gets through here; the answer must not depend on
+        // it, since under a real refusal git says "not a git repository".
+        std::fs::set_permissions(&repository, std::fs::Permissions::from_mode(0o311)).unwrap();
+        let unlisted = reason(&read_by(&repository, &[ME], at(0)));
         std::fs::set_permissions(&repository, std::fs::Permissions::from_mode(0o755)).unwrap();
 
         assert_eq!(behind.0, RepositoryUnreadable::Denied);
@@ -956,6 +969,7 @@ mod tests {
             }
         ));
         assert_eq!(inside, RepositoryUnreadable::Denied);
+        assert_eq!(unlisted, RepositoryUnreadable::Denied);
     }
 
     #[test]
