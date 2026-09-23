@@ -65,7 +65,7 @@ pub struct Commit {
 /// `src/platform/desktop-rust.test.ts` checks.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
-pub enum Unreadable {
+pub enum RepositoryUnreadable {
     /// Nothing is at the path any more.
     Missing,
     /// Something is there, and it is not in a repository.
@@ -87,7 +87,7 @@ pub enum CommitsRead {
         commits: Vec<Commit>,
     },
     Unreadable {
-        reason: Unreadable,
+        reason: RepositoryUnreadable,
     },
 }
 
@@ -105,7 +105,7 @@ pub enum IdentitiesRead {
         identities: Vec<String>,
     },
     Unreadable {
-        reason: Unreadable,
+        reason: RepositoryUnreadable,
     },
 }
 
@@ -116,7 +116,9 @@ pub fn read(path: &Path, identities: &[String], since: f64) -> CommitsRead {
     Git::SYSTEM.read(path, identities, since)
 }
 
-/// How far back suggestions look for authors.
+/// How far back suggestions look for authors. Must match
+/// `SUGGESTION_LOOKBACK` in `src/platform/testing/desktop.ts`, as
+/// `src/platform/desktop-rust.test.ts` checks.
 const SUGGESTION_LOOKBACK: f64 = 90.0 * 24.0 * 60.0 * 60.0 * 1000.0;
 
 /// The addresses that might be the user in this repository: the configured
@@ -160,9 +162,9 @@ impl Git {
         path: &Path,
         identities: &[String],
         since: f64,
-    ) -> Result<Vec<Commit>, Unreadable> {
+    ) -> Result<Vec<Commit>, RepositoryUnreadable> {
         let repository = self.repository(path)?;
-        let tip = self.tip(path)?.ok_or(Unreadable::NoHead)?;
+        let tip = self.tip(path)?.ok_or(RepositoryUnreadable::NoHead)?;
         // Without an `--author`, `git log` answers with everybody's.
         if identities.is_empty() {
             return Ok(Vec::new());
@@ -206,10 +208,14 @@ impl Git {
                     .filter(|c| c.authored_at >= since)
                     .collect()
             })
-            .ok_or(Unreadable::GitUnavailable)
+            .ok_or(RepositoryUnreadable::GitUnavailable)
     }
 
-    fn candidates(&self, path: &Path, since: f64) -> Result<(String, Vec<String>), Unreadable> {
+    fn candidates(
+        &self,
+        path: &Path,
+        since: f64,
+    ) -> Result<(String, Vec<String>), RepositoryUnreadable> {
         let repository = self.repository(path)?;
 
         // Unset is an answer too: exit 1 and nothing said.
@@ -237,7 +243,8 @@ impl Git {
             )?;
             let mut authors = Vec::new();
             for record in records(&log, 2) {
-                let authored_at = milliseconds(record[0]).ok_or(Unreadable::GitUnavailable)?;
+                let authored_at =
+                    milliseconds(record[0]).ok_or(RepositoryUnreadable::GitUnavailable)?;
                 if authored_at >= since {
                     authors.push((authored_at, record[1].to_string()));
                 }
@@ -257,12 +264,12 @@ impl Git {
 
     /// The repository's identity: its common directory, which every worktree
     /// of it shares, canonical so a symlinked path is the same repository.
-    fn repository(&self, path: &Path) -> Result<String, Unreadable> {
+    fn repository(&self, path: &Path) -> Result<String, RepositoryUnreadable> {
         if !path.exists() {
-            return Err(Unreadable::Missing);
+            return Err(RepositoryUnreadable::Missing);
         }
         if !path.is_dir() {
-            return Err(Unreadable::NotARepository);
+            return Err(RepositoryUnreadable::NotARepository);
         }
 
         let output = self.run(
@@ -272,9 +279,9 @@ impl Git {
         if !output.status.success() {
             let said = String::from_utf8_lossy(&output.stderr);
             return Err(if said.contains("not a git repository") {
-                Unreadable::NotARepository
+                RepositoryUnreadable::NotARepository
             } else {
-                Unreadable::GitUnavailable
+                RepositoryUnreadable::GitUnavailable
             });
         }
 
@@ -286,7 +293,7 @@ impl Git {
     /// The commit to walk back from: `origin/HEAD`, then the current branch's
     /// upstream, then `HEAD` — the first this machine can resolve to a
     /// commit, as a hash. None when not one of them can be.
-    fn tip(&self, path: &Path) -> Result<Option<String>, Unreadable> {
+    fn tip(&self, path: &Path) -> Result<Option<String>, RepositoryUnreadable> {
         for candidate in ["refs/remotes/origin/HEAD", "@{upstream}", "HEAD"] {
             let target = format!("{candidate}^{{commit}}");
             let output = self.run(path, &["rev-parse", "--verify", "--quiet", &target])?;
@@ -301,10 +308,10 @@ impl Git {
 
     /// Runs one read-only `git` call in `path`, answering with what it said
     /// only if it succeeded.
-    fn succeed(&self, path: &Path, args: &[&str]) -> Result<String, Unreadable> {
+    fn succeed(&self, path: &Path, args: &[&str]) -> Result<String, RepositoryUnreadable> {
         let output = self.run(path, args)?;
         if !output.status.success() {
-            return Err(Unreadable::GitUnavailable);
+            return Err(RepositoryUnreadable::GitUnavailable);
         }
         Ok(String::from_utf8_lossy(&output.stdout).into_owned())
     }
@@ -314,7 +321,7 @@ impl Git {
     /// off, a prompt can never be put up, git speaks untranslated, and any
     /// repository the environment
     /// names is dropped so the one at `path` is what is read.
-    fn run(&self, path: &Path, args: &[&str]) -> Result<Output, Unreadable> {
+    fn run(&self, path: &Path, args: &[&str]) -> Result<Output, RepositoryUnreadable> {
         Command::new(self.program)
             .arg("-C")
             .arg(path)
@@ -330,7 +337,7 @@ impl Git {
             .env_remove("GIT_INDEX_FILE")
             .stdin(Stdio::null())
             .output()
-            .map_err(|_| Unreadable::GitUnavailable)
+            .map_err(|_| RepositoryUnreadable::GitUnavailable)
     }
 }
 
@@ -475,7 +482,7 @@ mod tests {
         }
     }
 
-    fn reason(answer: &CommitsRead) -> Unreadable {
+    fn reason(answer: &CommitsRead) -> RepositoryUnreadable {
         match answer {
             CommitsRead::Unreadable { reason } => *reason,
             CommitsRead::Read { commits } => panic!("read {commits:?}"),
@@ -913,11 +920,14 @@ mod tests {
         let root = TempDir::new("missing");
         let gone = root.path.join("deleted");
 
-        assert_eq!(reason(&read_by(&gone, &[ME], at(0))), Unreadable::Missing);
+        assert_eq!(
+            reason(&read_by(&gone, &[ME], at(0))),
+            RepositoryUnreadable::Missing
+        );
         assert!(matches!(
             identities_since(&gone, at(0)),
             IdentitiesRead::Unreadable {
-                reason: Unreadable::Missing
+                reason: RepositoryUnreadable::Missing
             }
         ));
     }
@@ -929,16 +939,16 @@ mod tests {
 
         assert_eq!(
             reason(&read_by(&root.path, &[ME], at(0))),
-            Unreadable::NotARepository
+            RepositoryUnreadable::NotARepository
         );
         assert_eq!(
             reason(&read_by(&root.path.join("file"), &[ME], at(0))),
-            Unreadable::NotARepository
+            RepositoryUnreadable::NotARepository
         );
         assert!(matches!(
             identities_since(&root.path, at(0)),
             IdentitiesRead::Unreadable {
-                reason: Unreadable::NotARepository
+                reason: RepositoryUnreadable::NotARepository
             }
         ));
     }
@@ -950,7 +960,7 @@ mod tests {
 
         assert_eq!(
             reason(&read_by(&root.path, &[ME], at(0))),
-            Unreadable::NoHead
+            RepositoryUnreadable::NoHead
         );
     }
 
@@ -966,13 +976,13 @@ mod tests {
         assert!(matches!(
             absent.read(&root.path, &[ME.to_string()], at(0)),
             CommitsRead::Unreadable {
-                reason: Unreadable::GitUnavailable
+                reason: RepositoryUnreadable::GitUnavailable
             }
         ));
         assert!(matches!(
             absent.identities(&root.path, at(0)),
             IdentitiesRead::Unreadable {
-                reason: Unreadable::GitUnavailable
+                reason: RepositoryUnreadable::GitUnavailable
             }
         ));
     }
@@ -1034,10 +1044,10 @@ mod tests {
             r#"{"state":"read","commits":[{"hash":"6f47772","subject":"Fix it","authoredAt":1000.0,"repository":"/r/.git"}]}"#,
         );
         for (reason, name) in [
-            (Unreadable::Missing, "missing"),
-            (Unreadable::NotARepository, "not-a-repository"),
-            (Unreadable::NoHead, "no-head"),
-            (Unreadable::GitUnavailable, "git-unavailable"),
+            (RepositoryUnreadable::Missing, "missing"),
+            (RepositoryUnreadable::NotARepository, "not-a-repository"),
+            (RepositoryUnreadable::NoHead, "no-head"),
+            (RepositoryUnreadable::GitUnavailable, "git-unavailable"),
         ] {
             assert_eq!(
                 serde_json::to_string(&CommitsRead::Unreadable { reason }).unwrap(),

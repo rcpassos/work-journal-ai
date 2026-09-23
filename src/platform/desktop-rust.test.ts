@@ -36,6 +36,7 @@ import {
   THEME_KEY,
 } from './desktop'
 import { backupFileName } from './tauri-desktop'
+import { SUGGESTION_LOOKBACK } from './testing/desktop'
 
 const TEST_FILE = 'src/platform/desktop-rust.test.ts'
 const RUST_FILE = 'src-tauri/src/lib.rs'
@@ -812,7 +813,7 @@ describe('the commit reader contract', () => {
   const tauriSource = read('src/platform/tauri-desktop.ts')
 
   it('spells the reasons a repository is unreadable the same on both sides', () => {
-    const rustReasons = rustVariants(commitsSource, 'Unreadable').map(kebab)
+    const rustReasons = rustVariants(commitsSource, 'RepositoryUnreadable').map(kebab)
 
     expect(rustReasons).toEqual([
       'missing',
@@ -837,6 +838,17 @@ describe('the commit reader contract', () => {
 
     expect(rustFields).toEqual(['hash', 'subject', 'authoredAt', 'repository'])
     expect(tsFieldNames(desktopSource, 'Commit')).toEqual(rustFields)
+  })
+
+  it('looks back as far for suggestions in the fake as the reader does', () => {
+    // The fake cannot ask the reader, so it keeps a copy of the window.
+    const rust = commitsSource.match(
+      /const SUGGESTION_LOOKBACK: f64 = ([\d.* ]+);/,
+    )?.[1]
+    expect(rust, 'SUGGESTION_LOOKBACK is not where it is expected').toBeTruthy()
+
+    const product = rust!.split('*').reduce((total, factor) => total * Number(factor), 1)
+    expect(product).toBe(SUGGESTION_LOOKBACK)
   })
 
   it('reaches both commands under the names and arguments they take', () => {

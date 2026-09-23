@@ -505,7 +505,7 @@ export interface Commit {
 
 /**
  * Why one repository could not be read — an ordinary answer about it, never
- * a failure of the reader. Must match `Unreadable` in
+ * a failure of the reader. Must match `RepositoryUnreadable` in
  * `src-tauri/src/commits.rs`, as `src/platform/desktop-rust.test.ts` checks.
  */
 export type RepositoryUnreadable =

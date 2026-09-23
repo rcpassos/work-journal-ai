@@ -764,5 +764,8 @@ function nextSibling(path: string, existing: string[]): string {
   return `${stem}-${attempt}${extension}`
 }
 
-/** How far back suggestions look — `SUGGESTION_LOOKBACK` in `src-tauri/src/commits.rs`. */
-const SUGGESTION_LOOKBACK = 90 * 24 * 60 * 60 * 1000
+/**
+ * How far back suggestions look. Must match `SUGGESTION_LOOKBACK` in
+ * `src-tauri/src/commits.rs`, as `src/platform/desktop-rust.test.ts` checks.
+ */
+export const SUGGESTION_LOOKBACK = 90 * 24 * 60 * 60 * 1000
