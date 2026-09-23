@@ -72,6 +72,10 @@ pub enum RepositoryUnreadable {
     NotARepository,
     /// A repository with nothing to read yet: no commit at any of the refs.
     NoHead,
+    /// The path, or a folder on the way to it, is one the app may not open —
+    /// on macOS, typically a folder whose access was refused. Still there,
+    /// unlike `Missing`.
+    Denied,
     /// `git` could not be run, or failed in a way that says nothing about
     /// the repository.
     GitUnavailable,
@@ -265,8 +269,11 @@ impl Git {
     /// The repository's identity: its common directory, which every worktree
     /// of it shares, canonical so a symlinked path is the same repository.
     fn repository(&self, path: &Path) -> Result<String, RepositoryUnreadable> {
-        if !path.exists() {
-            return Err(RepositoryUnreadable::Missing);
+        // `exists` answers false for a path it was refused a look at, too.
+        match path.try_exists() {
+            Ok(true) => {}
+            Ok(false) => return Err(RepositoryUnreadable::Missing),
+            Err(_) => return Err(RepositoryUnreadable::Denied),
         }
         if !path.is_dir() {
             return Err(RepositoryUnreadable::NotARepository);
@@ -280,6 +287,8 @@ impl Git {
             let said = String::from_utf8_lossy(&output.stderr);
             return Err(if said.contains("not a git repository") {
                 RepositoryUnreadable::NotARepository
+            } else if said.contains("Permission denied") {
+                RepositoryUnreadable::Denied
             } else {
                 RepositoryUnreadable::GitUnavailable
             });
@@ -916,6 +925,40 @@ mod tests {
     }
 
     #[test]
+    fn a_folder_the_app_may_not_open_is_denied_not_missing() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = TempDir::new("denied");
+        let locked = root.path.join("locked");
+        let repository = locked.join("repository");
+        init(&repository);
+        commit(&repository, ME, 1, "Start");
+        let lock = |mode| std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(mode));
+
+        // Behind a folder the app may not look inside — ~/Documents with
+        // access refused — the path is there, and saying it is gone would be
+        // a lie Settings could act on.
+        lock(0o000).unwrap();
+        let behind = (
+            reason(&read_by(&repository, &[ME], at(0))),
+            identities_since(&repository, at(0)),
+        );
+        // The folder itself refused, rather than its parent.
+        lock(0o755).unwrap();
+        std::fs::set_permissions(&repository, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let inside = reason(&read_by(&repository, &[ME], at(0)));
+        std::fs::set_permissions(&repository, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        assert_eq!(behind.0, RepositoryUnreadable::Denied);
+        assert!(matches!(
+            behind.1,
+            IdentitiesRead::Unreadable {
+                reason: RepositoryUnreadable::Denied
+            }
+        ));
+        assert_eq!(inside, RepositoryUnreadable::Denied);
+    }
+
+    #[test]
     fn a_missing_path_is_a_stated_reason() {
         let root = TempDir::new("missing");
         let gone = root.path.join("deleted");
@@ -1047,6 +1090,7 @@ mod tests {
             (RepositoryUnreadable::Missing, "missing"),
             (RepositoryUnreadable::NotARepository, "not-a-repository"),
             (RepositoryUnreadable::NoHead, "no-head"),
+            (RepositoryUnreadable::Denied, "denied"),
             (RepositoryUnreadable::GitUnavailable, "git-unavailable"),
         ] {
             assert_eq!(

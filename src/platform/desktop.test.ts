@@ -104,6 +104,25 @@ describe('the fake commit reader', () => {
     })
   })
 
+  it('suggests the most recent author by author date, not by walk order', async () => {
+    // On top in the walk, as a rebase leaves it, but written first.
+    const desktop = fakeDesktop({
+      repositories: {
+        '/code/rebased': {
+          repository: '/code/rebased/.git',
+          commits: [
+            { hash: 'b', subject: 'Written first', authoredAt: now - 5 * hour, author: 'rebased@example.com' },
+            { hash: 'a', subject: 'Written last', authoredAt: now - hour, author: 'earlier@example.com' },
+          ],
+        },
+      },
+    })
+
+    expect(await desktop.repositoryIdentities('/code/rebased')).toMatchObject({
+      identities: ['earlier@example.com', 'rebased@example.com'],
+    })
+  })
+
   it('says why a repository cannot be read, and a path it has never heard of is missing', async () => {
     const desktop = fakeDesktop({ repositories: { '/tmp': 'not-a-repository' } })
 

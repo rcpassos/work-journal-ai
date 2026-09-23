@@ -819,6 +819,7 @@ describe('the commit reader contract', () => {
       'missing',
       'not-a-repository',
       'no-head',
+      'denied',
       'git-unavailable',
     ])
     expect(tsUnionKinds(desktopSource, 'RepositoryUnreadable')).toEqual(rustReasons)

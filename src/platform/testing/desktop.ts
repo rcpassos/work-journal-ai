@@ -549,8 +549,11 @@ export function fakeDesktop({
       const since = Date.now() - SUGGESTION_LOOKBACK
       const addresses = [
         ...(found.configuredEmail ? [found.configuredEmail] : []),
+        // Most recent by author date, as the reader sorts them: a rebase
+        // leaves walk order and author order apart.
         ...found.commits
           .filter(({ authoredAt }) => authoredAt >= since)
+          .toSorted((a, b) => b.authoredAt - a.authoredAt)
           .map(({ author }) => author),
       ]
       // One address in any case, the first spelling met kept.

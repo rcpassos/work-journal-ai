@@ -512,6 +512,7 @@ export type RepositoryUnreadable =
   | 'missing'
   | 'not-a-repository'
   | 'no-head'
+  | 'denied'
   | 'git-unavailable'
 
 /**
