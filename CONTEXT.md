@@ -5,7 +5,7 @@ A personal, local-first log of short work notes captured throughout the day, so 
 ## Language
 
 **Note**:
-A single dated line of text about the user's work. The unit of everything — there is no smaller or larger record. Always has a Body from the moment it exists. May be filed under one Project; may be Unfiled. Comes into existence one of exactly two ways: a Capture or an Import.
+A single dated line of text about the user's work. The unit of everything — there is no smaller or larger record. Always has a Body from the moment it exists. May be filed under one Project; may be Unfiled. Comes into existence one of exactly three ways: a Capture, an Import or an Observe.
 _Avoid_: Entry, log, item, memo
 
 **Task**:
@@ -84,15 +84,31 @@ The act of writing a Note by hand. Ends in either one committed Note or nothing 
 _Avoid_: Entry, input, quick add
 
 **Captured Note**:
-A Note the user typed. What the journal is for, and the only kind that counts as having journalled — a day of Imported Notes and no Captured Notes is a day nothing was said about.
+A Note the user typed. What the journal is for, and the only kind that counts as having journalled — a day of Imported or Observed Notes and no Captured Notes is a day nothing was said about.
 
 **Import**:
-The act of turning a meeting on the user's calendar into a Note, without being asked. The second and only other origin of a Note. Unlike a Capture it has no author present, so what it produces is always distinguishable from what was typed.
+The act of turning a meeting on the user's calendar into a Note, without being asked. One of the three origins of a Note, and the only one that reads a calendar. Unlike a Capture it has no author present, so what it produces is always distinguishable from what was typed.
 _Avoid_: Sync, ingest, intake
 
 **Imported Note**:
-A Note made by an Import. Its Body is the calendar event's title, verbatim, and its Captured At is when the meeting began. Always Unfiled — the calendars it comes from carry no Project meaning, so there is nothing to file it under. Ordinary in every other respect — editable, refilable and deletable like any Note. Rendered muted in History, with no icon and no label, so a scan-and-delete pass down the day is fast; a Digest shows no difference at all. Declined events never become one, nor do events covering the whole local day — whether or not the calendar marks them all-day, since an out-of-office block running local midnight to midnight does not, and would otherwise arrive as a meeting that began at 00:00.
+A Note made by an Import. Its Body is the calendar event's title, verbatim, and its Captured At is when the meeting began. Always Unfiled — the calendars it comes from carry no Project meaning, so there is nothing to file it under. Ordinary in every other respect — editable, refilable and deletable like any Note. Rendered muted in History, with no icon and no label, so a scan-and-delete pass down the day is fast; hovering one written since the calendar was recorded as its source names the calendar. A Digest shows no difference at all. Declined events never become one, nor do events covering the whole local day — whether or not the calendar marks them all-day, since an out-of-office block running local midnight to midnight does not, and would otherwise arrive as a meeting that began at 00:00.
 _Avoid_: Meeting note, event, calendar entry
+
+**Observe**:
+The act of a source event the journal already holds becoming a Note, without being asked — the third origin of a Note, after Capture and Import. The event's own line becomes the Body verbatim, its instant becomes Captured At, and Journal Day is derived from that instant, so an event found after midnight lands on the day the work happened. Identity is the source event itself, remembered as handled before the Note exists, so deleting the Note refuses the event for good.
+_Avoid_: Sync, monitor, ingest, scrape
+
+**Observed Note**:
+A Note made by an Observe. Ordinary in every other respect — editable, refilable and deletable like any Note — and rendered muted in History exactly as an Imported Note is, with the source it came from named on hover; a Digest shows no difference at all. It stops following its source the moment it exists, and deleting it refuses its source event permanently. Never counted by the Tray Count: a count inflated by observations would reassure on exactly the days nothing was typed.
+_Avoid_: Auto note, generated note, commit note
+
+**Observed Source**:
+Where Observed Notes come from: something outside the journal that already records the user's work, read as an artifact rather than a guess — git commits in selected repositories first. Named by the user, read only, and it produces nothing until it is turned on; each event it produces is remembered as handled whether or not its Note survives.
+_Avoid_: Integration, feed, watcher, plugin
+
+**Handled Event**:
+One source event the journal has already turned into a Note, remembered as a row keyed on source and event key — written before the Note it becomes, in the same transaction, and never removed. It outlives the Note on purpose: deleting a Note is how the user refuses its event for good, and an id kept on the Note would be destroyed by the very deletion that has to be remembered. Two sources can never collide over the same key.
+_Avoid_: Import log, dedupe table, seen list
 
 **Draft**:
 Nothing. Text typed during a Capture but not committed does not exist — abandoning a Capture discards it, and the next Capture starts empty.
@@ -140,7 +156,7 @@ The menu bar icon's menu. The Entry Point that always works, offering both New N
 _Avoid_: Menu bar, status item
 
 **Tray Count**:
-How many Captured Notes today's Journal Day holds, shown beside the menu bar glyph. The app solicits nothing about journalling — no prompts or scheduled nudges — so this is the only reminder to journal there is, and the only reason the app is noticed on a day nothing has been written. Captured Notes only: Imported Notes and Tasks would make the number mean two incompatible things. A day with none reads as a blank rather than as a zero, because a total reads as a day already accounted for.
+How many Captured Notes today's Journal Day holds, shown beside the menu bar glyph. The app solicits nothing about journalling — no prompts or scheduled nudges — so this is the only reminder to journal there is, and the only reason the app is noticed on a day nothing has been written. Captured Notes only: Imported and Observed Notes and Tasks would make the number mean two incompatible things. A day with none reads as a blank rather than as a zero, because a total reads as a day already accounted for.
 _Avoid_: Badge, counter, notification
 
 **App Menu**:
@@ -158,7 +174,7 @@ _Avoid_: App icon, taskbar, activation policy
 ## Time
 
 **Captured At**:
-The instant the Note is about — when a Captured Note was typed, or when an Imported Note's meeting began. Never changes, never editable — provenance, not filing. Not the instant the Note was stored, which for an Import can be hours later and would sort a whole day wrongly.
+The instant the Note is about — when a Captured Note was typed, when an Imported Note's meeting began, or when the work an Observed Note records happened. Never changes, never editable — provenance, not filing. Not the instant the Note was stored, which for an Import or an Observe can be hours later and would sort a whole day wrongly.
 
 **Journal Day**:
 The single day a Note is filed under. Decided when the Note comes into existence as the local calendar day of Captured At, and thereafter the user's to change. Not recomputed from Captured At, so it never shifts under a timezone change.
@@ -201,7 +217,7 @@ The Markdown rendering of every Note in the current Filter, oldest first, groupe
 _Avoid_: Export, report, summary, copy-all text
 
 **Yesterday's Digest**:
-The Digest of the previous calendar day, on the clipboard from the Tray Menu. The payoff for capturing: it goes straight into the written work log the user already owes a chat group every morning, with no window to open and nothing to tidy up. Yesterday is the calendar day before today, not the previous Occupied Day — a standup post is about a date, so a Monday that pasted Friday would be a claim about the weekend. A day with no Notes copies nothing and leaves the clipboard as it was, since a blank paste is worse than no paste. Imported Notes are in it and read exactly like Captured ones: the muted rendering in History is for scanning and deleting, not for whoever reads the post. Does not touch the Filter — copying is not navigating.
+The Digest of the previous calendar day, on the clipboard from the Tray Menu. The payoff for capturing: it goes straight into the written work log the user already owes a chat group every morning, with no window to open and nothing to tidy up. Yesterday is the calendar day before today, not the previous Occupied Day — a standup post is about a date, so a Monday that pasted Friday would be a claim about the weekend. A day with no Notes copies nothing and leaves the clipboard as it was, since a blank paste is worse than no paste. Imported and Observed Notes are in it and read exactly like Captured ones: the muted rendering in History is for scanning and deleting, not for whoever reads the post. Does not touch the Filter — copying is not navigating.
 
 **Work Summary Material**:
 The complete lossless Markdown of the Notes and Task completions in Work Summary's selected date range, followed by all currently Open Tasks explicitly identified as current commitments. It is the source for a Work Summary and can be copied independently without Model Access, replacing Standup Material while Yesterday's Digest and Review Material retain their meanings.
@@ -228,7 +244,7 @@ Replacing the live journal with an earlier whole taken as a Backup. The candidat
 _Avoid_: Undo, import, merge, sync
 
 **Deletion**:
-Confirmed permanent removal of a Note or Task. There is no trash, no archive, no recovery, and no bulk deletion of Completed Tasks. Deleting an Imported Note also refuses its meeting so it is never imported again; deleting a Recurring Task also removes its completed Task Occurrence history and says so before confirmation. Deletion stays permanent: a Restore returns the journal to an earlier whole, it does not undo one Note.
+Confirmed permanent removal of a Note or Task. There is no trash, no archive, no recovery, and no bulk deletion of Completed Tasks. Deleting an Imported or Observed Note also refuses its source event, so it never becomes a Note again; deleting a Recurring Task also removes its completed Task Occurrence history and says so before confirmation. Deletion stays permanent: a Restore returns the journal to an earlier whole, it does not undo one Note.
 
 ## Settings
 

@@ -62,6 +62,68 @@ describe('a Note row', () => {
   })
 })
 
+describe('a Note nobody typed', () => {
+  it('reads muted whether its source is the calendar or a repository', async () => {
+    await showHistory([{ at: '2026-03-09T10:00:00', body: 'Monday' }], {
+      arrive: (core) =>
+        Promise.all([
+          core.importMeeting({
+            id: 'event-1',
+            calendarId: 'work',
+            title: 'Standup',
+            isAllDay: false,
+            isDeclined: false,
+            startsAt: new Date('2026-03-09T09:00:00').getTime(),
+            endsAt: new Date('2026-03-09T09:30:00').getTime(),
+          }),
+          core.observe({
+            source: 'commit',
+            eventKey: '6f47772@work-journal-ai',
+            body: 'Fix the second scrollbar on Settings',
+            happenedAt: '2026-03-09T11:00:00.000Z',
+            project: null,
+          }),
+        ]),
+    })
+
+    // An Observed Note reads exactly as an Imported one does: the weight is
+    // the whole of the difference, and which origin it came by changes
+    // nothing about how a scan-and-delete pass reads.
+    for (const body of ['Standup', 'Fix the second scrollbar on Settings']) {
+      expect(lineFor(body).className).toContain('text-muted-foreground')
+    }
+
+    // The Note the user typed stays as it reads.
+    expect(lineFor('Monday').className).not.toContain('text-muted-foreground')
+  })
+
+  it('says where it came from on hover, while a Note with no source says nothing', async () => {
+    await showHistory([{ at: '2026-03-09T10:00:00', body: 'Monday' }], {
+      arrive: (core) =>
+        core.importMeeting({
+          id: 'event-1',
+          calendarId: 'work',
+          title: 'Standup',
+          isAllDay: false,
+          isDeclined: false,
+          startsAt: new Date('2026-03-09T09:00:00').getTime(),
+          endsAt: new Date('2026-03-09T09:30:00').getTime(),
+        }),
+    })
+
+    expect(
+      within(row('Standup')).getByTitle('Imported from your calendar'),
+    ).toBeTruthy()
+    // Nothing to say about a Note the user typed: no source, no hover.
+    expect(row('Monday').querySelector('[title]')).toBeNull()
+  })
+})
+
+/** The Body button the row's Note reads on — the line with the source on it. */
+function lineFor(body: string): HTMLElement {
+  return within(row(body)).getByRole('button', { name: new RegExp(`${body}$`) })
+}
+
 describe('the row actions', () => {
   it('keep a gutter of their own rather than covering the Body', async () => {
     await showHistory([{ at: '2026-03-09T10:00:00', body: 'Monday' }])

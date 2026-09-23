@@ -46,7 +46,7 @@ pub const DATABASE_FILE_NAME: &str = "work-journal.db";
 /// snapshot is accepted and migrated forward by the immutable list; a newer
 /// one is refused before anything is touched. Every future migration raises
 /// this.
-pub const SUPPORTED_MIGRATION_VERSION: i64 = 7;
+pub const SUPPORTED_MIGRATION_VERSION: i64 = 8;
 
 /// The staged file a validated candidate is copied to, beside the live
 /// journal. Not a snapshot name, so pruning never touches it, and never
@@ -611,14 +611,63 @@ fn sidecar_path(live: &Path, sidecar: &str) -> PathBuf {
 ///
 /// Columns read in the order the migrations left them; a version's list is
 /// always a prefix of a newer version's, because a migration adds columns to
-/// a table it never drops or reorders. Every arm is an explicit version: the
-/// `_` fallback is the latest known schema, and validation never sends it
-/// anything newer than `SUPPORTED_MIGRATION_VERSION` — while
-/// `the_supported_version_tracks_the_migrations_list` and
+/// a table it never drops or reorders. (Migration 8 replaces a whole table —
+/// `imported_meetings` became `handled_events` — which changes which tables a
+/// version names, never the columns of a table that version keeps.) Every arm
+/// is an explicit version: the `_` fallback is the latest known schema, and
+/// validation never sends it anything newer than `SUPPORTED_MIGRATION_VERSION`
+/// — while `the_supported_version_tracks_the_migrations_list` and
 /// `expected_schema_covers_the_real_schema_at_every_version` fail if a
 /// migration lands without teaching this function its tables and columns.
 fn expected_schema(version: i64) -> &'static [(&'static str, &'static [&'static str])] {
     const LATEST: &[(&str, &[&str])] = &[
+        (
+            "notes",
+            &[
+                "id",
+                "body",
+                "captured_at",
+                "journal_day",
+                "edited_at",
+                "project",
+                "origin",
+                "source",
+                "source_key",
+            ],
+        ),
+        ("handled_events", &["source", "event_key", "handled_at"]),
+        (
+            "tasks",
+            &[
+                "id",
+                "description",
+                "created_at",
+                "completed_at",
+                "scheduled_date",
+                "scheduled_time",
+                "recurrence_unit",
+                "recurrence_interval",
+                "recurrence_weekdays",
+                "recurrence_anchor_date",
+            ],
+        ),
+        (
+            "task_occurrences",
+            &[
+                "id",
+                "task_id",
+                "scheduled_date",
+                "scheduled_time",
+                "completed_at",
+                "created_at",
+                "advanced_from",
+            ],
+        ),
+    ];
+    // The schema as migration 7 left it, kept whole because an older snapshot
+    // is validated against the version it claims: `notes` before migration 8
+    // rebuilt it, and `imported_meetings` before `handled_events` replaced it.
+    const V7: &[(&str, &[&str])] = &[
         (
             "notes",
             &[
@@ -663,7 +712,9 @@ fn expected_schema(version: i64) -> &'static [(&'static str, &'static [&'static 
     // Migration 1 creates `notes`; 2 appends `project`; 3 appends `origin`
     // and creates `imported_meetings`; 4 creates `tasks`; 5 appends its
     // schedule; 6 appends its recurrence and creates `task_occurrences`;
-    // 7 adds an index and no table or column of its own.
+    // 7 adds an index and no table or column of its own; 8 rebuilds `notes`
+    // to append `source` and `source_key` with a third origin value, and
+    // replaces `imported_meetings` with `handled_events`.
     match version {
         1 => &[("notes", &["id", "body", "captured_at", "journal_day", "edited_at"])],
         2 => &[(
@@ -703,7 +754,7 @@ fn expected_schema(version: i64) -> &'static [(&'static str, &'static [&'static 
                 ],
             ),
         ],
-        6 => LATEST,
+        6 | 7 => V7,
         _ => LATEST,
     }
 }
@@ -1330,9 +1381,9 @@ mod tests {
         std::fs::read(path).expect("could not read the candidate")
     }
 
-    /// The six migration files, in version order — the very files
+    /// The eight migration files, in version order — the very files
     /// `migrations()` in `lib.rs` serves plugin-sql.
-    const REAL_MIGRATIONS: [&str; 7] = [
+    const REAL_MIGRATIONS: [&str; 8] = [
         include_str!("../migrations/0001_create_notes.sql"),
         include_str!("../migrations/0002_notes_project.sql"),
         include_str!("../migrations/0003_note_origin_and_imported_meetings.sql"),
@@ -1340,13 +1391,16 @@ mod tests {
         include_str!("../migrations/0005_task_schedule.sql"),
         include_str!("../migrations/0006_task_recurrence.sql"),
         include_str!("../migrations/0007_task_occurrences_one_kept_per_slot.sql"),
+        include_str!("../migrations/0008_note_origin_observe_and_handled_events.sql"),
     ];
 
     /// Seeds `pool` with the real schema up to `up_to`, recording each
     /// version in a `_sqlx_migrations` table shaped exactly like the one
     /// sqlx itself keeps — so validation meets the production schema rather
     /// than a hand-written approximation of it. `write_journal_file` and
-    /// `real_journal_file` both come through here.
+    /// `real_journal_file` both come through here. From version 8 the journal
+    /// also holds a handled event, so a round trip can prove the rows that
+    /// outlive a Note survive it.
     async fn seed_real_schema(pool: &SqlitePool, up_to: i64, marker: &str) {
         sqlx::query(
             "CREATE TABLE IF NOT EXISTS _sqlx_migrations (
@@ -1385,6 +1439,15 @@ mod tests {
         .execute(pool)
         .await
         .expect("could not seed the Note");
+        if up_to >= 8 {
+            sqlx::query(
+                "INSERT INTO handled_events (source, event_key, handled_at)
+                 VALUES ('calendar', 'event-1@2026-09-03T08:45:00.000Z', '2026-09-03T09:00:00.000Z')",
+            )
+            .execute(pool)
+            .await
+            .expect("could not seed the handled event");
+        }
     }
 
     /// A journal file carrying the real schema at the supported version, with
@@ -1899,20 +1962,32 @@ mod tests {
         apply_staged_restore(&config.path, SystemTime::now()).expect("apply must succeed");
 
         // The existing immutable list brings the restored file forward: the
-        // version 7 DDL — the same file `migrations()` in `lib.rs` serves
-        // plugin-sql for version 7 — applies cleanly on top of it.
+        // version 8 DDL — the same file `migrations()` in `lib.rs` serves
+        // plugin-sql for version 8 — applies cleanly on top of it.
         let url = format!("sqlite:{}?mode=rwc", live.display());
         let pool = SqlitePool::connect(&url).await.expect("could not open");
-        let migration: &str = include_str!("../migrations/0007_task_occurrences_one_kept_per_slot.sql");
+        let migration: &str =
+            include_str!("../migrations/0008_note_origin_observe_and_handled_events.sql");
         sqlx::query(migration)
             .execute(&pool)
             .await
-            .expect("the older snapshot must be migratable to version 7");
+            .expect("the older snapshot must be migratable to version 8");
         let (count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM task_occurrences")
             .fetch_one(&pool)
             .await
             .expect("the migrated table must read back");
         assert_eq!(count, 0);
+
+        // The rebuild keeps every Note exactly as it was, giving a Note
+        // written before sources were recorded a null source of its own.
+        let (body, source, source_key): (String, Option<String>, Option<String>) = sqlx::query_as(
+            "SELECT body, source, source_key FROM notes WHERE id = 'n1'",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("the Note must survive the rebuild");
+        assert_eq!(body, "the old journal");
+        assert!(source.is_none() && source_key.is_none());
         pool.close().await;
     });
 
@@ -2127,6 +2202,16 @@ mod tests {
             .await
             .expect("the snapshot Note did not read back");
         assert_eq!(body, "the snapshot note");
+
+        // And the handled event the snapshot carried — the row that outlives
+        // a deleted Note, so losing it would let a refusal be forgotten.
+        let (source, event_key): (String, String) =
+            sqlx::query_as("SELECT source, event_key FROM handled_events")
+                .fetch_one(&restored)
+                .await
+                .expect("the snapshot's handled event did not read back");
+        assert_eq!(source, "calendar");
+        assert_eq!(event_key, "event-1@2026-09-03T08:45:00.000Z");
         restored.close().await;
     });
 

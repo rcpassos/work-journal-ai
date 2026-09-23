@@ -62,6 +62,18 @@ export function migrationSql(): string[] {
     .map((name) => readFileSync(join(MIGRATIONS_DIR, name), 'utf8'))
 }
 
+/**
+ * One migration by its position in that order — never by "the last one",
+ * which silently becomes a different migration the next time one lands.
+ */
+export function migrationAt(position: number): string {
+  const sql = migrationSql()[position]
+  if (sql === undefined) {
+    throw new Error(`there is no migration at position ${position}.`)
+  }
+  return sql
+}
+
 /** Time is injected, never mocked globally. */
 export function fixedClock(instant: string | Date): Clock & {
   set: (next: Date) => void

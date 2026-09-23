@@ -368,7 +368,7 @@ Daylight saving is macOS's to resolve, not the app's: the app registers the civi
 The snapshot items are checked with `sqlite3` (ships with macOS). A first launch means no `backups` folder in the app's data directory yet.
 
 - [ ] On a first launch after installing this build — no `backups` folder yet — a development build logs where the snapshot went, and `~/Library/Application Support/com.pipecodes.work-journal/backups/` holds exactly one file named `work-journal-…T….db`. The snapshot must appear without opening any window: launch, wait, and look — if opening Settings or History is what makes the file appear, the preload is broken again.
-- [ ] `sqlite3 "~/Library/Application Support/com.pipecodes.work-journal/backups/<that file>" "PRAGMA quick_check;"` says `ok`, and `.tables` lists `notes`, `tasks`, `task_occurrences`, `imported_meetings` and `_sqlx_migrations`.
+- [ ] `sqlite3 "~/Library/Application Support/com.pipecodes.work-journal/backups/<that file>" "PRAGMA quick_check;"` says `ok`, and `.tables` lists `notes`, `tasks`, `task_occurrences`, `handled_events` and `_sqlx_migrations`.
 - [ ] The snapshot holds the journal: a Note captured before the launch reads back from the snapshot file, with its Project and Captured At.
 - [ ] Quitting and relaunching inside a minute creates no second snapshot — at most one per interval.
 - [ ] **Settings › Backup** names when the last automatic backup was taken, and that line agrees with the newest file in the folder.
