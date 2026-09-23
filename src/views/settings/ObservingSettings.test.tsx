@@ -2,19 +2,29 @@
 
 import { afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
-import { fakeDesktop, type FakeDesktop } from '@/platform/testing/desktop'
-import type { Journal } from '@/journal/journal'
+import {
+  fakeDesktop,
+  type FakeDesktop,
+  type FakeRepository,
+} from '@/platform/testing/desktop'
+import type { RepositoryUnreadable } from '@/platform/desktop'
+import { createJournal, type Journal, type SourceEvent } from '@/journal/journal'
+import { fixedClock, openTestDatabase } from '@/journal/testing/database'
 import ThemeProvider from '@/components/ThemeProvider'
 import { createAppSettings } from '@/settings/app-settings'
-import { readObserving, type Observing } from '@/settings/observing'
+import { pauseObserving, readObserving, type Observing } from '@/settings/observing'
 import SettingsView from './SettingsView'
 
 // The Observing group as the user meets it, inside the whole Settings view and
 // over a fake desktop: what is on screen, what the picker answers, and what
 // the settings file came to hold.
 
+const openJournals: Array<() => void> = []
+
 afterEach(() => {
+  for (const close of openJournals.splice(0)) close()
   cleanup()
   toast.dismiss()
 })
@@ -34,17 +44,21 @@ const WORK_JOURNAL = {
   commits: [],
 }
 
-function showSettings(desktop: FakeDesktop) {
+function showSettings(
+  desktop: FakeDesktop,
+  journal: Promise<Journal> = new Promise<Journal>(() => {}),
+) {
   const settings = createAppSettings(desktop)
   render(
     <ThemeProvider settings={settings}>
       <SettingsView
         desktop={desktop}
         settings={settings}
-        journal={new Promise<Journal>(() => {})}
+        journal={journal}
       />
     </ThemeProvider>,
   )
+  return settings
 }
 
 function observingSwitch(): HTMLElement {
@@ -213,5 +227,203 @@ describe('a repository on the list', () => {
     await expect.poll(() => stored(desktop).repositories).toEqual([])
     expect(stored(desktop).consent['/code/work-journal-ai/.git']?.[0]?.until).not.toBeNull()
     await expect.poll(toasts).toContain('work-journal-ai removed.')
+  })
+})
+
+/** Observing on with one repository listed at `path`. */
+function listedAt(
+  path: string,
+  found: FakeRepository | RepositoryUnreadable,
+  journal: Promise<Journal> = new Promise<Journal>(() => {}),
+) {
+  return {
+    desktop: fakeDesktop({
+      stored: {
+        observing: {
+          enabled: true,
+          repositories: [
+            {
+              path,
+              repository: `${path}/.git`,
+              identities: ['me@example.com'],
+              ignoredPrefixes: [],
+            },
+          ],
+          consent: { [`${path}/.git`]: [{ from: 1, until: null }] },
+          pauses: {},
+        },
+      },
+      repositories: { [path]: found },
+    }),
+    journal,
+  }
+}
+
+/** A journal holding the events given, over real SQL and a clock of now. */
+async function journalWith(events: SourceEvent[] = []) {
+  const { driver, close } = await openTestDatabase()
+  openJournals.push(close)
+  const core = createJournal({ clock: fixedClock(new Date()), driver })
+  const notes = []
+  for (const event of events) notes.push(await core.observe(event))
+  return { journal: Promise.resolve(core), core, notes }
+}
+
+describe('a repository that is not working', () => {
+  it.each<[RepositoryUnreadable, string]>([
+    ['missing', 'That folder is gone.'],
+    ['not-a-repository', 'That folder is not a git repository.'],
+    ['no-head', 'The default branch of that repository cannot be resolved.'],
+  ])('says its reason beside the entry it concerns: %s', async (reason, sentence) => {
+    const { journal } = await journalWith()
+    const { desktop } = listedAt('/code/gone', reason, journal)
+
+    showSettings(desktop, journal)
+
+    expect(
+      await screen.findByText(`${sentence} Its commits are not being added.`),
+    ).toBeTruthy()
+    // The reason is a line in the section, never a prompt of any kind.
+    expect(screen.queryByRole('dialog')).toBeNull()
+  })
+})
+
+describe('a repository that is working', () => {
+  it('shows the last Note it produced and when it arrived', async () => {
+    const { journal } = await journalWith([
+      {
+        source: 'commit',
+        eventKey: '6f47772@/code/work-journal-ai/.git',
+        body: 'Fix the second scrollbar on Settings (#256)',
+        happenedAt: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
+        project: null,
+      },
+      {
+        source: 'commit',
+        eventKey: 'b1@/code/work-journal-ai/.git',
+        body: 'Observe: the third Note origin',
+        happenedAt: new Date(Date.now() - 26 * 60 * 60 * 1000).toISOString(),
+        project: null,
+      },
+    ])
+    const { desktop } = listedAt('/code/work-journal-ai', WORK_JOURNAL)
+
+    showSettings(desktop, journal)
+
+    // The newest by when the work happened, and the "when" is its arrival —
+    // both met at this sweep, so both say "just now" whatever the work says.
+    expect(
+      await screen.findByText(
+        'Last: Fix the second scrollbar on Settings (#256) · just now',
+      ),
+    ).toBeTruthy()
+    expect(screen.queryByText(/· 2 h ago/)).toBeNull()
+    expect(screen.queryByText(/· 1 day ago/)).toBeNull()
+  })
+
+  it('says nothing has arrived since Observing was turned on, before the first does', async () => {
+    const { journal } = await journalWith()
+    const { desktop } = listedAt('/code/work-journal-ai', WORK_JOURNAL)
+
+    showSettings(desktop, journal)
+
+    expect(
+      await screen.findByText('Nothing yet since you turned this on'),
+    ).toBeTruthy()
+  })
+
+  it('does not count a Note the user deleted', async () => {
+    const { journal, core, notes } = await journalWith([
+      {
+        source: 'commit',
+        eventKey: 'b2@/code/work-journal-ai/.git',
+        body: 'Fix the second scrollbar on Settings (#256)',
+        happenedAt: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
+        project: null,
+      },
+      {
+        source: 'commit',
+        eventKey: 'b1@/code/work-journal-ai/.git',
+        body: 'Observe: the third Note origin',
+        happenedAt: new Date(Date.now() - 26 * 60 * 60 * 1000).toISOString(),
+        project: null,
+      },
+    ])
+    await core.delete(notes[0]!.id)
+    const { desktop } = listedAt('/code/work-journal-ai', WORK_JOURNAL)
+
+    showSettings(desktop, journal)
+
+    expect(
+      await screen.findByText(/^Last: Observe: the third Note origin · /),
+    ).toBeTruthy()
+  })
+})
+
+describe('the pause', () => {
+  /** Observing on, one repository added through the picker, and the menu open. */
+  async function pausedFromTheMenu(length: string) {
+    const user = userEvent.setup()
+    const desktop = observingDesktop()
+    desktop.chosenFolder = '/code/work-journal-ai'
+    showSettings(desktop)
+    ;(await screen.findByRole('button', { name: 'Add Repository…' })).click()
+    await screen.findByText('work-journal-ai')
+
+    await user.click(await screen.findByRole('button', { name: 'Pause observing' }))
+    await user.click(await screen.findByRole('menuitem', { name: length }))
+    return { user, desktop }
+  }
+
+  it('is taken from the menu, says until when, and confirms with a toast', async () => {
+    const { desktop } = await pausedFromTheMenu('For an hour')
+
+    await expect
+      .poll(toasts)
+      .toContain('Nothing done in the next hour will be added to the journal.')
+    expect(stored(desktop).pauses['/code/work-journal-ai/.git']).toHaveLength(1)
+    expect(await screen.findByText(/^Paused until /)).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Pause observing' })).toBeNull()
+  })
+
+  it('holds until resumed when it is taken until resumed', async () => {
+    const { desktop } = await pausedFromTheMenu('Until resumed')
+
+    await expect
+      .poll(toasts)
+      .toContain('Nothing done before you resume will be added to the journal.')
+    expect(await screen.findByText('Paused')).toBeTruthy()
+    expect(stored(desktop).pauses['/code/work-journal-ai/.git']?.[0]?.until).toBeNull()
+  })
+
+  it('is resumed from here, and keeps what it excluded', async () => {
+    const { user, desktop } = await pausedFromTheMenu('For an hour')
+    await screen.findByText(/^Paused until /)
+
+    await user.click(screen.getByRole('button', { name: 'Resume' }))
+
+    await expect
+      .poll(toasts)
+      .toContain('Your commits will be added to the journal again.')
+    const pause = stored(desktop).pauses['/code/work-journal-ai/.git']?.[0]
+    expect(pause?.until).not.toBeNull()
+    // Closed at the resume instant, keeping the stretch it excluded.
+    expect(pause?.until).toBeGreaterThanOrEqual(pause?.from ?? Infinity)
+    await screen.findByRole('button', { name: 'Pause observing' })
+  })
+
+  it('is shown here too when it was taken from the Tray Menu', async () => {
+    const { desktop } = listedAt('/code/work-journal-ai', WORK_JOURNAL)
+    showSettings(desktop)
+    await screen.findByRole('button', { name: 'Pause observing' })
+
+    // The capture window's answer to the tray's press: the same rule, over
+    // the same file, announced the same way.
+    await createAppSettings(desktop).updateObserving((observing, now) =>
+      pauseObserving(observing, 'until-resumed', now),
+    )
+
+    expect(await screen.findByText('Paused')).toBeTruthy()
+    await screen.findByRole('button', { name: 'Resume' })
   })
 })

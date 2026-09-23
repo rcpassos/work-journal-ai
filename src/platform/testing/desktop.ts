@@ -17,6 +17,8 @@ import type {
   IdentitiesRead,
   MainSection,
   OnboardingState,
+  PauseLength,
+  PauseState,
   PracticeEnded,
   RepositoryUnreadable,
   WorkSummaryRequest,
@@ -113,10 +115,20 @@ export interface FakeDesktop extends Desktop {
   fits: CaptureFit[]
   /** What is beside the menu bar glyph; null until something is put there. */
   trayTitle: string | null
+  /**
+   * What the Tray Menu's Observing controls were last told to read; null
+   * until something is put there. Writable, so a test can start from a state
+   * a previous window had already pushed.
+   */
+  trayObserving: PauseState | null
   /** What is on the clipboard; null until something is copied there. */
   clipboard: string | null
   /** The Tray Menu asks for yesterday's Digest. */
   requestYesterdayDigest(): void
+  /** The Tray Menu asks for Observing to be paused, for one of its lengths. */
+  requestObservingPause(length: PauseLength): void
+  /** The Tray Menu asks for Observing to be resumed. */
+  requestObservingResume(): void
   /** The machine wakes from sleep. */
   wake(): void
   /** Whether the caller's window is on screen, as the OS would report it. */
@@ -269,6 +281,8 @@ export function fakeDesktop({
   const systemWoke = subscribers<void>()
   const importChanged = subscribers<void>()
   const observingChanged = subscribers<void>()
+  const observingPauseRequested = subscribers<PauseLength>()
+  const observingResumeRequested = subscribers<void>()
   const yesterdayDigestRequested = subscribers<void>()
   const noteCaptured = subscribers<string>()
   const practiceEnded = subscribers<PracticeEnded>()
@@ -297,6 +311,7 @@ export function fakeDesktop({
     revealFails: false,
     fits: [],
     trayTitle: null,
+    trayObserving: null,
     clipboard: null,
     access,
     prompted: false,
@@ -334,6 +349,8 @@ export function fakeDesktop({
     beginCapture: () => captureShown.announce(false),
     showTaskCreation: () => taskCreationShown.announce(undefined),
     requestYesterdayDigest: () => yesterdayDigestRequested.announce(undefined),
+    requestObservingPause: (length) => observingPauseRequested.announce(length),
+    requestObservingResume: () => observingResumeRequested.announce(undefined),
     wake: () => systemWoke.announce(undefined),
 
     windowLabel: () => 'main',
@@ -576,6 +593,10 @@ export function fakeDesktop({
     chooseRepositoryFolder: async () => desktop.chosenFolder,
     announceObservingChanged: async () => observingChanged.announce(undefined),
     onObservingChanged: async (handle) => observingChanged.add(handle),
+    onObservingPauseRequested: async (handle) =>
+      observingPauseRequested.add(handle),
+    onObservingResumeRequested: async (handle) =>
+      observingResumeRequested.add(handle),
 
     onSystemWoke: async (handle) => systemWoke.add(handle),
     announceImportChanged: async () => importChanged.announce(undefined),
@@ -694,6 +715,10 @@ export function fakeDesktop({
 
     showTrayCount: async (title) => {
       desktop.trayTitle = title
+    },
+
+    showTrayObserving: async (state) => {
+      desktop.trayObserving = state
     },
   }
 

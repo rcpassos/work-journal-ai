@@ -35,6 +35,8 @@ import {
   DATABASE_URL,
   IMPORT_CHANGED_EVENT,
   OBSERVING_CHANGED_EVENT,
+  OBSERVING_PAUSE_EVENT,
+  OBSERVING_RESUME_EVENT,
   JOURNAL_CHANGED_EVENT,
   NOTE_CAPTURED_EVENT,
   PRACTICE_ENDED_EVENT,
@@ -59,6 +61,7 @@ import {
   type IdentitiesRead,
   type MainSection,
   type OnboardingState,
+  type PauseLength,
   type PracticeEnded,
   type WorkSummaryRequest,
   type WorkSummaryResponse,
@@ -252,6 +255,12 @@ export function createTauriDesktop(): Desktop {
 
     announceObservingChanged: () => emit(OBSERVING_CHANGED_EVENT),
     onObservingChanged: (handle) => listen(OBSERVING_CHANGED_EVENT, () => handle()),
+    onObservingPauseRequested: (handle) =>
+      listen<{ length: PauseLength }>(OBSERVING_PAUSE_EVENT, ({ payload }) =>
+        handle(payload.length),
+      ),
+    onObservingResumeRequested: (handle) =>
+      listen(OBSERVING_RESUME_EVENT, () => handle()),
 
     onSystemWoke: (handle) => listen(SYSTEM_WOKE_EVENT, () => handle()),
 
@@ -385,6 +394,7 @@ export function createTauriDesktop(): Desktop {
     restart: () => relaunch(),
 
     showTrayCount: (title) => invoke('show_tray_count', { title }),
+    showTrayObserving: (state) => invoke('show_tray_observing', { pauseState: state }),
   }
 }
 

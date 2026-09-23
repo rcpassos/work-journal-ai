@@ -147,6 +147,24 @@ export const TASK_CREATION_SHOWN_EVENT = 'task-creation://shown'
 export const COPY_YESTERDAY_DIGEST_EVENT = 'digest://yesterday'
 
 /**
+ * The Tray Menu asked for Observing to be paused, for one of the offered
+ * lengths. Spoken by the Rust side for the reason yesterday's Digest is: the
+ * menu is Rust's, but a pause is an interval in the settings store and every
+ * rule over it is `@/settings/observing`'s, so the tray asks and a window
+ * applies it. Must match `OBSERVING_PAUSE_EVENT` in `src-tauri/src/lib.rs`,
+ * as `src/platform/desktop-rust.test.ts` checks.
+ */
+export const OBSERVING_PAUSE_EVENT = 'observing://pause'
+
+/**
+ * The Tray Menu asked for Observing to be resumed: whatever pause is in
+ * force ends now, and work done from here arrives again. Must match
+ * `OBSERVING_RESUME_EVENT` in `src-tauri/src/lib.rs`, as
+ * `src/platform/desktop-rust.test.ts` checks.
+ */
+export const OBSERVING_RESUME_EVENT = 'observing://resume'
+
+/**
  * What sits under the Capture field right now, and so how tall the window has
  * to be. Both parts grow the window rather than sharing the field's room: the
  * Body being predicted for, or refused, has to stay in sight and stay editable.
@@ -540,6 +558,30 @@ export type IdentitiesRead =
   | { state: 'read'; repository: string; identities: string[] }
   | { state: 'unreadable'; reason: RepositoryUnreadable }
 
+/**
+ * How long one pause is offered for. A timed pause ends by itself — so it
+ * cannot be forgotten — and `until-resumed` holds until the user says
+ * otherwise. The three the Tray Menu and Settings both offer. Must match
+ * `PauseLength` in `src-tauri/src/lib.rs`, as
+ * `src/platform/desktop-rust.test.ts` checks.
+ */
+export type PauseLength =
+  | 'an-hour'
+  | 'until-tomorrow'
+  | 'until-resumed'
+
+/**
+ * What the pause controls say at one instant, carried to the Tray Menu
+ * already decided and already said: the rules and the words are
+ * `@/settings/observing`'s, and this only carries them across to the menu,
+ * which is Rust's. Must match `PauseState` in `src-tauri/src/lib.rs`, as
+ * `src/platform/desktop-rust.test.ts` checks.
+ */
+export type PauseState =
+  | { state: 'nothing' }
+  | { state: 'running' }
+  | { state: 'paused'; until: number | null; label: string }
+
 export interface Desktop {
   /** Which window this bundle is running in; empty outside the desktop app. */
   windowLabel(): string
@@ -807,6 +849,14 @@ export interface Desktop {
   chooseRepositoryFolder(): Promise<string | null>
   announceObservingChanged(): Promise<void>
   onObservingChanged(handle: () => void): Promise<Unlisten>
+  /**
+   * The Tray Menu asked for Observing to be paused — `PauseLength` says for
+   * how long. Heard by the capture window, which owns the settings file the
+   * pause is written to.
+   */
+  onObservingPauseRequested(handle: (length: PauseLength) => void): Promise<Unlisten>
+  /** The Tray Menu asked for Observing to be resumed. Same path, same answer. */
+  onObservingResumeRequested(handle: () => void): Promise<Unlisten>
   /** The machine woke from sleep: whatever was missed is worth looking for. */
   onSystemWoke(handle: () => void): Promise<Unlisten>
   announceImportChanged(): Promise<void>
@@ -957,4 +1007,12 @@ export interface Desktop {
    * only — elsewhere the glyph stands alone and this does nothing.
    */
   showTrayCount(title: string): Promise<void>
+
+  /**
+   * What the Tray Menu's Observing controls read, carried across the same way
+   * the count is: decided by `@/settings/observing`, said there, and only
+   * delivered here. The menu shows it when it next opens, so a timed pause
+   * that has since ended is read as ended whatever this last carried.
+   */
+  showTrayObserving(state: PauseState): Promise<void>
 }

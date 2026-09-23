@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { DatabaseSync } from 'node:sqlite'
 import {
   ANY_PROJECT,
+  commitEventKey,
   createJournal,
   applyPrediction,
   decideArrival,
@@ -11,6 +12,7 @@ import {
   rangeForJournalDay,
   rangeForPreset,
   rangeForDays,
+  formatAgo,
   formatJournalDay,
   formatProject,
   formatTimeOfDay,
@@ -1882,6 +1884,83 @@ describe('capturedNoteCount', () => {
   })
 })
 
+describe('lastCommitNote', () => {
+  it('is the newest Note one repository produced, by when the work happened', async () => {
+    const { journal } = await journalAt('2026-03-10T00:15:00')
+
+    // Met newest first, as the reader walks them — the order they are
+    // written in says nothing about which is the last one.
+    await journal.observe(
+      commitEvent({
+        eventKey: commitEventKey('b2', '/code/work-journal-ai/.git'),
+        body: 'Fix the second scrollbar on Settings (#256)',
+        happenedAt: local('2026-03-09T23:40').toISOString(),
+      }),
+    )
+    await journal.observe(
+      commitEvent({
+        eventKey: commitEventKey('b1', '/code/work-journal-ai/.git'),
+        body: 'Observe: the third Note origin',
+        happenedAt: local('2026-03-09T21:30').toISOString(),
+      }),
+    )
+
+    expect(await journal.lastCommitNote('/code/work-journal-ai/.git')).toMatchObject({
+      body: 'Fix the second scrollbar on Settings (#256)',
+    })
+  })
+
+  it('says when the Note arrived, which is not when the work happened', async () => {
+    const { journal } = await journalAt('2026-03-10T00:15:00')
+    // Written before midnight and swept after it: the Note carries the
+    // work's instant, and its arrival is the sweep's.
+    await journal.observe(
+      commitEvent({ eventKey: commitEventKey('b2', '/code/work-journal-ai/.git') }),
+    )
+
+    expect(await journal.lastCommitNote('/code/work-journal-ai/.git')).toEqual({
+      body: 'Fix the second scrollbar on Settings',
+      arrivedAt: local('2026-03-10T00:15:00').toISOString(),
+    })
+  })
+
+  it('is its own repository\'s, and none at all before the first arrives', async () => {
+    const { journal } = await journalAt('2026-03-10T00:15:00')
+
+    expect(await journal.lastCommitNote('/code/work-journal-ai/.git')).toBeNull()
+
+    await journal.observe(
+      commitEvent({ eventKey: commitEventKey('s1', '/code/site/.git'), body: 'Publish the page' }),
+    )
+    expect(await journal.lastCommitNote('/code/work-journal-ai/.git')).toBeNull()
+    expect(await journal.lastCommitNote('/code/site/.git')).toMatchObject({
+      body: 'Publish the page',
+    })
+  })
+
+  it('does not count a Note the user deleted', async () => {
+    const { journal } = await journalAt('2026-03-10T00:15:00')
+
+    const newest = await journal.observe(
+      commitEvent({ eventKey: commitEventKey('b2', '/code/work-journal-ai/.git') }),
+    )
+    await journal.observe(
+      commitEvent({
+        eventKey: commitEventKey('b1', '/code/work-journal-ai/.git'),
+        body: 'Observe: the third Note origin',
+        happenedAt: local('2026-03-09T21:30').toISOString(),
+      }),
+    )
+    await journal.delete(newest!.id)
+
+    // The refusal is remembered, but the repository is no longer seen to
+    // have produced that Note.
+    expect(await journal.lastCommitNote('/code/work-journal-ai/.git')).toMatchObject({
+      body: 'Observe: the third Note origin',
+    })
+  })
+})
+
 describe('formatTrayCount', () => {
   it('is the count itself once something has been written', () => {
     expect(formatTrayCount(1)).toBe('1')
@@ -1895,6 +1974,22 @@ describe('formatTrayCount', () => {
 
   it('reads as a blank waiting to be filled rather than a total', () => {
     expect(formatTrayCount(0)).toBe('–')
+  })
+})
+
+describe('formatAgo', () => {
+  const now = local('2026-03-12T15:00:00.000')
+
+  it('is "just now" within the minute', () => {
+    expect(formatAgo(local('2026-03-12T15:00:00.000'), now)).toBe('just now')
+    expect(formatAgo(local('2026-03-12T14:59:30.000'), now)).toBe('just now')
+  })
+
+  it('counts minutes, then hours, then days', () => {
+    expect(formatAgo(local('2026-03-12T14:55:00.000'), now)).toBe('5 min ago')
+    expect(formatAgo(local('2026-03-12T13:00:00.000'), now)).toBe('2 h ago')
+    expect(formatAgo(local('2026-03-09T13:00:00.000'), now)).toBe('3 days ago')
+    expect(formatAgo(local('2026-03-11T13:00:00.000'), now)).toBe('1 day ago')
   })
 })
 

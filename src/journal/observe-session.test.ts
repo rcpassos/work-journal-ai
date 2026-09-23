@@ -6,11 +6,13 @@ import {
   type FakeCommit,
   type FakeRepository,
 } from '../platform/testing/desktop'
-import type { RepositoryUnreadable } from '../platform/desktop'
+import type { PauseLength, RepositoryUnreadable } from '../platform/desktop'
 import { createAppSettings, type AppSettings } from '../settings/app-settings'
 import {
   addRepository,
+  pauseObserving,
   removeRepository,
+  resumeObserving,
   setIdentities,
   setIgnoredPrefixes,
   turnObserving,
@@ -94,6 +96,14 @@ async function list(settings: AppSettings, name: string, identities = [ME]) {
 
 async function turn(settings: AppSettings, enabled: boolean) {
   await settings.updateObserving((observing, now) => turnObserving(observing, enabled, now))
+}
+
+async function pause(settings: AppSettings, length: PauseLength) {
+  await settings.updateObserving((observing, now) => pauseObserving(observing, length, now))
+}
+
+async function resume(settings: AppSettings) {
+  await settings.updateObserving((observing, now) => resumeObserving(observing, now))
 }
 
 /** The Bodies filed under one day, oldest first, as a Digest would read them. */
@@ -345,6 +355,124 @@ describe('consent', () => {
   })
 })
 
+describe('a pause', () => {
+  it('excludes the work done during it, whenever the sweep comes to meet it', async () => {
+    const { journal, clock, settings, session } = await observeSessionAt(
+      '2026-03-09T08:00:00',
+      {
+        '/code/work-journal-ai': repository('work-journal-ai', [
+          commit('b3', 'After the pause', '2026-03-09T11:30'),
+          commit('b2', 'During the pause', '2026-03-09T10:30'),
+          commit('b1', 'Before the pause', '2026-03-09T09:30'),
+        ]),
+      },
+    )
+    await list(settings, 'work-journal-ai')
+    await turn(settings, true)
+    clock.set(new Date('2026-03-09T10:00:00'))
+    await pause(settings, 'an-hour')
+    clock.set(new Date('2026-03-09T11:00:00'))
+    await resume(settings)
+
+    // Nothing is looked at until noon: the pause has been over for an hour
+    // by the time the sweep meets any of it.
+    clock.set(new Date('2026-03-09T12:00:00'))
+    await session.start()
+
+    expect(await bodiesOn(journal, '2026-03-09')).toEqual([
+      'Before the pause',
+      'After the pause',
+    ])
+  })
+
+  it('is still in force across a restart', async () => {
+    const { journal, desktop, clock, settings, driver } = await observeSessionAt(
+      '2026-03-09T08:00:00',
+      {
+        '/code/work-journal-ai': repository('work-journal-ai', [
+          commit('b2', 'During the pause', '2026-03-09T10:30'),
+          commit('b1', 'Before the pause', '2026-03-09T09:30'),
+        ]),
+      },
+    )
+    await list(settings, 'work-journal-ai')
+    await turn(settings, true)
+    clock.set(new Date('2026-03-09T10:00:00'))
+    await pause(settings, 'until-resumed')
+
+    // A restart: nothing survives but the settings file and the journal.
+    clock.set(new Date('2026-03-09T12:00:00'))
+    const restarted = createObserveSession({
+      journal: Promise.resolve(createJournal({ clock, driver })),
+      desktop,
+      settings: createAppSettings(desktop, clock),
+      clock,
+    })
+    await restarted.start()
+
+    expect(await bodiesOn(journal, '2026-03-09')).toEqual(['Before the pause'])
+  })
+
+  it('accumulates: several pause/resume pairs each exclude their own interval', async () => {
+    const { journal, clock, settings, session } = await observeSessionAt(
+      '2026-03-09T08:00:00',
+      {
+        '/code/work-journal-ai': repository('work-journal-ai', [
+          commit('b5', 'End of the day', '2026-03-09T16:00'),
+          commit('b4', 'In the second pause', '2026-03-09T14:30'),
+          commit('b3', 'Between the pauses', '2026-03-09T13:00'),
+          commit('b2', 'In the first pause', '2026-03-09T10:15'),
+          commit('b1', 'Start of the day', '2026-03-09T09:00'),
+        ]),
+      },
+    )
+    await list(settings, 'work-journal-ai')
+    await turn(settings, true)
+    clock.set(new Date('2026-03-09T10:00:00'))
+    await pause(settings, 'an-hour')
+    clock.set(new Date('2026-03-09T10:30:00'))
+    await resume(settings)
+    clock.set(new Date('2026-03-09T14:00:00'))
+    await pause(settings, 'until-resumed')
+    clock.set(new Date('2026-03-09T15:00:00'))
+    await resume(settings)
+
+    clock.set(new Date('2026-03-09T17:00:00'))
+    await session.start()
+
+    expect(await bodiesOn(journal, '2026-03-09')).toEqual([
+      'Start of the day',
+      'Between the pauses',
+      'End of the day',
+    ])
+  })
+
+  it('excludes the work of a repository added while it is in force', async () => {
+    const { journal, clock, settings, session } = await observeSessionAt(
+      '2026-03-09T08:00:00',
+      {
+        '/code/work-journal-ai': repository('work-journal-ai', [
+          commit('b1', 'Before the pause', '2026-03-09T09:30'),
+        ]),
+        '/code/site': repository('site', [
+          commit('s1', 'During the pause', '2026-03-09T10:30'),
+        ]),
+      },
+    )
+    await list(settings, 'work-journal-ai')
+    await turn(settings, true)
+    clock.set(new Date('2026-03-09T10:00:00'))
+    await pause(settings, 'until-resumed')
+    clock.set(new Date('2026-03-09T10:15:00'))
+    await list(settings, 'site')
+
+    clock.set(new Date('2026-03-09T12:00:00'))
+    await session.start()
+
+    expect(await bodiesOn(journal, '2026-03-09')).toEqual(['Before the pause'])
+  })
+})
+
 describe('the lookback', () => {
   async function consentedSince(instant: string, commits: FakeCommit[]) {
     const setup = await observeSessionAt(instant, {
@@ -592,7 +720,7 @@ describe('a subject with a line break in it', () => {
 
 describe('a repository that cannot be read', () => {
   it('is a gap: the others are still read, and nothing is asked', async () => {
-    const { journal, clock, settings, session } = await observeSessionAt(
+    const { journal, desktop, clock, settings, session } = await observeSessionAt(
       '2026-03-09T08:00:00',
       {
         '/code/work-journal-ai': 'denied',
@@ -604,11 +732,18 @@ describe('a repository that cannot be read', () => {
     await turn(settings, true)
     await list(settings, 'work-journal-ai')
     await list(settings, 'site')
+    // A reason is never a prompt, an alert or a Nudge: the sweep says only
+    // that the Notes changed, and only when they did.
+    const nudges: string[] = []
+    await desktop.onNoteCaptured((journalDay) => nudges.push(journalDay))
 
     clock.set(new Date('2026-03-09T12:00:00'))
     await session.start()
 
     expect(await bodiesOn(journal, '2026-03-09')).toEqual(['Still read'])
+    expect(nudges).toEqual([])
+    expect(desktop.reconciliations).toEqual([])
+    expect(desktop.prompted).toBe(false)
   })
 
   it('leaves the journal working when the reader itself fails', async () => {

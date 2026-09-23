@@ -6,8 +6,9 @@
  * the settings and a clock, and looking on the same occasions — and apart
  * from it because the two answer to different rules about time. Meetings are
  * today-only; commits are the last seven days, and only inside an interval
- * the user consented to, filtered by when the work happened and never by when
- * a sweep found it. See docs/adr/0011-imported-meetings-are-today-only.md.
+ * the user consented to and outside every pause, filtered by when the work
+ * happened and never by when a sweep found it. See
+ * docs/adr/0011-imported-meetings-are-today-only.md.
  * Which commits count is `commitsToObserve`; what an Observe writes is
  * `Journal.observe`. What lives here is *when* to look.
  *
@@ -23,8 +24,8 @@ import type { Commit, Desktop } from '@/platform/desktop'
 import type { AppSettings } from '@/settings/app-settings'
 import {
   OBSERVE_LOOKBACK_MS,
-  consentedAt,
   ignoredSubject,
+  observedAt,
   type ObservedRepository,
   type Observing,
 } from '@/settings/observing'
@@ -48,11 +49,12 @@ export interface ObserveSession {
 }
 
 /**
- * The commits from one listed repository that become Notes: consented to at
- * the instant they were authored, not skipped by a prefix the user wrote, and
- * with a subject to say. A skipped commit becomes nothing at all — no Note and
- * no handled row — so removing its prefix lets it arrive within the lookback.
- * Always Unfiled: nothing is ever inferred from a path.
+ * The commits from one listed repository that become Notes: observed at the
+ * instant they were authored — consented to, and not inside a pause — not
+ * skipped by a prefix the user wrote, and with a subject to say. A skipped
+ * commit becomes nothing at all — no Note and no handled row — so removing
+ * its prefix lets it arrive within the lookback. Always Unfiled: nothing is
+ * ever inferred from a path.
  */
 export function commitsToObserve({
   observing,
@@ -67,7 +69,7 @@ export function commitsToObserve({
     .filter(
       ({ subject, authoredAt }) =>
         subject.trim() !== '' &&
-        consentedAt(observing, listed.repository, authoredAt) &&
+        observedAt(observing, listed.repository, authoredAt) &&
         !ignoredSubject(listed.ignoredPrefixes, subject),
     )
     .map(({ hash, subject, authoredAt }) => ({

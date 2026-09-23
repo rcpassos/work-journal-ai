@@ -10,6 +10,7 @@ import { createImportSession } from './journal/import-session.ts'
 import { createObserveSession } from './journal/observe-session.ts'
 import { createTaskAlertsSession } from './journal/task-alerts-session.ts'
 import { createTrayCount } from './journal/tray-count.ts'
+import { createTrayObserving } from './journal/tray-observing.ts'
 import { createYesterdayDigest } from './journal/yesterday-digest.ts'
 import { CAPTURE_WINDOW } from './platform/desktop.ts'
 import { createTauriDesktop } from './platform/tauri-desktop.ts'
@@ -85,6 +86,15 @@ if (desktop.windowLabel() === CAPTURE_WINDOW) {
     .start()
     .catch((error: unknown) => {
       console.error("could not answer the Tray Menu's copy", error)
+    })
+
+  // The Tray Menu's Observing controls — pause and resume — answered here for
+  // the same reason: the pause is an interval in the settings file, and this
+  // window is the one that lives as long as the menu.
+  void createTrayObserving({ settings, desktop, clock: systemClock })
+    .start()
+    .catch((error: unknown) => {
+      console.error("could not answer the Tray Menu's pause", error)
     })
 }
 
