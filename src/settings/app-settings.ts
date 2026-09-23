@@ -21,6 +21,7 @@ import {
   type Settings,
   type SettingsStore,
 } from './settings'
+import { systemClock, type Clock } from '@/journal/journal'
 import type { Observing } from './observing'
 import { readTheme, writeTheme, type Theme } from './theme'
 
@@ -158,7 +159,7 @@ function emitChange(announcing: Promise<void>): void {
 export function createAppSettings(
   desktop: Desktop,
   /** Only Observing reads it: consent is kept as the instants it was given. */
-  clock: { now(): Date } = { now: () => new Date() },
+  clock: Clock = systemClock,
 ): AppSettings {
   // Opened once per window and shared: every setting is in the one file, and
   // the store is what makes a write reach the disk.

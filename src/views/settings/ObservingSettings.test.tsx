@@ -165,7 +165,7 @@ describe('adding a repository', () => {
 })
 
 describe('a repository on the list', () => {
-  it('takes the prefixes to skip, one per line', async () => {
+  it('takes the prefixes to skip, one per line, once the field is left', async () => {
     const desktop = observingDesktop()
     desktop.chosenFolder = '/code/work-journal-ai'
     showSettings(desktop)
@@ -173,6 +173,10 @@ describe('a repository on the list', () => {
 
     const field = await screen.findByLabelText(/Skip commits whose subject begins with/)
     fireEvent.change(field, { target: { value: 'Release \n\nchore:' } })
+    // Nothing is saved while the field is being typed into.
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(stored(desktop).repositories[0]?.ignoredPrefixes).toEqual([])
+    fireEvent.blur(field)
 
     await expect
       .poll(() => stored(desktop).repositories[0]?.ignoredPrefixes)

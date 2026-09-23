@@ -152,7 +152,7 @@ export function setIdentities(
   repository: string,
   identities: string[],
 ): Observing {
-  return change(observing, repository, { identities })
+  return changeRepository(observing, repository, { identities })
 }
 
 /**
@@ -164,7 +164,7 @@ export function setIgnoredPrefixes(
   repository: string,
   prefixes: string[],
 ): Observing {
-  return change(observing, repository, {
+  return changeRepository(observing, repository, {
     ignoredPrefixes: prefixes.filter((prefix) => prefix !== ''),
   })
 }
@@ -252,7 +252,7 @@ function prune(observing: Observing, now: number): Observing {
   return { ...observing, consent }
 }
 
-function change(
+function changeRepository(
   observing: Observing,
   repository: string,
   changes: Partial<Pick<ObservedRepository, 'identities' | 'ignoredPrefixes'>>,
