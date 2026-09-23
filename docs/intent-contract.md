@@ -17,16 +17,16 @@ One JSON object per line, appended to `~/intent.jsonl`. To use another file,
 change the path in both snippets. Its directory must already exist.
 
 ```json
-{"tool":"claude-code","session":"0f3c…","turn":null,"at":"2026-09-24T09:12:40Z","cwd":"/Users/me/work/acme-api","client":"claude-desktop","line":"add retry to the webhook sender"}
+{"tool":"claude-code","session":"0f3c…","turn":"8a21…","at":"2026-09-24T09:12:40Z","cwd":"/Users/me/work/acme-api","client":"claude-desktop","line":"add retry to the webhook sender"}
 ```
 
 | Field | What it is |
 | --- | --- |
 | `tool` | `claude-code` or `codex`. |
 | `session` | The tool's own session id (Claude Code) or thread id (Codex). Turns with the same value are one session. |
-| `turn` | The tool's turn id. Codex has one. Claude Code has none, so this is always `null` there. |
+| `turn` | The tool's turn id: Codex's `turn-id`, and Claude Code's `prompt_id`, which Claude Code sends from v2.1.196. It is `null` when the tool sends none. |
 | `at` | When the snippet ran, in UTC and to the second. |
-| `cwd` | The working directory the tool reported. It is a path, never a Project: Project identity belongs to Project Mappings, which a rename already rewrites, and a snippet cannot know the journal's Projects. |
+| `cwd` | The working directory the tool reported. It is a path, never a Project. A snippet cannot know the journal's Projects, and Project identity will belong to Project Mappings (#262), which a rename will rewrite along with Notes. |
 | `client` | What started the session, as far as the tool says (see below). |
 | `line` | The user's own text for the turn, verbatim. |
 
@@ -59,7 +59,7 @@ Add this to `~/.claude/settings.json`. If `hooks` already exists, add the
           {
             "type": "command",
             "async": true,
-            "command": "{ jq -c '{tool: \"claude-code\", session: .session_id, turn: null, at: (now | todate), cwd: .cwd, client: env.CLAUDE_CODE_ENTRYPOINT, line: .prompt}' >> \"$HOME/intent.jsonl\"; } 2>/dev/null; exit 0"
+            "command": "{ jq -c '{tool: \"claude-code\", session: .session_id, turn: .prompt_id, at: (now | todate), cwd: .cwd, client: env.CLAUDE_CODE_ENTRYPOINT, line: .prompt}' >> \"$HOME/intent.jsonl\"; } 2>/dev/null; exit 0"
           }
         ]
       }
@@ -100,7 +100,9 @@ exit 0
 
 With an existing notifier it would end, for example,
 `''', "sh", "/path/to/notifier", "turn-ended"]`. With nothing after `"sh"`,
-only the entry is written.
+only the entry is written. Codex's source calls `notify` its legacy
+notification, so an upgrade during the week could stop the Codex entries. A
+quiet day of `codex` lines is worth checking against `codex --version`.
 
 ## What both snippets promise
 
@@ -110,6 +112,8 @@ only the entry is written.
   snippet exits 0, and it prints nothing, including when `jq` is missing, the
   payload is malformed or the file's directory does not exist. In those cases
   the entry is lost without a word, and a quiet file is the only symptom.
+  Chained after an existing notifier, the Codex snippet exits with that
+  notifier's status instead, which Codex ignores.
 - They are POSIX `sh` plus `jq`. macOS ships `/usr/bin/jq` from 15 onwards.
 
 Two turns written at the same instant could in principle interleave on a very
@@ -120,26 +124,26 @@ long line. Reading skips any line that does not parse.
 After a week, report these on #264. Days are local days:
 
 ```bash
-F=~/intent.jsonl
+F="$HOME/intent.jsonl"
 DAY='(.at | fromdate | localtime | strftime("%Y-%m-%d"))'
 
 # entries a day
-jq -rR "fromjson? | $DAY" $F | sort | uniq -c
+jq -rR "fromjson? | $DAY" "$F" | sort | uniq -c
 
 # sessions a day
-jq -rR "fromjson? | [$DAY, .tool, .session] | @tsv" $F | sort -u | cut -f1 | uniq -c
+jq -rR "fromjson? | [$DAY, .tool, .session] | @tsv" "$F" | sort -u | cut -f1 | uniq -c
 
 # prompts per session: how many sessions had 1, 2, 3, … entries
-jq -rR 'fromjson? | [.tool, .session] | @tsv' $F | sort | uniq -c | awk '{print $1}' | sort -n | uniq -c
+jq -rR 'fromjson? | [.tool, .session] | @tsv' "$F" | sort | uniq -c | awk '{print $1}' | sort -n | uniq -c
 
 # entries by client (the interactive share)
-jq -rR 'fromjson? | [.tool, (.client // "none")] | @tsv' $F | sort | uniq -c
+jq -rR 'fromjson? | [.tool, (.client // "none")] | @tsv' "$F" | sort | uniq -c
 
 # working directories
-jq -rR 'fromjson? | .cwd' $F | sort | uniq -c | sort -rn
+jq -rR 'fromjson? | .cwd' "$F" | sort | uniq -c | sort -rn
 
-# what one day reads like
-jq -rR "fromjson? | select($DAY == \"2026-09-24\") | [(.at | fromdate | localtime | strftime(\"%H:%M\")), .cwd, .line] | @tsv" $F
+# what one day reads like (change the date)
+jq -rR "fromjson? | select($DAY == \"2026-09-24\") | [(.at | fromdate | localtime | strftime(\"%H:%M\")), .cwd, .line] | @tsv" "$F"
 ```
 
 Once the report is on #264, remove both snippets and delete the file. It holds
