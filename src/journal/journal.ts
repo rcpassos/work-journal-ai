@@ -58,7 +58,7 @@ export type NoteOrigin = 'capture' | 'import' | 'observe'
  * commit produces one (#260), because the row reader and the hover must be
  * able to say it the moment the first one lands.
  */
-export type NoteSource = 'import' | 'commit'
+export type NoteSource = 'calendar' | 'commit'
 
 export interface Note {
   id: string
@@ -1256,6 +1256,9 @@ export function createJournal({
    */
   async function observe(event: SourceEvent): Promise<Note | null> {
     assertOneLine(event.body)
+    // Held to the same rule a Capture's marker is, so a source can never
+    // write a Project the user could not have typed.
+    const project = normalizeProject(event.project)
 
     const [handled] = await driver.select<{ event_key: string }>(
       SELECT_HANDLED_EVENT,
@@ -1269,7 +1272,7 @@ export function createJournal({
     const note: Note = {
       id: crypto.randomUUID(),
       body: event.body,
-      project: event.project,
+      project,
       // The instant the work happened, not the instant it was stored.
       capturedAt: happened.toISOString(),
       // Derived from the instant the work happened, never from the instant
@@ -1278,7 +1281,7 @@ export function createJournal({
       editedAt: null,
       // The calendar keeps the origin every Imported Note has ever had;
       // any other source is what the third origin was added for.
-      origin: event.source === 'import' ? 'import' : 'observe',
+      origin: event.source === 'calendar' ? 'import' : 'observe',
       source: event.source,
       sourceKey: event.eventKey,
     }
@@ -1394,10 +1397,11 @@ export function createJournal({
     async importMeeting(event) {
       const began = new Date(event.startsAt)
       return observe({
-        // Every Imported Note has carried this origin, and the meeting key
-        // is the identity imported_meetings has always remembered — now
-        // under its source too, so another source can never collide with it.
-        source: 'import',
+        // The calendar is the source every Imported Note comes from, and the
+        // meeting key is the identity imported_meetings has always
+        // remembered — now under its source, so another source can never
+        // collide with it.
+        source: 'calendar',
         eventKey: meetingKey(event),
         body: meetingBody(event.title),
         // The instant the meeting began, not the instant it was stored.
@@ -2324,7 +2328,7 @@ export function formatNoteSource(note: Note): string | null {
   switch (note.source) {
     case null:
       return null
-    case 'import':
+    case 'calendar':
       return 'Imported from your calendar'
     case 'commit':
       return null
@@ -3731,5 +3735,5 @@ function toNote(row: NoteRow): Note {
 
 /** A stored source as the type names it, or null when this build knows no such source. */
 function toNoteSource(source: string | null): NoteSource | null {
-  return source === 'import' || source === 'commit' ? source : null
+  return source === 'calendar' || source === 'commit' ? source : null
 }

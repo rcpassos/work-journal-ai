@@ -77,7 +77,7 @@ CREATE INDEX notes_project ON notes (project);
 -- deletion that has to be remembered. imported_meetings' exact shape and
 -- exact reason — a row is written before the Note the event becomes, and is
 -- never removed — now keyed on source and event key together, so two sources
--- can never collide. The old table's rows come across as source 'import'.
+-- can never collide. The old table's rows come across as source 'calendar'.
 CREATE TABLE handled_events (
     -- Which source produced the event, e.g. the calendar or a repository.
     source TEXT NOT NULL,
@@ -90,7 +90,7 @@ CREATE TABLE handled_events (
 );
 
 INSERT INTO handled_events (source, event_key, handled_at)
-    SELECT 'import', event_key, handled_at
+    SELECT 'calendar', event_key, handled_at
     FROM imported_meetings;
 
 DROP TABLE imported_meetings;

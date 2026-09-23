@@ -2160,7 +2160,7 @@ describe('importMeeting', () => {
       editedAt: null,
       origin: 'import',
       // Written with the Note from now on: the meeting key, under its source.
-      source: 'import',
+      source: 'calendar',
       sourceKey: meetingKey(weekly),
     })
     expect(note!.capturedAt).toBe(local('2026-03-09T09:30').toISOString())
@@ -2244,7 +2244,7 @@ describe('importMeeting', () => {
     })
     // Provenance survives every correction, exactly as it does for a Capture.
     expect(filed.capturedAt).toBe(note!.capturedAt)
-    expect(filed.source).toBe('import')
+    expect(filed.source).toBe('calendar')
     expect(filed.sourceKey).toBe(meetingKey(weekly))
   })
 
@@ -2316,6 +2316,21 @@ describe('observe', () => {
     expect(await notesOn(journal, '2026-03-10')).toEqual([])
   })
 
+  it('files under a Project the way a Capture would, and refuses one no Capture could write', async () => {
+    const { journal } = await journalAt('2026-03-09T18:40:00')
+
+    const filed = await journal.observe(commitEvent({ project: ' Habic ' }))
+    expect(filed!.project).toBe('habic')
+
+    // Refused before anything is written, so the event is not yet handled
+    // and the same event with a Project the journal accepts is still taken.
+    const other = commitEvent({ eventKey: 'a1b2c3d@work-journal-ai' })
+    await expect(journal.observe({ ...other, project: 'two words' })).rejects.toThrow(
+      'Not a Project',
+    )
+    expect(await journal.observe(other)).not.toBeNull()
+  })
+
   it('refuses an event it has already handled, and deleting the Note refuses it for good', async () => {
     const { journal } = await journalAt('2026-03-09T18:40:00')
     const taken = commitEvent()
@@ -2338,7 +2353,7 @@ describe('observe', () => {
       commitEvent({ eventKey: 'shared-key', happenedAt: at, body: 'Fix the scrollbar' }),
     )
     const asMeeting = await journal.observe(
-      commitEvent({ source: 'import', eventKey: 'shared-key', happenedAt: at, body: 'Weekly sync' }),
+      commitEvent({ source: 'calendar', eventKey: 'shared-key', happenedAt: at, body: 'Weekly sync' }),
     )
 
     expect(asCommit).not.toBeNull()
@@ -2582,7 +2597,7 @@ describe('migration 0008', () => {
       .all()
     expect(handled).toEqual([
       {
-        source: 'import',
+        source: 'calendar',
         event_key: 'event-1@2026-03-09T09:30:00.000Z',
         handled_at: '2026-03-09T18:40:00.000Z',
       },
@@ -2599,7 +2614,7 @@ describe('migration 0008', () => {
     expect(() =>
       database.exec(`
         INSERT INTO handled_events (source, event_key, handled_at)
-        VALUES ('import', 'event-1@2026-03-09T09:30:00.000Z', '2026-03-09T19:00:00.000Z')
+        VALUES ('calendar', 'event-1@2026-03-09T09:30:00.000Z', '2026-03-09T19:00:00.000Z')
       `),
     ).toThrow()
     // ...while the same key of another source stands beside it.

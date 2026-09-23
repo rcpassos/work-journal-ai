@@ -1442,7 +1442,7 @@ mod tests {
         if up_to >= 8 {
             sqlx::query(
                 "INSERT INTO handled_events (source, event_key, handled_at)
-                 VALUES ('import', 'event-1@2026-09-03T08:45:00.000Z', '2026-09-03T09:00:00.000Z')",
+                 VALUES ('calendar', 'event-1@2026-09-03T08:45:00.000Z', '2026-09-03T09:00:00.000Z')",
             )
             .execute(pool)
             .await
@@ -2210,7 +2210,7 @@ mod tests {
                 .fetch_one(&restored)
                 .await
                 .expect("the snapshot's handled event did not read back");
-        assert_eq!(source, "import");
+        assert_eq!(source, "calendar");
         assert_eq!(event_key, "event-1@2026-09-03T08:45:00.000Z");
         restored.close().await;
     });

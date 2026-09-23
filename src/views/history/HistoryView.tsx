@@ -558,8 +558,8 @@ function NoteLine({
           className={`min-w-0 flex-1 cursor-text rounded-sm py-0.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring/30 ${
             // A Note nobody typed reads quieter than one they did, so a
             // scan-and-delete pass down the day is fast. No icon and no
-            // label: the weight is the whole of the difference, and a Digest
-            // shows none of it — see docs/adr/0010-notes-have-two-origins.md.
+            // label: the weight is all the line shows, the hover above says
+            // the rest, and a Digest shows none of it — see docs/adr/0010-notes-have-two-origins.md.
             note.origin !== 'capture' ? 'text-muted-foreground' : ''
           }`}
         >
