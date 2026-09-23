@@ -32,11 +32,12 @@ file already exists, run `chmod 600 ~/intent.jsonl`.
 | `turn` | The tool's turn id: Codex's `turn_id`, and Claude Code's `prompt_id`, which Claude Code sends from v2.1.196. It is `null` when the tool sends none. |
 | `at` | When the snippet ran, in UTC and to the second. |
 | `cwd` | The working directory the tool reported. It is a path, never a Project. A snippet cannot know the journal's Projects, and Project identity will belong to Project Mappings (#262), which a rename will rewrite along with Notes. |
-| `client` | Who sent the prompt, as far as the tool says (see below). |
+| `client` | What started the session, or a subagent (see below). |
 | `line` | The prompt the user submitted, verbatim. |
 
-**Interactive or not.** Neither tool has a documented "a person typed this"
-flag. `client` records the closest signal each one gives, as-is:
+**Interactive or not: neither tool gives an interactive share.** Neither has
+a documented "a person typed this" flag, and #264 should not expect a number.
+`client` records the closest signal each one gives, as-is:
 
 - Claude Code: `$CLAUDE_CODE_ENTRYPOINT`, an undocumented environment variable.
   **It cannot answer the question on this machine.** Every session here runs
@@ -46,7 +47,8 @@ flag. `client` records the closest signal each one gives, as-is:
   the one-prompt sessions #263 asked about. It is recorded anyway in case the
   week includes a `cli` or `sdk-*` session.
 - Codex: the payload's `agent_type`, which Codex sets only when a subagent sent
-  the prompt. `null` means the thread's own prompt.
+  the prompt. `null` means the thread's own prompt, which is not the same as a
+  typed one: a `codex exec` prompt looks identical.
 
 ## Claude Code
 
@@ -90,7 +92,8 @@ prompt, before the agent answers it**, the same event and moment as Claude
 Code. Nothing from the agent's side is recorded.
 
 Needs Codex's lifecycle hooks, which are on by default (`codex features list`
-shows `hooks stable true` from 0.147.0). Add this to `~/.codex/config.toml`:
+shows `hooks stable true` from 0.147.0). Add this to `~/.codex/config.toml`,
+then trust it:
 
 ```toml
 [[hooks.UserPromptSubmit]]
@@ -101,10 +104,20 @@ timeout = 5
 command = '''p=$(cat 2>/dev/null); (umask 077; printf '%s' "$p" | jq -c '{tool: "codex", session: .session_id, turn: .turn_id, at: (now | todate), cwd: .cwd, client: .agent_type, line: .prompt}' >> "$HOME/intent.jsonl") >/dev/null 2>&1 & exit 0'''
 ```
 
+**A hook added to `config.toml` does not run until it is trusted**, and until
+then the file just stays quiet, which looks like a quiet week. Trust it in the
+review the Codex TUI shows at startup, or in `/hooks`. `codex exec` never asks,
+so do this in the TUI. Then submit one prompt and check that a `codex` line
+lands in the file. Codex trusts a hash of the command (`trusted_hash` under
+`[hooks.state]`), so editing the command, such as changing the path, switches
+it off again until it is trusted again.
+
 Codex skips hooks marked `async` ("async hooks are not supported yet"), so
 this command backgrounds the write itself. It reads the payload first, then
-hands the write to a background process and exits. Codex runs it through your
-login shell (`$SHELL -lc`), and it behaves the same under `sh` and zsh.
+hands the write to a background process and exits. Codex runs it with your account's
+shell and `-c`, and it behaves the same under `sh` and zsh. `zsh -c` still
+reads `~/.zshenv`, and anything that prints goes into the model's context on
+every prompt, so keep `~/.zshenv` silent.
 
 `notify` is not used. It fires after the agent has answered, which would put
 Codex's `at` later than Claude Code's and count turns where Claude Code counts
@@ -142,7 +155,7 @@ jq -rR "fromjson? | [$DAY, .tool, .session] | @tsv" "$F" | sort -u | cut -f1 | u
 # prompts per session: how many sessions had 1, 2, 3, … entries
 jq -rR 'fromjson? | [.tool, .session] | @tsv' "$F" | sort | uniq -c | awk '{print $1}' | sort -n | uniq -c
 
-# entries by client (the interactive share)
+# entries by client (Codex: subagent vs thread; not an interactive share)
 jq -rR 'fromjson? | [.tool, (.client // "none")] | @tsv' "$F" | sort | uniq -c
 
 # working directories
