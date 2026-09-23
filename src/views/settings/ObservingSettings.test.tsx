@@ -184,6 +184,24 @@ describe('a repository on the list', () => {
     await expect.poll(toasts).toContain('Skipped prefixes saved.')
   })
 
+  it('saves nothing, and says nothing, when the field is left unchanged', async () => {
+    const desktop = observingDesktop()
+    desktop.chosenFolder = '/code/work-journal-ai'
+    showSettings(desktop)
+    ;(await screen.findByRole('button', { name: 'Add Repository…' })).click()
+    const field = await screen.findByLabelText(/Skip commits whose subject begins with/)
+    await expect.poll(toasts).toContain('work-journal-ai added. Tick the addresses that are you.')
+    let changed = 0
+    await desktop.onObservingChanged(() => (changed += 1))
+
+    fireEvent.focus(field)
+    fireEvent.blur(field)
+    await new Promise((resolve) => setTimeout(resolve, 20))
+
+    expect(changed).toBe(0)
+    expect(toasts()).not.toContain('Skipped prefixes saved.')
+  })
+
   it('is removed, closing its consent rather than forgetting it', async () => {
     const desktop = observingDesktop()
     desktop.chosenFolder = '/code/work-journal-ai'

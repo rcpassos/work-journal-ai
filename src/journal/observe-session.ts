@@ -73,7 +73,9 @@ export function commitsToObserve({
     .map(({ hash, subject, authoredAt }) => ({
       source: 'commit',
       eventKey: commitEventKey(hash, listed.repository),
-      body: subject,
+      // A Body is one line, and `%s` passes a carriage return through: a
+      // break becomes a space rather than the commit becoming nothing.
+      body: subject.replace(/[\r\n]+/g, ' '),
       happenedAt: new Date(authoredAt).toISOString(),
       project: null,
     }))
@@ -129,7 +131,13 @@ export function createObserveSession({
           const core = await journal
           for (const event of commitsToObserve({ observing, listed, commits: read.commits })) {
             if (!running) return
-            if ((await core.observe(event)) !== null) observed += 1
+            // Per commit, so one the journal refuses never stops the ones
+            // behind it — on this sweep and on every sweep after it.
+            try {
+              if ((await core.observe(event)) !== null) observed += 1
+            } catch (error) {
+              console.error('could not observe a commit', error)
+            }
           }
         } catch (error) {
           console.error('could not observe a repository', error)

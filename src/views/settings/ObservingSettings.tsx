@@ -311,7 +311,14 @@ function RepositoryEntry({
         // Saved when the field is left, never per keystroke: a sweep between
         // two keystrokes of a retyped prefix would meet the field empty, and
         // a commit it lets through is handled for good.
-        onBlur={() => onIgnoredPrefixes(prefixes.split('\n'))}
+        // Only a changed list is saved: leaving an untouched field would
+        // otherwise confirm a save that did nothing and wake a sweep.
+        onBlur={() => {
+          const next = prefixes.split('\n').filter((prefix) => prefix !== '')
+          if (next.join('\n') !== listed.ignoredPrefixes.join('\n')) {
+            onIgnoredPrefixes(next)
+          }
+        }}
       />
     </div>
   )

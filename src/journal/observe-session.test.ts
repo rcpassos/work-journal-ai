@@ -546,6 +546,50 @@ describe('sweeping again', () => {
   })
 })
 
+describe('a subject with a line break in it', () => {
+  it('becomes one line, and never stops the commits behind it', async () => {
+    const { journal, clock, settings, session } = await observeSessionAt(
+      '2026-03-09T08:00:00',
+      {
+        '/code/work-journal-ai': repository('work-journal-ai', [
+          commit('b2', 'Carriage\rreturn', '2026-03-09T10:00'),
+          commit('b1', 'Older', '2026-03-09T09:00'),
+        ]),
+      },
+    )
+    await turn(settings, true)
+    await list(settings, 'work-journal-ai')
+
+    clock.set(new Date('2026-03-09T12:00:00'))
+    await session.start()
+
+    expect(await bodiesOn(journal, '2026-03-09')).toEqual(['Older', 'Carriage return'])
+  })
+
+  it('never stops the commits behind one the journal refuses', async () => {
+    const { journal, clock, settings, session } = await observeSessionAt(
+      '2026-03-09T08:00:00',
+      {
+        '/code/work-journal-ai': repository('work-journal-ai', [
+          commit('b2', 'Refused', '2026-03-09T10:00'),
+          commit('b1', 'Older', '2026-03-09T09:00'),
+        ]),
+      },
+    )
+    await turn(settings, true)
+    await list(settings, 'work-journal-ai')
+    const observe = journal.observe
+    journal.observe = (event) =>
+      event.body === 'Refused' ? Promise.reject(new Error('no')) : observe(event)
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    clock.set(new Date('2026-03-09T12:00:00'))
+    await session.start()
+
+    expect(await bodiesOn(journal, '2026-03-09')).toEqual(['Older'])
+  })
+})
+
 describe('a repository that cannot be read', () => {
   it('is a gap: the others are still read, and nothing is asked', async () => {
     const { journal, clock, settings, session } = await observeSessionAt(
