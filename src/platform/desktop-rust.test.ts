@@ -36,6 +36,7 @@ import {
   THEME_KEY,
 } from './desktop'
 import { backupFileName } from './tauri-desktop'
+import { SUGGESTION_LOOKBACK } from './testing/desktop'
 
 const TEST_FILE = 'src/platform/desktop-rust.test.ts'
 const RUST_FILE = 'src-tauri/src/lib.rs'
@@ -798,6 +799,79 @@ describe('the Work Summary call contract', () => {
       'userContent',
     ])
     expect(tsFields).toEqual(rustFields)
+  })
+})
+
+/**
+ * The commit reader's wire contract, held the same way as the Work Summary's:
+ * `src-tauri/src/commits.rs` pins the serialized shapes from its side, and
+ * these hold the TypeScript half of each pair.
+ */
+describe('the commit reader contract', () => {
+  const commitsSource = read('src-tauri/src/commits.rs')
+  const desktopSource = read(DESKTOP_FILE)
+  const tauriSource = read('src/platform/tauri-desktop.ts')
+
+  it('spells the reasons a repository is unreadable the same on both sides', () => {
+    const rustReasons = rustVariants(commitsSource, 'RepositoryUnreadable').map(kebab)
+
+    expect(rustReasons).toEqual([
+      'missing',
+      'not-a-repository',
+      'no-head',
+      'denied',
+      'git-unavailable',
+    ])
+    expect(tsUnionKinds(desktopSource, 'RepositoryUnreadable')).toEqual(rustReasons)
+  })
+
+  it('spells both answers\' states the same on both sides', () => {
+    for (const name of ['CommitsRead', 'IdentitiesRead']) {
+      const rustStates = rustVariants(commitsSource, name).map(kebab)
+
+      expect(rustStates, name).toEqual(['read', 'unreadable'])
+      expect(tsUnionKinds(desktopSource, name), name).toEqual(rustStates)
+    }
+  })
+
+  it('names a commit\'s fields the same on both sides', () => {
+    const rustFields = rustFieldNames(commitsSource, 'Commit').map(camel)
+
+    expect(rustFields).toEqual(['hash', 'subject', 'authoredAt', 'repository'])
+    expect(tsFieldNames(desktopSource, 'Commit')).toEqual(rustFields)
+  })
+
+  it('looks back as far for suggestions in the fake as the reader does', () => {
+    // The fake cannot ask the reader, so it keeps a copy of the window.
+    const rust = commitsSource.match(
+      /const SUGGESTION_LOOKBACK: f64 = ([\d.* ]+);/,
+    )?.[1]
+    expect(rust, 'SUGGESTION_LOOKBACK is not where it is expected').toBeTruthy()
+
+    const product = rust!.split('*').reduce((total, factor) => total * Number(factor), 1)
+    expect(product).toBe(SUGGESTION_LOOKBACK)
+  })
+
+  it('reaches both commands under the names and arguments they take', () => {
+    const rustSource = read(RUST_FILE)
+    const handler = rustSource.match(
+      /invoke_handler\(tauri::generate_handler!\[([\s\S]*?)\]\)/,
+    )?.[1]
+
+    expect(rustSource).toMatch(
+      /#\[tauri::command\(async\)\]\s*fn repository_commits\(path: String, identities: Vec<String>, since: f64\)/,
+    )
+    expect(rustSource).toMatch(
+      /#\[tauri::command\(async\)\]\s*fn repository_identities\(path: String\)/,
+    )
+    expect(handler).toContain('repository_commits')
+    expect(handler).toContain('repository_identities')
+    expect(tauriSource).toContain(
+      "invoke<CommitsRead>('repository_commits', { path, identities, since })",
+    )
+    expect(tauriSource).toContain(
+      "invoke<IdentitiesRead>('repository_identities', { path })",
+    )
   })
 })
 

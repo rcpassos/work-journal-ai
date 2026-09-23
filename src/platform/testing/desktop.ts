@@ -10,17 +10,37 @@ import type {
   CalendarAccess,
   CalendarInfo,
   CaptureFit,
+  Commit,
+  CommitsRead,
   Desktop,
   ExportedFile,
+  IdentitiesRead,
   MainSection,
   OnboardingState,
   PracticeEnded,
+  RepositoryUnreadable,
   WorkSummaryRequest,
   WorkSummaryResponse,
   TaskAlertCompletion,
   TaskAlertPermission,
   Unlisten,
 } from '../desktop'
+
+/** One commit on a fake repository, with the address that wrote it. */
+export interface FakeCommit extends Omit<Commit, 'repository'> {
+  author: string
+}
+
+/**
+ * A repository the fake reader can read: its identity, the address
+ * `git config user.email` would answer with, and its first-parent history,
+ * newest first — what the real reader walks, already walked.
+ */
+export interface FakeRepository {
+  repository: string
+  configuredEmail?: string
+  commits: FakeCommit[]
+}
 
 /**
  * The desktop a test runs on: the same surface, in memory. Announcements are
@@ -191,6 +211,11 @@ export interface FakeDesktop extends Desktop {
    * or a second generation answering differently.
    */
   workSummaryResponse: WorkSummaryResponse
+  /**
+   * What is on disk, by path: a repository, or why the path is not one that
+   * can be read. A path not here is missing. Writable, as a disk is.
+   */
+  repositories: Record<string, FakeRepository | RepositoryUnreadable>
 }
 
 export function fakeDesktop({
@@ -210,6 +235,7 @@ export function fakeDesktop({
   events = [],
   apiKey = null,
   keychainRefuses = false,
+  repositories = {},
 }: {
   /** Only the tests that reach the journal need one. */
   driver?: SqlDriver
@@ -232,6 +258,7 @@ export function fakeDesktop({
   apiKey?: string | null
   /** Whether the Keychain is locked, or the prompt was refused. */
   keychainRefuses?: boolean
+  repositories?: Record<string, FakeRepository | RepositoryUnreadable>
 } = {}): FakeDesktop {
   const captureShown = subscribers<boolean>()
   const windowBlurred = subscribers<void>()
@@ -298,6 +325,7 @@ export function fakeDesktop({
     updateInstallFails: false,
     workSummaryRequests: [],
     workSummaryResponse: { state: 'generated', markdown: GENERATED_SUMMARY },
+    repositories,
 
     beginCapture: () => captureShown.announce(false),
     showTaskCreation: () => taskCreationShown.announce(undefined),
@@ -492,6 +520,54 @@ export function fakeDesktop({
     calendars: async () => (desktop.access === 'granted' ? calendars : []),
     todaysCalendarEvents: async () =>
       desktop.access === 'granted' ? desktop.events : [],
+
+    repositoryCommits: async (path, identities, since): Promise<CommitsRead> => {
+      const found = desktop.repositories[path] ?? 'missing'
+      if (typeof found === 'string') return { state: 'unreadable', reason: found }
+
+      // Matched on the whole address regardless of case, as the reader does.
+      const named = new Set(identities.map((identity) => identity.toLowerCase()))
+      return {
+        state: 'read',
+        commits: found.commits
+          .filter(
+            ({ author, authoredAt }) =>
+              named.has(author.toLowerCase()) && authoredAt >= since,
+          )
+          .map(({ hash, subject, authoredAt }) => ({
+            hash,
+            subject,
+            authoredAt,
+            repository: found.repository,
+          })),
+      }
+    },
+    repositoryIdentities: async (path): Promise<IdentitiesRead> => {
+      const found = desktop.repositories[path] ?? 'missing'
+      if (typeof found === 'string') return { state: 'unreadable', reason: found }
+
+      const since = Date.now() - SUGGESTION_LOOKBACK
+      const addresses = [
+        ...(found.configuredEmail ? [found.configuredEmail] : []),
+        // Most recent by author date, as the reader sorts them: a rebase
+        // leaves walk order and author order apart.
+        ...found.commits
+          .filter(({ authoredAt }) => authoredAt >= since)
+          .toSorted((a, b) => b.authoredAt - a.authoredAt)
+          .map(({ author }) => author),
+      ]
+      // One address in any case, the first spelling met kept.
+      const identities = new Map<string, string>()
+      for (const address of addresses) {
+        const key = address.toLowerCase()
+        if (!identities.has(key)) identities.set(key, address)
+      }
+      return {
+        state: 'read',
+        repository: found.repository,
+        identities: [...identities.values()],
+      }
+    },
 
     onSystemWoke: async (handle) => systemWoke.add(handle),
     announceImportChanged: async () => importChanged.announce(undefined),
@@ -690,3 +766,9 @@ function nextSibling(path: string, existing: string[]): string {
   }
   return `${stem}-${attempt}${extension}`
 }
+
+/**
+ * How far back suggestions look. Must match `SUGGESTION_LOOKBACK` in
+ * `src-tauri/src/commits.rs`, as `src/platform/desktop-rust.test.ts` checks.
+ */
+export const SUGGESTION_LOOKBACK = 90 * 24 * 60 * 60 * 1000
