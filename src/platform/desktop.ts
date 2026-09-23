@@ -482,6 +482,56 @@ export interface CalendarInfo {
   source: string
 }
 
+/**
+ * One commit a repository on this machine holds, as the reader answers with
+ * it. Must match `Commit` in `src-tauri/src/commits.rs`, as
+ * `src/platform/desktop-rust.test.ts` checks.
+ */
+export interface Commit {
+  hash: string
+  /** The subject, verbatim. */
+  subject: string
+  /**
+   * The author date, in milliseconds since the epoch — when the work was done,
+   * which a rebase or a squash-merge on a server does not move.
+   */
+  authoredAt: number
+  /**
+   * The repository's identity: its common directory, which every worktree of
+   * it reports alike.
+   */
+  repository: string
+}
+
+/**
+ * Why one repository could not be read — an ordinary answer about it, never
+ * a failure of the reader. Must match `Unreadable` in
+ * `src-tauri/src/commits.rs`, as `src/platform/desktop-rust.test.ts` checks.
+ */
+export type RepositoryUnreadable =
+  | 'missing'
+  | 'not-a-repository'
+  | 'no-head'
+  | 'git-unavailable'
+
+/**
+ * The commits, newest first along first-parent, or why there are none to read.
+ * Must match `CommitsRead` in `src-tauri/src/commits.rs`, as
+ * `src/platform/desktop-rust.test.ts` checks.
+ */
+export type CommitsRead =
+  | { state: 'read'; commits: Commit[] }
+  | { state: 'unreadable'; reason: RepositoryUnreadable }
+
+/**
+ * Who might be the user in one repository, or why it could not be asked. Must
+ * match `IdentitiesRead` in `src-tauri/src/commits.rs`, as
+ * `src/platform/desktop-rust.test.ts` checks.
+ */
+export type IdentitiesRead =
+  | { state: 'read'; repository: string; identities: string[] }
+  | { state: 'unreadable'; reason: RepositoryUnreadable }
+
 export interface Desktop {
   /** Which window this bundle is running in; empty outside the desktop app. */
   windowLabel(): string
@@ -720,6 +770,28 @@ export interface Desktop {
    * decision, not the machine's. Empty without access.
    */
   todaysCalendarEvents(): Promise<CalendarEvent[]>
+  /**
+   * The commits `identities` authored at or after `since` in the repository
+   * at `path`, read and never written: no hook, no ref, no config, no fetch.
+   * Read along first-parent of `origin/HEAD` as this machine has it, then the
+   * current branch's upstream, then `HEAD`. A squash-merged pull request is
+   * one commit and the branch behind it none; a branch merged by fast-forward
+   * or rebase is each of its own commits; a merge authored by somebody else
+   * is theirs, and hides the user's work behind it. No identities is nobody's
+   * commits. See `src-tauri/src/commits.rs`.
+   */
+  repositoryCommits(
+    path: string,
+    identities: string[],
+    since: number,
+  ): Promise<CommitsRead>
+  /**
+   * The addresses that might be the user in the repository at `path`, for
+   * Settings to offer: `git config user.email`, then the last ninety days'
+   * first-parent authors, most recent first. Suggestions only — none of them
+   * counts until the user ticks it.
+   */
+  repositoryIdentities(path: string): Promise<IdentitiesRead>
   /** The machine woke from sleep: whatever was missed is worth looking for. */
   onSystemWoke(handle: () => void): Promise<Unlisten>
   announceImportChanged(): Promise<void>

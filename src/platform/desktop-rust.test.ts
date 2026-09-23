@@ -801,6 +801,67 @@ describe('the Work Summary call contract', () => {
   })
 })
 
+/**
+ * The commit reader's wire contract, held the same way as the Work Summary's:
+ * `src-tauri/src/commits.rs` pins the serialized shapes from its side, and
+ * these hold the TypeScript half of each pair.
+ */
+describe('the commit reader contract', () => {
+  const commitsSource = read('src-tauri/src/commits.rs')
+  const desktopSource = read(DESKTOP_FILE)
+  const tauriSource = read('src/platform/tauri-desktop.ts')
+
+  it('spells the reasons a repository is unreadable the same on both sides', () => {
+    const rustReasons = rustVariants(commitsSource, 'Unreadable').map(kebab)
+
+    expect(rustReasons).toEqual([
+      'missing',
+      'not-a-repository',
+      'no-head',
+      'git-unavailable',
+    ])
+    expect(tsUnionKinds(desktopSource, 'RepositoryUnreadable')).toEqual(rustReasons)
+  })
+
+  it('spells both answers\' states the same on both sides', () => {
+    for (const name of ['CommitsRead', 'IdentitiesRead']) {
+      const rustStates = rustVariants(commitsSource, name).map(kebab)
+
+      expect(rustStates, name).toEqual(['read', 'unreadable'])
+      expect(tsUnionKinds(desktopSource, name), name).toEqual(rustStates)
+    }
+  })
+
+  it('names a commit\'s fields the same on both sides', () => {
+    const rustFields = rustFieldNames(commitsSource, 'Commit').map(camel)
+
+    expect(rustFields).toEqual(['hash', 'subject', 'authoredAt', 'repository'])
+    expect(tsFieldNames(desktopSource, 'Commit')).toEqual(rustFields)
+  })
+
+  it('reaches both commands under the names and arguments they take', () => {
+    const rustSource = read(RUST_FILE)
+    const handler = rustSource.match(
+      /invoke_handler\(tauri::generate_handler!\[([\s\S]*?)\]\)/,
+    )?.[1]
+
+    expect(rustSource).toMatch(
+      /#\[tauri::command\(async\)\]\s*fn repository_commits\(path: String, identities: Vec<String>, since: f64\)/,
+    )
+    expect(rustSource).toMatch(
+      /#\[tauri::command\(async\)\]\s*fn repository_identities\(path: String\)/,
+    )
+    expect(handler).toContain('repository_commits')
+    expect(handler).toContain('repository_identities')
+    expect(tauriSource).toContain(
+      "invoke<CommitsRead>('repository_commits', { path, identities, since })",
+    )
+    expect(tauriSource).toContain(
+      "invoke<IdentitiesRead>('repository_identities', { path })",
+    )
+  })
+})
+
 /** The variant names of one Rust enum, as written. */
 function rustVariants(source: string, name: string): string[] {
   const body = source.match(new RegExp(`pub enum ${name} \\{([\\s\\S]*?)\\n\\}`))?.[1] ?? ''

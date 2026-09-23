@@ -52,8 +52,10 @@ import {
   type BackupResult,
   type CalendarAccess,
   type CalendarInfo,
+  type CommitsRead,
   type Desktop,
   type ExportedFile,
+  type IdentitiesRead,
   type MainSection,
   type OnboardingState,
   type PracticeEnded,
@@ -232,6 +234,11 @@ export function createTauriDesktop(): Desktop {
     requestCalendarAccess: () => invoke<CalendarAccess>('request_calendar_access'),
     calendars: () => invoke<CalendarInfo[]>('calendars'),
     todaysCalendarEvents: () => invoke<CalendarEvent[]>('todays_calendar_events'),
+
+    repositoryCommits: (path, identities, since) =>
+      invoke<CommitsRead>('repository_commits', { path, identities, since }),
+    repositoryIdentities: (path) =>
+      invoke<IdentitiesRead>('repository_identities', { path }),
 
     onSystemWoke: (handle) => listen(SYSTEM_WOKE_EVENT, () => handle()),
 

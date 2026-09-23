@@ -1,6 +1,7 @@
 mod alerts;
 mod backup;
 mod calendar;
+mod commits;
 mod dock;
 mod export;
 mod frontmost;
@@ -15,6 +16,7 @@ use dock::{Dock, Presence};
 use export::ExportedFile;
 use frontmost::PreviousApplication;
 use hotkey::{HotkeyAction, Hotkeys};
+use std::path::Path;
 use std::sync::Mutex;
 use tauri::{
     menu::{Menu, MenuItem, PredefinedMenuItem, Submenu},
@@ -350,6 +352,8 @@ pub fn run() {
             request_calendar_access,
             calendars,
             todays_calendar_events,
+            repository_commits,
+            repository_identities,
             requested_section,
             opened_task_alert,
             focus_task_alert,
@@ -1750,6 +1754,23 @@ fn calendars() -> Vec<CalendarInfo> {
 #[tauri::command(async)]
 fn todays_calendar_events() -> Vec<CalendarEvent> {
     calendar::todays_events()
+}
+
+/// The commits the user's identities authored in one repository at or after
+/// `since`, milliseconds since the epoch — or why that repository could not be
+/// read, which is an answer about it and not a failure. Off the main thread:
+/// it waits on `git`.
+#[tauri::command(async)]
+fn repository_commits(path: String, identities: Vec<String>, since: f64) -> commits::CommitsRead {
+    commits::read(Path::new(&path), &identities, since)
+}
+
+/// Who might be the user in one repository, for Settings to offer as
+/// suggestions: the configured address and the last ninety days' first-parent
+/// authors. None of them counts until the user ticks it.
+#[tauri::command(async)]
+fn repository_identities(path: String) -> commits::IdentitiesRead {
+    commits::identities(Path::new(&path))
 }
 
 /// What the OS allows the app to deliver as Task Alerts. Asked rather than
