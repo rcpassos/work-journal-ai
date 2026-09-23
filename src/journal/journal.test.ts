@@ -2316,6 +2316,29 @@ describe('observe', () => {
     expect(await notesOn(journal, '2026-03-10')).toEqual([])
   })
 
+  it('never resurrects a deleted Note when a timezone change moves its Journal Day', async () => {
+    const { journal } = await journalAt('2026-03-10T08:00:00')
+    // 23:40 in Lisbon is 08:40 the next morning in Tokyo.
+    const taken = commitEvent({ happenedAt: '2026-03-09T23:40:00.000Z' })
+
+    const note = await journal.observe(taken)
+    expect(note!.journalDay).toBe('2026-03-09')
+    await journal.delete(note!.id)
+
+    const pinned = process.env.TZ
+    process.env.TZ = 'Asia/Tokyo'
+    try {
+      // The same event would now be filed on another day, so a lookup by
+      // day would miss the refusal. Identity is the event key, so it holds.
+      expect(journalDayFor(new Date(taken.happenedAt))).toBe('2026-03-10')
+      expect(await journal.observe(taken)).toBeNull()
+      expect(await notesOn(journal, '2026-03-10')).toEqual([])
+      expect(await notesOn(journal, '2026-03-09')).toEqual([])
+    } finally {
+      process.env.TZ = pinned
+    }
+  })
+
   it('files under a Project the way a Capture would, and refuses one no Capture could write', async () => {
     const { journal } = await journalAt('2026-03-09T18:40:00')
 

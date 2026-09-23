@@ -4,7 +4,7 @@ What changed in each released version, newest first. Every `vX.Y.Z` section here
 
 ## Unreleased
 
-- Hovering a line in History that the user did not type says where it came from.
+- Hovering a meeting in History says it came from your calendar, for meetings imported from now on.
 
 ## 0.15.1 — 2026-09-21
 
