@@ -117,6 +117,26 @@ describe('a Note nobody typed', () => {
     // Nothing to say about a Note the user typed: no source, no hover.
     expect(row('Monday').querySelector('[title]')).toBeNull()
   })
+
+  it('names the commit and the repository an Observed Note came from', async () => {
+    await showHistory([], {
+      arrive: (core) =>
+        core.observe({
+          source: 'commit',
+          eventKey:
+            '6f47772a1b2c3d4e5f60718293a4b5c6d7e8f901@/code/work-journal-ai/.git',
+          body: 'Fix the second scrollbar on Settings',
+          happenedAt: '2026-03-09T11:00:00.000Z',
+          project: null,
+        }),
+    })
+
+    expect(
+      within(row('Fix the second scrollbar on Settings')).getByTitle(
+        'Commit 6f47772 · work-journal-ai',
+      ),
+    ).toBeTruthy()
+  })
 })
 
 /** The Body button the row's Note reads on — the line with the source on it. */

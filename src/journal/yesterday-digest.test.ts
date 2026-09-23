@@ -65,6 +65,31 @@ describe("yesterday's Digest from the Tray Menu", () => {
     )
   })
 
+  it('reconstructs a day with no Captured Notes from its Observed ones, read exactly like typed', async () => {
+    const { journal, desktop, copier } = await digestAt('2026-03-12T09:00:00')
+
+    for (const [hash, subject, at] of [
+      ['a1', 'Observe: the third Note origin', '2026-03-11T21:30:00'],
+      ['a2', 'Fix the second scrollbar on Settings', '2026-03-11T23:40:00'],
+    ]) {
+      await journal.observe({
+        source: 'commit',
+        eventKey: `${hash}@/code/work-journal-ai/.git`,
+        body: subject,
+        happenedAt: new Date(at).toISOString(),
+        project: null,
+      })
+    }
+    await copier.start()
+
+    desktop.requestYesterdayDigest()
+    await flushReads()
+
+    expect(onClipboard(desktop)).toBe(
+      '- Observe: the third Note origin\n- Fix the second scrollbar on Settings',
+    )
+  })
+
   it('leaves out today, however much has been written since', async () => {
     const { journal, desktop, clock, copier } =
       await digestAt('2026-03-12T09:00:00')

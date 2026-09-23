@@ -54,9 +54,8 @@ export type NoteOrigin = 'capture' | 'import' | 'observe'
  * keys on, written with the Note and never changed by an edit or a refile.
  * Null for a Captured Note, and for an Imported Note written before sources
  * were recorded. Provenance like Captured At — no Digest, Export or Material
- * ever reads it; History shows it on hover. `commit` is named here before any
- * commit produces one (#260), because the row reader and the hover must be
- * able to say it the moment the first one lands.
+ * ever reads it; History shows it on hover. `commit` is a commit Observing
+ * found in a repository the user listed, keyed by `commitEventKey`.
  */
 export type NoteSource = 'calendar' | 'commit'
 
@@ -2319,10 +2318,9 @@ export function meetingBody(title: string): string {
 /**
  * What hovering a Note in History says about where it came from — the answer
  * to the question a muted line raises without answering. Null for a Note the
- * user typed, which has no source to name, and for a source whose wording is
- * not decided yet: a raw key would say nothing to the reader, so a source
- * with no wording of its own shows nothing. What each source's hover says is
- * decided by the ticket that brings that source (#260 for commits).
+ * user typed, which has no source to name. A commit says what happened — a
+ * commit, never a pull request or a release — and where: "Commit 6f47772 ·
+ * work-journal-ai".
  */
 export function formatNoteSource(note: Note): string | null {
   switch (note.source) {
@@ -2330,9 +2328,39 @@ export function formatNoteSource(note: Note): string | null {
       return null
     case 'calendar':
       return 'Imported from your calendar'
-    case 'commit':
-      return null
+    case 'commit': {
+      const { hash, repository } = fromCommitEventKey(note.sourceKey ?? '')
+      return `Commit ${hash.slice(0, 7)} · ${repositoryName(repository)}`
+    }
   }
+}
+
+/**
+ * A commit's identity as a handled event: its hash, and the repository it was
+ * observed in — the one thing the hover needs that the hash cannot say. A hash
+ * never holds an `@`, so the first one is where the repository begins.
+ */
+export function commitEventKey(hash: string, repository: string): string {
+  return `${hash}@${repository}`
+}
+
+function fromCommitEventKey(key: string): { hash: string; repository: string } {
+  const at = key.indexOf('@')
+  return at === -1
+    ? { hash: key, repository: '' }
+    : { hash: key.slice(0, at), repository: key.slice(at + 1) }
+}
+
+/**
+ * What a repository is called, from its identity — the common directory the
+ * commit reader answers with: `/code/work-journal-ai/.git` and a bare
+ * `/code/work-journal-ai.git` are both `work-journal-ai`.
+ */
+export function repositoryName(repository: string): string {
+  const parts = repository.split('/').filter((part) => part !== '')
+  const last = parts.at(-1) ?? repository
+  if (last === '.git') return parts.at(-2) ?? last
+  return last.endsWith('.git') ? last.slice(0, -'.git'.length) : last
 }
 
 /** An en dash: a rule wide enough to notice, and narrower than a digit. */

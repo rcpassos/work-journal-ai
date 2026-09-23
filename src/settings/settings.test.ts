@@ -9,11 +9,13 @@ import {
   writeImportMeetings,
   writeModel,
   writeModelBaseUrl,
+  writeObserving,
   writeWorkSummaryPrompt,
   writeStartAtLogin,
   workSummarySystemPrompt,
   type SettingsStore,
 } from './settings'
+import { NO_OBSERVING, turnObserving } from './observing'
 
 /** The store as the app sees it: keys to JSON, and nothing else. */
 function emptyStore(entries: Record<string, unknown> = {}): SettingsStore & {
@@ -39,11 +41,12 @@ describe('readSettings', () => {
     expect(await readSettings(emptyStore())).toEqual(DEFAULT_SETTINGS)
   })
 
-  it('ships with no start at login, and with Import off and no calendar ticked', async () => {
+  it('ships with no start at login, with Import off and no calendar ticked, and with Observing off', async () => {
     expect(DEFAULT_SETTINGS).toEqual({
       startAtLogin: false,
       importMeetings: false,
       importCalendars: [],
+      observing: NO_OBSERVING,
       modelBaseUrl: OPENAI_BASE_URL,
       model: '',
       workSummaryPrompt: DEFAULT_WORK_SUMMARY_PROMPT,
@@ -58,11 +61,14 @@ describe('readSettings', () => {
     await writeModelBaseUrl(store, 'http://localhost:11434/v1')
     await writeModel(store, 'llama3.1')
     await writeWorkSummaryPrompt(store, 'Write it in pirate speak.')
+    const observing = turnObserving(NO_OBSERVING, true, 5)
+    await writeObserving(store, observing)
 
     expect(await readSettings(store)).toEqual({
       startAtLogin: true,
       importMeetings: true,
       importCalendars: ['work', 'personal'],
+      observing,
       modelBaseUrl: 'http://localhost:11434/v1',
       model: 'llama3.1',
       workSummaryPrompt: 'Write it in pirate speak.',
