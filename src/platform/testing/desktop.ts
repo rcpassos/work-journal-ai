@@ -216,6 +216,8 @@ export interface FakeDesktop extends Desktop {
    * can be read. A path not here is missing. Writable, as a disk is.
    */
   repositories: Record<string, FakeRepository | RepositoryUnreadable>
+  /** The folder the next picker answers with; null is a cancel. */
+  chosenFolder: string | null
 }
 
 export function fakeDesktop({
@@ -266,6 +268,7 @@ export function fakeDesktop({
   const tasksChanged = subscribers<void>()
   const systemWoke = subscribers<void>()
   const importChanged = subscribers<void>()
+  const observingChanged = subscribers<void>()
   const yesterdayDigestRequested = subscribers<void>()
   const noteCaptured = subscribers<string>()
   const practiceEnded = subscribers<PracticeEnded>()
@@ -326,6 +329,7 @@ export function fakeDesktop({
     workSummaryRequests: [],
     workSummaryResponse: { state: 'generated', markdown: GENERATED_SUMMARY },
     repositories,
+    chosenFolder: null,
 
     beginCapture: () => captureShown.announce(false),
     showTaskCreation: () => taskCreationShown.announce(undefined),
@@ -568,6 +572,10 @@ export function fakeDesktop({
         identities: [...identities.values()],
       }
     },
+
+    chooseRepositoryFolder: async () => desktop.chosenFolder,
+    announceObservingChanged: async () => observingChanged.announce(undefined),
+    onObservingChanged: async (handle) => observingChanged.add(handle),
 
     onSystemWoke: async (handle) => systemWoke.add(handle),
     announceImportChanged: async () => importChanged.announce(undefined),

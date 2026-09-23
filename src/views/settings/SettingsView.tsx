@@ -18,6 +18,7 @@ import ExportSettings from './ExportSettings'
 import HotkeySettings from './HotkeySettings'
 import MeetingImportSettings from './MeetingImportSettings'
 import ModelAccessSettings from './ModelAccessSettings'
+import ObservingSettings from './ObservingSettings'
 import WorkSummaryPromptSettings from './WorkSummaryPromptSettings'
 import StartAtLoginSettings from './StartAtLoginSettings'
 import {
@@ -130,6 +131,12 @@ export default function SettingsView({
 
           <SettingsSection title="Journal">
             <MeetingImportSettings
+              desktop={desktop}
+              settings={settings}
+              initialSettings={initialSettings}
+            />
+
+            <ObservingSettings
               desktop={desktop}
               settings={settings}
               initialSettings={initialSettings}

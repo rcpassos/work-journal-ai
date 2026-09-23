@@ -7,6 +7,7 @@ import ThemeProvider from './components/ThemeProvider.tsx'
 import { createAppJournal } from './journal/app-journal.ts'
 import { systemClock } from './journal/journal.ts'
 import { createImportSession } from './journal/import-session.ts'
+import { createObserveSession } from './journal/observe-session.ts'
 import { createTaskAlertsSession } from './journal/task-alerts-session.ts'
 import { createTrayCount } from './journal/tray-count.ts'
 import { createYesterdayDigest } from './journal/yesterday-digest.ts'
@@ -52,6 +53,16 @@ if (desktop.windowLabel() === CAPTURE_WINDOW) {
     // that cannot run leaves everything else working exactly as before.
     .catch((error: unknown) => {
       console.error('could not import today’s meetings', error)
+    })
+
+  // The commits the user made in the repositories they listed, swept into the
+  // journal the same way and kept here for the same reason.
+  void createObserveSession({ journal, desktop, settings, clock: systemClock })
+    .start()
+    // Observing is an addition to the journal too: a repository that cannot
+    // be read is a gap, never a condition of anything else working.
+    .catch((error: unknown) => {
+      console.error('could not observe commits', error)
     })
 
   // The OS's pending Task Alerts, kept equal to what the journal says. Here

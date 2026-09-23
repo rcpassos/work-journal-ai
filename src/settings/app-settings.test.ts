@@ -3,6 +3,7 @@ import { START_AT_LOGIN_KEY } from '../platform/desktop'
 import { fakeDesktop } from '../platform/testing/desktop'
 import { DEFAULT_WORK_SUMMARY_PROMPT } from './settings'
 import { createAppSettings, type ModelAccessChange } from './app-settings'
+import { addRepository, turnObserving } from './observing'
 
 // The settings as a running window has them: the core's rules over the
 // desktop's store, plus the announcements that keep the other windows honest.
@@ -357,5 +358,55 @@ describe('the Work Summary Prompt', () => {
     await settings.saveWorkSummaryPrompt('Write it in pirate speak.')
 
     expect((await settings.load()).workSummaryPrompt).toBe('Write it in pirate speak.')
+  })
+})
+
+describe('Observing', () => {
+  const at = (time: string) => ({ now: () => new Date(time) })
+
+  it('applies a change to the file as it stands, at the instant it is made, and announces it', async () => {
+    const desktop = fakeDesktop()
+    let clock = at('2026-03-09T18:40:00')
+    const settings = createAppSettings(desktop, { now: () => clock.now() })
+    let heard = 0
+    await desktop.onObservingChanged(() => (heard += 1))
+
+    const saved = await settings.updateObserving((observing, now) =>
+      turnObserving(observing, true, now),
+    )
+    clock = at('2026-03-09T19:00:00')
+    await settings.updateObserving((observing, now) =>
+      addRepository(
+        observing,
+        { path: '/code/a', repository: '/code/a/.git', identities: [], ignoredPrefixes: [] },
+        now,
+      ),
+    )
+
+    expect(saved.enabled).toBe(true)
+    expect((await settings.load()).observing.consent).toEqual({
+      '/code/a/.git': [{ from: new Date('2026-03-09T19:00:00').getTime(), until: null }],
+    })
+    expect(heard).toBe(2)
+  })
+
+  it('never loses one change to another made while it was still being written', async () => {
+    const desktop = fakeDesktop()
+    const settings = createAppSettings(desktop)
+    const repository = (name: string) => ({
+      path: `/code/${name}`,
+      repository: `/code/${name}/.git`,
+      identities: [],
+      ignoredPrefixes: [],
+    })
+
+    await Promise.all([
+      settings.updateObserving((observing, now) => addRepository(observing, repository('a'), now)),
+      settings.updateObserving((observing, now) => addRepository(observing, repository('b'), now)),
+    ])
+
+    expect(
+      (await settings.load()).observing.repositories.map(({ path }) => path),
+    ).toEqual(['/code/a', '/code/b'])
   })
 })

@@ -286,6 +286,13 @@ export type PracticeEnded =
 export const IMPORT_CHANGED_EVENT = 'settings://import'
 
 /**
+ * Observing was turned on or off, or its repositories changed. Spoken by
+ * Settings and heard by the window that sweeps, for the same reason as
+ * `IMPORT_CHANGED_EVENT`.
+ */
+export const OBSERVING_CHANGED_EVENT = 'settings://observing'
+
+/**
  * The machine woke up. Spoken by the Rust side, which is the only part of the
  * app the OS tells. Must match `SYSTEM_WOKE_EVENT` in `src-tauri/src/lib.rs`,
  * as `src/platform/desktop-rust.test.ts` checks.
@@ -793,6 +800,13 @@ export interface Desktop {
    * counts until the user ticks it.
    */
   repositoryIdentities(path: string): Promise<IdentitiesRead>
+  /**
+   * The folder picker a repository is added through — a path is never typed.
+   * Null when the user cancelled.
+   */
+  chooseRepositoryFolder(): Promise<string | null>
+  announceObservingChanged(): Promise<void>
+  onObservingChanged(handle: () => void): Promise<Unlisten>
   /** The machine woke from sleep: whatever was missed is worth looking for. */
   onSystemWoke(handle: () => void): Promise<Unlisten>
   announceImportChanged(): Promise<void>

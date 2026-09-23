@@ -5,6 +5,10 @@ What changed in each released version, newest first. Every `vX.Y.Z` section here
 ## Unreleased
 
 - Hovering a meeting in History says it came from your calendar, for meetings imported from now on.
+- Settings can add your commits to the journal: choose repositories and the addresses that are you, and each commit you make becomes a Note on the day you authored it.
+- Commits from before you turn it on, or from while it or a repository was off, are never added.
+- Each repository can skip commits whose subject begins with a prefix you write, such as release commits.
+- Hovering a commit's Note in History names the commit and its repository.
 
 ## 0.15.1 — 2026-09-21
 

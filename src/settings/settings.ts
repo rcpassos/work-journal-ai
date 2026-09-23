@@ -11,6 +11,7 @@
  */
 
 import { START_AT_LOGIN_KEY } from '@/platform/desktop'
+import { NO_OBSERVING, readObserving, type Observing } from './observing'
 
 /** The whole of the app's settings storage: string keys to JSON values. */
 export interface SettingsStore {
@@ -47,6 +48,12 @@ export interface Settings {
    * work. An unticked calendar is ignored entirely.
    */
   importCalendars: string[]
+  /**
+   * Whether commits are observed, from which repositories and identities, and
+   * the instants each repository was consented for. Off until turned on, with
+   * nothing listed — see `./observing.ts`.
+   */
+  observing: Observing
   /**
    * Where the model is: any OpenAI-compatible endpoint, which is why this is a
    * field rather than a list of vendors. OpenAI's own to begin with, because a
@@ -118,6 +125,7 @@ export const DEFAULT_SETTINGS: Settings = {
   startAtLogin: false,
   importMeetings: false,
   importCalendars: [],
+  observing: NO_OBSERVING,
   modelBaseUrl: OPENAI_BASE_URL,
   model: '',
   workSummaryPrompt: DEFAULT_WORK_SUMMARY_PROMPT,
@@ -130,6 +138,11 @@ export const DEFAULT_SETTINGS: Settings = {
  */
 const IMPORT_MEETINGS_KEY = 'importMeetings'
 const IMPORT_CALENDARS_KEY = 'importCalendars'
+/**
+ * Observing, whole: the wish, the list and the consent under one key, so a
+ * change to any of them is one write and the three can never disagree.
+ */
+const OBSERVING_KEY = 'observing'
 /**
  * The two halves of Model Access that are not secrets. The third — the API Key
  * — is never a key in this store; it is in the Keychain, and `Settings` has no
@@ -155,6 +168,7 @@ export async function readSettings(store: SettingsStore): Promise<Settings> {
     startAtLogin,
     importMeetings,
     importCalendars,
+    observing,
     modelBaseUrl,
     model,
     workSummaryPrompt,
@@ -162,6 +176,7 @@ export async function readSettings(store: SettingsStore): Promise<Settings> {
     store.get<unknown>(START_AT_LOGIN_KEY),
     store.get<unknown>(IMPORT_MEETINGS_KEY),
     store.get<unknown>(IMPORT_CALENDARS_KEY),
+    store.get<unknown>(OBSERVING_KEY),
     store.get<unknown>(MODEL_BASE_URL_KEY),
     store.get<unknown>(MODEL_KEY),
     store.get<unknown>(WORK_SUMMARY_PROMPT_KEY),
@@ -182,6 +197,7 @@ export async function readSettings(store: SettingsStore): Promise<Settings> {
     importCalendars: Array.isArray(importCalendars)
       ? importCalendars.filter((id): id is string => typeof id === 'string')
       : DEFAULT_SETTINGS.importCalendars,
+    observing: readObserving(observing),
     modelBaseUrl:
       typeof modelBaseUrl === 'string'
         ? modelBaseUrl
@@ -241,6 +257,14 @@ export async function writeImportCalendars(
   importCalendars: string[],
 ): Promise<void> {
   await store.set(IMPORT_CALENDARS_KEY, importCalendars)
+}
+
+/** Observing, whole — see `OBSERVING_KEY`. */
+export async function writeObserving(
+  store: SettingsStore,
+  observing: Observing,
+): Promise<void> {
+  await store.set(OBSERVING_KEY, observing)
 }
 
 /** Both answers are answers: declining is recorded exactly as accepting is. */

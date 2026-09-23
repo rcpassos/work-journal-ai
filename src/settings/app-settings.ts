@@ -15,11 +15,14 @@ import {
   writeImportMeetings,
   writeModel,
   writeModelBaseUrl,
+  writeObserving,
   writeWorkSummaryPrompt,
   writeStartAtLogin,
   type Settings,
   type SettingsStore,
 } from './settings'
+import { systemClock, type Clock } from '@/journal/journal'
+import type { Observing } from './observing'
 import { readTheme, writeTheme, type Theme } from './theme'
 
 /**
@@ -125,6 +128,18 @@ export interface AppSettings {
    * it, and whatever reads it next reads it when it needs it.
    */
   saveWorkSummaryPrompt(workSummaryPrompt: string): Promise<void>
+  /**
+   * One change to Observing — a rule from `./observing.ts`, applied to the
+   * file as it stands and at the instant it is made, since consent is kept
+   * as instants. Changes are applied one after another, never side by side:
+   * two applied to the same read would each write the list without the
+   * other's repository, and a consent interval lost that way is work the
+   * user said yes to that never arrives. Resolves with what the file came to
+   * hold, and announces it, because the window that sweeps is not this one.
+   */
+  updateObserving(
+    change: (observing: Observing, now: number) => Observing,
+  ): Promise<Observing>
 }
 
 /**
@@ -141,7 +156,11 @@ function emitChange(announcing: Promise<void>): void {
   })
 }
 
-export function createAppSettings(desktop: Desktop): AppSettings {
+export function createAppSettings(
+  desktop: Desktop,
+  /** Only Observing reads it: consent is kept as the instants it was given. */
+  clock: Clock = systemClock,
+): AppSettings {
   // Opened once per window and shared: every setting is in the one file, and
   // the store is what makes a write reach the disk.
   let loading: Promise<SettingsStore> | null = null
@@ -184,6 +203,10 @@ export function createAppSettings(desktop: Desktop): AppSettings {
   let modelBaseUrlSaves = 0
   let modelSaves = 0
   let apiKeySaves = 0
+  // The Observing change last started, which the next one waits for — see
+  // `updateObserving`. Settled either way, so one refusal never stalls the
+  // changes queued behind it.
+  let observingChanges: Promise<unknown> = Promise.resolve()
 
   /**
    * Announces a settled Model Access save, as the caller's own landed value
@@ -350,6 +373,19 @@ export function createAppSettings(desktop: Desktop): AppSettings {
 
     async saveWorkSummaryPrompt(workSummaryPrompt) {
       await writeWorkSummaryPrompt(await store(), workSummaryPrompt)
+    },
+
+    updateObserving(change) {
+      const applying = observingChanges.then(async () => {
+        const opened = await store()
+        const { observing } = await readSettings(opened)
+        const next = change(observing, clock.now().getTime())
+        await writeObserving(opened, next)
+        emitChange(desktop.announceObservingChanged())
+        return next
+      })
+      observingChanges = applying.catch(() => {})
+      return applying
     },
   }
 }

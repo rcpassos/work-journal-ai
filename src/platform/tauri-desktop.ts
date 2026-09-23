@@ -34,6 +34,7 @@ import {
   COPY_YESTERDAY_DIGEST_EVENT,
   DATABASE_URL,
   IMPORT_CHANGED_EVENT,
+  OBSERVING_CHANGED_EVENT,
   JOURNAL_CHANGED_EVENT,
   NOTE_CAPTURED_EVENT,
   PRACTICE_ENDED_EVENT,
@@ -239,6 +240,18 @@ export function createTauriDesktop(): Desktop {
       invoke<CommitsRead>('repository_commits', { path, identities, since }),
     repositoryIdentities: (path) =>
       invoke<IdentitiesRead>('repository_identities', { path }),
+
+    // Opened on this side, like the restore picker: a cancelled dialog is a
+    // frontend outcome rather than an error.
+    async chooseRepositoryFolder() {
+      const chosen = await open({ directory: true, multiple: false })
+      if (chosen === null) return null
+      if (Array.isArray(chosen)) return chosen[0] ?? null
+      return chosen
+    },
+
+    announceObservingChanged: () => emit(OBSERVING_CHANGED_EVENT),
+    onObservingChanged: (handle) => listen(OBSERVING_CHANGED_EVENT, () => handle()),
 
     onSystemWoke: (handle) => listen(SYSTEM_WOKE_EVENT, () => handle()),
 
