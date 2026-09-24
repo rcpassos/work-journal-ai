@@ -340,6 +340,68 @@ describe('a repository that is not working', () => {
   })
 })
 
+describe('a repository whose state moves on', () => {
+  it('takes its reason away when it starts working, and shows it again when it stops', async () => {
+    const { journal, core } = await journalWith()
+    const { desktop } = listedAt(
+      '/code/fresh',
+      {
+        repository: '/code/fresh/.git',
+        configuredEmail: 'me@example.com',
+        commits: [],
+        noHead: true,
+      },
+      journal,
+    )
+    showSettings(desktop, journal)
+    expect(
+      await screen.findByText(
+        'The default branch of that repository cannot be resolved. Its commits are not being added.',
+      ),
+    ).toBeTruthy()
+
+    // The first commit lands: a sweep writes it and says the journal changed.
+    desktop.repositories['/code/fresh'] = {
+      repository: '/code/fresh/.git',
+      configuredEmail: 'me@example.com',
+      commits: [],
+    }
+    await core.observe({
+      source: 'commit',
+      eventKey: 'f1@/code/fresh/.git',
+      body: 'First',
+      happenedAt: new Date().toISOString(),
+      project: null,
+    })
+    await desktop.announceJournalChanged()
+
+    // The reason and the Note must never stand beside each other.
+    await expect
+      .poll(() => screen.queryByText(/Its commits are not being added\./))
+      .toBeNull()
+    expect(await screen.findByText(/^Last: First/)).toBeTruthy()
+
+    // And the other way: a folder deleted while Settings sits open is flagged.
+    desktop.repositories['/code/fresh'] = 'missing'
+    await desktop.announceJournalChanged()
+
+    expect(await screen.findByText(/^That folder is gone\./)).toBeTruthy()
+  })
+
+  it('reads its reason again when the section comes back on screen', async () => {
+    const { journal } = await journalWith()
+    const { desktop } = listedAt('/code/work-journal-ai', WORK_JOURNAL, journal)
+    const control = showSettingsOnScreen(desktop, journal)
+    await screen.findByRole('checkbox', { name: 'me@example.com' })
+
+    await act(async () => control.hide())
+    desktop.repositories['/code/work-journal-ai'] = 'missing'
+    await act(async () => control.show())
+
+    expect(await screen.findByText(/^That folder is gone\./)).toBeTruthy()
+  })
+})
+
 describe('a repository that is working', () => {
   it('shows the last Note it produced and when it arrived', async () => {
     const { journal } = await journalWith([

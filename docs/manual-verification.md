@@ -250,10 +250,11 @@ Against a release build and a repository with commits of your own from today.
 - [ ] `git status` in the repository is unchanged afterwards: nothing was written to it.
 - [ ] Each repository in the section shows its last Note and when it arrived — `Last: <subject> · 2 h ago` — updated within five minutes of a new commit arriving, and "Nothing yet since you turned this on" before the first does. Deleting the last Note of a repository puts the line back on the one before it.
 - [ ] Renaming the repository's folder, or pointing the entry at a path that is not a repository, shows the reason beside that entry — "That folder is gone." / "That folder is not a git repository." — with its commits simply not added: no alert, no prompt, nothing in the tray, and the other repositories keep producing Notes.
-- [ ] A repository with nothing on its branches yet shows "The default branch of that repository cannot be resolved. Its commits are not being added." and nothing else happens.
+- [ ] A repository with nothing on its branches yet shows "The default branch of that repository cannot be resolved. Its commits are not being added." and nothing else happens. Its first commit takes the line away and appears under **Last**, with Settings left open and nothing pressed.
 - [ ] **Pause Observing ▸ For an Hour** from the Tray Menu toasts nothing and takes the pause: the menu item now reads **Paused until 11:00** with **Resume Observing** under it, and Settings shows the same line with **Resume**.
 - [ ] A commit authored during the pause never arrives — not at the next sweep, not after a resume, and not after quitting and relaunching the app. Commits from before and after the pause do arrive.
 - [ ] A pause **Until Tomorrow** holds through the evening and the night, and the menu and Settings both read "Paused until tomorrow"; after the day turns over, commits arrive again with nothing pressed.
+- [ ] With the Mac asleep through the pause's end, the first menu opened from the keyboard or VoiceOver the next morning offers **Pause Observing** again rather than reading as paused.
 - [ ] A pause **Until Resumed** reads "Paused" with no end and holds across a restart, until **Resume Observing** is chosen — from the Tray Menu or from Settings.
 - [ ] Two pause/resume pairs in one day each keep their own commits out: only the work done outside the pauses arrives.
 - [ ] With Observing turned off, the Tray Menu offers no pause at all.

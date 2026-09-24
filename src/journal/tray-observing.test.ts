@@ -89,6 +89,23 @@ describe('the Tray Menu', () => {
     ])
   })
 
+  it('tells the menu again when the Mac wakes', async () => {
+    const { desktop, clock, session } = trayAt('2026-03-09T10:00:00')
+    await session.start()
+    desktop.requestObservingPause('an-hour')
+    await flush()
+    expect(desktop.trayObserving?.state).toBe('paused')
+
+    // The pause ended while the Mac slept, and the timer that would have
+    // said so slept with it — nothing here runs it, so the wake is the only
+    // thing that can tell the menu. Without a wake the state stays paused.
+    clock.set(new Date('2026-03-09T11:00:00'))
+    desktop.wake()
+    await flush()
+
+    expect(desktop.trayObserving).toEqual({ state: 'running' })
+  })
+
   it('tells the menu again as a timed pause runs out on its own', async () => {
     vi.useFakeTimers()
     try {

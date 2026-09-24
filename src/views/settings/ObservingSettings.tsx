@@ -389,21 +389,41 @@ function RepositoryEntry({
   )
   const [asked, setAsked] = useState(false)
 
+  // Read, and read again: whether this repository can be read is a fact
+  // about the disk that moves on its own — the first commit lands in an empty
+  // one, a folder goes away — and this section stays mounted while the window
+  // is open. The journal saying it changed is the moment that follows either,
+  // and coming back on screen is where a line gone stale would be read.
+  const onScreen = useOnScreen()
   useEffect(() => {
-    void desktop.repositoryIdentities(listed.path).then(
-      (read) => {
-        if (read.state === 'read') setSuggested(read.identities)
-        // Both answers say why nothing can be read from this repository, when
-        // that is so: the unreadable one has nothing else to say, and one with
-        // suggestions carries the same reason beside them — a repository with
-        // nothing on its branches yet is still worth asking who the user is.
-        setUnreadable(read.reason)
-      },
-      (error: unknown) => {
-        console.error('could not suggest identities', error)
-      },
-    )
-  }, [desktop, listed.path])
+    let listening = true
+    let stop: (() => void) | null = null
+    async function readIdentities(): Promise<void> {
+      const read = await desktop.repositoryIdentities(listed.path)
+      if (!listening) return
+      if (read.state === 'read') setSuggested(read.identities)
+      // Both answers say why nothing can be read from this repository, when
+      // that is so: the unreadable one has nothing else to say, and one with
+      // suggestions carries the same reason beside them — a repository with
+      // nothing on its branches yet is still worth asking who the user is.
+      setUnreadable(read.reason)
+    }
+    const failed = (error: unknown) =>
+      console.error('could not suggest identities', error)
+    void readIdentities().catch(failed)
+    void desktop
+      .onJournalChanged(() => {
+        void readIdentities().catch(failed)
+      })
+      .then((unlisten) => {
+        if (listening) stop = unlisten
+        else unlisten()
+      })
+    return () => {
+      listening = false
+      stop?.()
+    }
+  }, [desktop, listed.path, onScreen])
 
   // A sweep lands while this is open, and "is this on?" is exactly the
   // question the line answers — so it is read again when the journal changes.

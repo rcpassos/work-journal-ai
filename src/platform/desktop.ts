@@ -1020,8 +1020,10 @@ export interface Desktop {
   /**
    * What the Tray Menu's Observing controls read, carried across the same way
    * the count is: decided by `@/settings/observing`, said there, and only
-   * delivered here. The menu shows it when it next opens, so a timed pause
-   * that has since ended is read as ended whatever this last carried.
+   * delivered here. The menu is rebuilt as it is carried — what is attached is
+   * what a reader who opens it without a click is shown — so what this last
+   * carried has to be true of the moment: a pause that runs out is carried
+   * again as it ends, and again when the Mac wakes from sleep.
    */
   showTrayObserving(state: PauseState): Promise<void>
 }

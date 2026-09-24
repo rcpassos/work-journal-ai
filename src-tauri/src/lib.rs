@@ -1453,6 +1453,30 @@ fn hotkey_status(hotkeys: tauri::State<'_, Mutex<Hotkeys>>) -> Result<Hotkeys, S
     Ok(hotkeys.lock().map_err(|_| lost_hotkey())?.clone())
 }
 
+/// One Hotkey moved to another combination, over the two things a change
+/// touches: the map held here, and whatever the change has to be told to —
+/// `then` runs only once the lock is out of the way. That order is the whole
+/// point of the seam: the Tray Menu is rebuilt from `then`, it spells each
+/// Hotkey out from this very map, and a Rust mutex is not taken twice by one
+/// thread. Held across that rebuild it is a deadlock on the thread the
+/// command runs on — the main thread — and every window hangs with it.
+fn move_hotkey(
+    hotkeys: &Mutex<Hotkeys>,
+    action: HotkeyAction,
+    combination: &str,
+    registrar: &impl hotkey::Registrar,
+    then: impl FnOnce(&Hotkeys) -> Result<(), String>,
+) -> Result<Hotkeys, String> {
+    let next = {
+        let mut held = hotkeys.lock().map_err(|_| lost_hotkey())?;
+        let next = hotkey::remap(&held, action, combination, registrar)?;
+        *held = next.clone();
+        next
+    };
+    then(&next)?;
+    Ok(next)
+}
+
 /// Moves one Hotkey to another combination. A combination the OS refuses — or
 /// one the other Hotkey already holds — is reported as an error and is not
 /// remembered: restoring it on the next run would leave the app with a Hotkey
@@ -1465,20 +1489,18 @@ fn set_hotkey(
     hotkey: String,
 ) -> Result<Hotkeys, String> {
     let registrar = GlobalShortcuts { app: app.clone() };
-    let mut current = hotkeys.lock().map_err(|_| lost_hotkey())?;
-    let next = hotkey::remap(&current, action, &hotkey, &registrar)?;
+    move_hotkey(&hotkeys, action, &hotkey, &registrar, |next| {
+        let store = app.store(SETTINGS_FILE).map_err(|error| error.to_string())?;
+        store.set(hotkey_key(action), next.of(action).hotkey());
+        store.save().map_err(|error| error.to_string())?;
 
-    let store = app.store(SETTINGS_FILE).map_err(|error| error.to_string())?;
-    store.set(hotkey_key(action), next.of(action).hotkey());
-    store.save().map_err(|error| error.to_string())?;
-
-    *current = next.clone();
-    // The Tray Menu spells each Hotkey out beside its Entry Point, so it is
-    // rebuilt here: what is attached is what a reader who opens the menu
-    // without a click is shown, and a changed Hotkey is one of the things it
-    // must never read wrong.
-    refresh_tray_menu_of(&app);
-    Ok(next)
+        // The Tray Menu spells each Hotkey out beside its Entry Point, so it
+        // is rebuilt here: what is attached is what a reader who opens the
+        // menu without a click is shown, and a changed Hotkey is one of the
+        // things it must never read wrong.
+        refresh_tray_menu_of(&app);
+        Ok(())
+    })
 }
 
 fn lost_hotkey() -> String {
@@ -1842,11 +1864,16 @@ fn show_tray_count(app: tauri::AppHandle, title: String) {
 /// rather than waiting for the next one to be clicked open.
 #[tauri::command]
 fn show_tray_observing(app: tauri::AppHandle, pause_state: PauseState) -> Result<(), String> {
-    let held = app.state::<TrayMenuState>();
-    *held
-        .0
-        .lock()
-        .map_err(|_| "the Tray Menu's state could not be read".to_string())? = pause_state;
+    {
+        let held = app.state::<TrayMenuState>();
+        let mut state = held
+            .0
+            .lock()
+            .map_err(|_| "the Tray Menu's state could not be read".to_string())?;
+        *state = pause_state;
+        // Out of this block before the rebuild below: it takes this very
+        // lock, and a mutex is not taken twice by one thread.
+    }
     refresh_tray_menu_of(&app);
     Ok(())
 }
@@ -2690,6 +2717,50 @@ mod tests {
         // The end has passed: Observing is running again, and the pause is
         // offered again.
         assert_eq!(pause_controls(&timed, 1_000.0), PauseControls::Offered);
+    }
+
+    /// Changing a Hotkey, through the unit `set_hotkey` is built on. What
+    /// comes after the change — persisting it, rebuilding the Tray Menu —
+    /// reads these very Hotkeys, exactly as the menu does, and must find the
+    /// lock free to do so. Held across it, that is a deadlock on the
+    /// command's thread — the main thread — and a whole app that hangs: this
+    /// says so in milliseconds instead.
+    #[test]
+    fn a_hotkey_change_gives_up_the_lock_before_the_world_is_told() {
+        struct Accepting;
+        impl hotkey::Registrar for Accepting {
+            fn register(&self, _action: HotkeyAction, _hotkey: &str) -> Result<(), String> {
+                Ok(())
+            }
+            fn unregister(&self, _hotkey: &str) {}
+        }
+
+        let hotkeys = Mutex::new(hotkey::register_both(
+            hotkey::DEFAULT_NOTE_HOTKEY,
+            hotkey::DEFAULT_TASK_HOTKEY,
+            &Accepting,
+        ));
+
+        let next = move_hotkey(
+            &hotkeys,
+            HotkeyAction::Note,
+            "Ctrl+Shift+Cmd+K",
+            &Accepting,
+            |next| {
+                let reread = hotkeys
+                    .try_lock()
+                    .expect("the menu rebuild found the Hotkeys lock still held");
+                assert_eq!(*reread, *next);
+                Ok(())
+            },
+        )
+        .expect("a combination nothing else holds must be taken");
+
+        assert_eq!(next.of(HotkeyAction::Note).hotkey(), "Ctrl+Shift+Cmd+K");
+        assert_eq!(
+            next.of(HotkeyAction::Task).hotkey(),
+            hotkey::DEFAULT_TASK_HOTKEY
+        );
     }
 
     /// The pause wire shapes, pinned as serde reads and writes them — the

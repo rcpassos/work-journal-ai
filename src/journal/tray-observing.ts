@@ -11,10 +11,10 @@
  * The controls' own state travels the other way, rendered already said:
  * whenever Observing changes in any window, what the menu should read is
  * computed from the file and handed to the tray. A timed pause that later
- * runs out is told about the moment it does: the menu is read as it is
- * attached by whoever opens it without a click — VoiceOver, the keyboard —
- * so an end that has passed has to have passed by the menu too, not only by
- * the next one to be clicked open.
+ * runs out is told about the moment it does — by the timer, or by the wake
+ * after a sleep — because the menu is read as it is attached by whoever opens
+ * it without a click: VoiceOver, the keyboard. An end that has passed has to
+ * have passed by the menu too, not only by the next one to be clicked open.
  *
  * Headless, like the tray count, and built from settings, a Desktop and a
  * clock: the whole of it runs in a test with no menu bar. One of these runs
@@ -113,6 +113,11 @@ export function createTrayObserving({
         // The tray's own presses land here too, through the save's
         // announcement: one path for every change, wherever it was made.
         desktop.onObservingChanged(() => void show()),
+        // And the clock moves while nothing is watched: WebKit stops the
+        // timer above across a sleep, so the wake is what says a pause ended
+        // overnight — to a reader who opens the menu without a click, and for
+        // whom a rebuild at the open is already too late to be the only one.
+        desktop.onSystemWoke(() => void show()),
       ])
 
       // Stopped while the subscriptions were still being made: give them up
