@@ -42,6 +42,7 @@ Everything else is checked against the release build.
 - [ ] `Cmd+Tab` does not list the app.
 - [ ] A tray icon appears in the menu bar.
 - [ ] Clicking the tray icon opens a menu holding **New Note**, **New Task**, **View Notes**, **View Tasks**, **Work Summary**, **Settings**, **Check for Updates…**, a separator, **Copy Yesterday's Notes**, a separator and **Quit** — in that order. With Observing turned on and a repository listed, the last group before **Quit** also holds **Pause Observing** with **For an Hour**, **Until Tomorrow** and **Until Resumed** under it; with Observing off it is absent entirely.
+- [ ] Opened without clicking it — from the keyboard or VoiceOver — the menu says exactly what a click shows: the live Hotkeys beside the two capture items, and the same pause controls. Take **Pause Observing ▸ For an Hour** from it, open it again the same way, and it reads **Paused until …** with **Resume Observing** under it.
 - [ ] **New Note** opens a capture window, with the Note Hotkey spelled out beside the item.
 - [ ] **New Task** opens the Task Creation window, with the Task Hotkey spelled out beside the item.
 - [ ] **View Notes** opens the Main Window, showing History.

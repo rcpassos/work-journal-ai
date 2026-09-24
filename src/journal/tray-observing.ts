@@ -11,8 +11,10 @@
  * The controls' own state travels the other way, rendered already said:
  * whenever Observing changes in any window, what the menu should read is
  * computed from the file and handed to the tray. A timed pause that later
- * runs out needs no telling — the menu reads its state against the clock as
- * it opens, so an end that has passed is read as passed.
+ * runs out is told about the moment it does: the menu is read as it is
+ * attached by whoever opens it without a click — VoiceOver, the keyboard —
+ * so an end that has passed has to have passed by the menu too, not only by
+ * the next one to be clicked open.
  *
  * Headless, like the tray count, and built from settings, a Desktop and a
  * clock: the whole of it runs in a test with no menu bar. One of these runs
@@ -53,17 +55,32 @@ export function createTrayObserving({
 }): TrayObserving {
   let running = false
   let unlisten: Unlisten[] = []
+  // Armed at the end of the pause last pushed, and only that: one timer, the
+  // newest state's, with an older one cleared as a newer state is pushed.
+  let ends: ReturnType<typeof setTimeout> | null = null
 
   /**
    * What the menu should read right now. The file is read rather than held:
    * a pause can end while this sits idle, and the state pushed then is the
-   * one a reader of the menu should be given.
+   * one a reader of the menu should be given. A pause with an end is pushed
+   * again as it ends, so what the tray holds is true at every instant and not
+   * only at the last change.
    */
   async function show(): Promise<void> {
     try {
       const { observing } = await settings.load()
       if (!running) return
-      await desktop.showTrayObserving(pauseState(observing, clock.now().getTime()))
+      const state = pauseState(observing, clock.now().getTime())
+      await desktop.showTrayObserving(state)
+      if (!running) return
+      if (ends !== null) clearTimeout(ends)
+      ends = null
+      if (state.state === 'paused' && state.until !== null) {
+        ends = setTimeout(
+          () => void show(),
+          Math.max(0, state.until - clock.now().getTime()),
+        )
+      }
     } catch (error) {
       console.error('could not show the Tray Menu what Observing is doing', error)
     }
@@ -110,6 +127,8 @@ export function createTrayObserving({
 
     stop() {
       running = false
+      if (ends !== null) clearTimeout(ends)
+      ends = null
       for (const stop of unlisten) stop()
       unlisten = []
     },

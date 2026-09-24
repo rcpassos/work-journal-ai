@@ -300,9 +300,8 @@ struct TrayMenuState(Mutex<PauseState>);
 
 /// The pause to show at `now_ms` — its already-said line, and only while it
 /// is still in force. A pause with an end runs out on its own, and the moment
-/// the menu opens is where that has to be true: nothing watches for the end,
-/// and a "Paused" line shown after the pause is over is exactly the
-/// forgetting the interval exists to prevent.
+/// the menu is built is where that has to be true: a "Paused" line shown after
+/// the pause is over is exactly the forgetting the interval exists to prevent.
 fn pause_in_force(state: &PauseState, now_ms: f64) -> Option<&str> {
     match state {
         PauseState::Paused { until: None, label } => Some(label.as_str()),
@@ -311,6 +310,31 @@ fn pause_in_force(state: &PauseState, now_ms: f64) -> Option<&str> {
             label,
         } if *end > now_ms => Some(label.as_str()),
         _ => None,
+    }
+}
+
+/// What the pause group of the Tray Menu holds at one instant: the pause
+/// offered, a pause in force — the status line with its end, and the way out
+/// under it — or nothing at all. Which items appear is decided here and
+/// nowhere else, a pure reading of the state against the clock, so the choice
+/// is tested without a menu bar.
+#[derive(Debug, PartialEq)]
+enum PauseControls {
+    /// Observing off, or nothing on the list: the controls would mean nothing.
+    Hidden,
+    /// Observing, with no pause in force: the pause is offered.
+    Offered,
+    /// In force: the status line's own words, then the way out of it.
+    Paused(String),
+}
+
+fn pause_controls(state: &PauseState, now_ms: f64) -> PauseControls {
+    match pause_in_force(state, now_ms) {
+        Some(label) => PauseControls::Paused(label.to_string()),
+        // A pause that has ended reads as ended: Observing is running again,
+        // so the pause is offered again.
+        None if !matches!(state, PauseState::Nothing) => PauseControls::Offered,
+        None => PauseControls::Hidden,
     }
 }
 
@@ -1449,8 +1473,11 @@ fn set_hotkey(
     store.save().map_err(|error| error.to_string())?;
 
     *current = next.clone();
-    // Nothing to update in the Tray Menu: it is rebuilt as it opens, and
-    // spells each Hotkey out from the state at that moment.
+    // The Tray Menu spells each Hotkey out beside its Entry Point, so it is
+    // rebuilt here: what is attached is what a reader who opens the menu
+    // without a click is shown, and a changed Hotkey is one of the things it
+    // must never read wrong.
+    refresh_tray_menu_of(&app);
     Ok(next)
 }
 
@@ -1809,9 +1836,10 @@ fn show_tray_count(app: tauri::AppHandle, title: String) {
 
 /// What the Tray Menu's Observing controls should read — decided and already
 /// said by the capture window, which owns the settings file and the rules
-/// over it. Kept until the menu next opens, which is both when it is shown
-/// and when a timed pause's end meets the clock: nothing else has to happen
-/// for a pause to end by itself.
+/// over it. Kept for the menu to show, and the menu rebuilt as it is told:
+/// what is attached is what a reader who opens the menu without a click —
+/// VoiceOver, the keyboard — is shown, so a change reaches the menu itself
+/// rather than waiting for the next one to be clicked open.
 #[tauri::command]
 fn show_tray_observing(app: tauri::AppHandle, pause_state: PauseState) -> Result<(), String> {
     let held = app.state::<TrayMenuState>();
@@ -1819,6 +1847,7 @@ fn show_tray_observing(app: tauri::AppHandle, pause_state: PauseState) -> Result
         .0
         .lock()
         .map_err(|_| "the Tray Menu's state could not be read".to_string())? = pause_state;
+    refresh_tray_menu_of(&app);
     Ok(())
 }
 
@@ -2314,16 +2343,17 @@ fn ask_the_capture_window<T: serde::Serialize + Clone>(
     }
 }
 
-/// The Tray Menu, as it should read at this moment. Rebuilt every time it
-/// opens, so the pause controls are the ones the state calls for at that very
-/// instant — a pause that ran out while the menu was shut reads as ended —
-/// and the Hotkeys beside the Entry Points are the live ones.
+/// The Tray Menu, as it should read at this moment. Rebuilt whenever what it
+/// says changes and whenever it opens, so the pause controls are the ones the
+/// state calls for at that very instant — a pause that ran out while the menu
+/// was shut reads as ended — and the Hotkeys beside the Entry Points are the
+/// live ones.
 ///
 /// The pause controls sit in their own group, and are absent rather than
 /// greyed when there is nothing to pause: Observing off, or nothing on the
 /// list, is a user who has no business with them. Otherwise the group is the
 /// pause offered, or — while one is in force — the status line with its end
-/// and the way out of it.
+/// and the way out of it: the three shapes `pause_controls` decides between.
 fn tray_menu(app: &tauri::AppHandle, state: &PauseState) -> tauri::Result<Menu<tauri::Wry>> {
     // The Hotkey is spelled out next to New Note so the Tray Menu teaches the
     // faster Entry Point. Only when it is actually live: an accelerator beside
@@ -2431,20 +2461,18 @@ fn tray_menu(app: &tauri::AppHandle, state: &PauseState) -> tauri::Result<Menu<t
         &copy_yesterday,
     ];
 
-    match pause_in_force(state, now_ms()) {
-        Some(label) => {
-            paused_line.set_text(label)?;
+    match pause_controls(state, now_ms()) {
+        PauseControls::Paused(label) => {
+            paused_line.set_text(&label)?;
             items.push(&pause_separator);
             items.push(&paused_line);
             items.push(&resume_observing);
         }
-        // Running, with something to pause: the pause is offered.
-        None if !matches!(state, PauseState::Nothing) => {
+        PauseControls::Offered => {
             items.push(&pause_separator);
             items.push(&offer_pause);
         }
-        // Nothing is being observed: the controls would mean nothing.
-        None => {}
+        PauseControls::Hidden => {}
     }
 
     items.push(&separator);
@@ -2453,8 +2481,10 @@ fn tray_menu(app: &tauri::AppHandle, state: &PauseState) -> tauri::Result<Menu<t
 }
 
 /// Replaces the tray's menu with one built for the state as it stands. Called
-/// as the menu opens, which is the only moment it is read: whatever is said
-/// is true at that instant, and nothing has to be watched for afterwards.
+/// as the menu opens and whenever what it says changes: whatever is said is
+/// true at that instant — and what is attached is also what a reader who opens
+/// the menu without a click (VoiceOver, the keyboard) is shown, so a change
+/// cannot wait for the next one.
 fn refresh_tray_menu(tray: &TrayIcon<tauri::Wry>) -> Result<(), String> {
     let app = tray.app_handle();
     let held = app.state::<TrayMenuState>();
@@ -2465,6 +2495,20 @@ fn refresh_tray_menu(tray: &TrayIcon<tauri::Wry>) -> Result<(), String> {
     let menu = tray_menu(app, &state).map_err(|error| error.to_string())?;
     drop(state);
     tray.set_menu(Some(menu)).map_err(|error| error.to_string())
+}
+
+/// The same rebuild, from the app rather than from the tray — what a change
+/// behind the menu uses. A missing tray or a menu that would not build is a
+/// logged gap: the menu then keeps the state it had, and the next open
+/// rebuilds it.
+fn refresh_tray_menu_of(app: &tauri::AppHandle) {
+    let Some(tray) = app.tray_by_id(TRAY_ID) else {
+        log::warn!("there is no tray to refresh the menu of");
+        return;
+    };
+    if let Err(error) = refresh_tray_menu(&tray) {
+        log::warn!("the Tray Menu kept the state it had: {error}");
+    }
 }
 
 /// The Tray Menu — the Entry Point that always works, and the one Settings
@@ -2609,6 +2653,43 @@ mod tests {
 
         assert_eq!(pause_in_force(&PauseState::Running, 0.0), None);
         assert_eq!(pause_in_force(&PauseState::Nothing, 0.0), None);
+    }
+
+    /// Which items the pause group holds at one instant — the choice itself,
+    /// tested without a menu bar: nothing to pause, the pause offered, a pause
+    /// in force with its end already said and the way out under it, and a
+    /// pause that has ended reading as ended rather than showing a "Paused"
+    /// line over an end that has passed.
+    #[test]
+    fn the_pause_items_follow_the_state_against_the_clock() {
+        let timed = PauseState::Paused {
+            until: Some(1_000.0),
+            label: "Paused until 11:00 AM".into(),
+        };
+        let open = PauseState::Paused {
+            until: None,
+            label: "Paused".into(),
+        };
+
+        assert_eq!(
+            pause_controls(&PauseState::Nothing, 0.0),
+            PauseControls::Hidden
+        );
+        assert_eq!(
+            pause_controls(&PauseState::Running, 0.0),
+            PauseControls::Offered
+        );
+        assert_eq!(
+            pause_controls(&timed, 999.0),
+            PauseControls::Paused("Paused until 11:00 AM".into())
+        );
+        assert_eq!(
+            pause_controls(&open, 999.0),
+            PauseControls::Paused("Paused".into())
+        );
+        // The end has passed: Observing is running again, and the pause is
+        // offered again.
+        assert_eq!(pause_controls(&timed, 1_000.0), PauseControls::Offered);
     }
 
     /// The pause wire shapes, pinned as serde reads and writes them — the

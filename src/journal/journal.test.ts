@@ -1885,11 +1885,39 @@ describe('capturedNoteCount', () => {
 })
 
 describe('lastCommitNote', () => {
-  it('is the newest Note one repository produced, by when the work happened', async () => {
+  it('is the Note that arrived last, however long ago the work was done', async () => {
+    const { journal, clock } = await journalAt('2026-03-10T00:15:00')
+
+    // The rebase's case: new to the journal, old in the work. A commit met by
+    // this morning's sweep is the last Note whatever its author date says —
+    // which is what answers "why isn't my merge here?" before a fetch.
+    await journal.observe(
+      commitEvent({
+        eventKey: commitEventKey('b2', '/code/work-journal-ai/.git'),
+        body: 'Fix the second scrollbar on Settings (#256)',
+        happenedAt: local('2026-03-10T08:00').toISOString(),
+      }),
+    )
+    clock.set(local('2026-03-10T09:00:00'))
+    await journal.observe(
+      commitEvent({
+        eventKey: commitEventKey('m1', '/code/work-journal-ai/.git'),
+        body: 'Merge the scrollbar fixes',
+        happenedAt: local('2026-03-09T21:30').toISOString(),
+      }),
+    )
+
+    expect(await journal.lastCommitNote('/code/work-journal-ai/.git')).toMatchObject({
+      body: 'Merge the scrollbar fixes',
+    })
+  })
+
+  it('is the newest produced among the Notes one sweep brought together', async () => {
     const { journal } = await journalAt('2026-03-10T00:15:00')
 
-    // Met newest first, as the reader walks them — the order they are
-    // written in says nothing about which is the last one.
+    // Met newest first, as the reader walks them, and written together — one
+    // arrival is one sweep, and what arrived together is told apart by the
+    // work's own instant.
     await journal.observe(
       commitEvent({
         eventKey: commitEventKey('b2', '/code/work-journal-ai/.git'),

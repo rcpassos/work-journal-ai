@@ -704,13 +704,13 @@ export interface Journal {
    */
   capturedNoteCount(journalDay: string): Promise<number>
   /**
-   * The last Note one repository's commits produced — by the instant the work
-   * happened — and when that Note arrived in the journal. What the Observing
-   * section reads back beside each repository, to answer "is this on?" right
-   * after enabling and "why isn't my merge here?" before a fetch. The Note is
-   * read from its own source columns, so one the user deleted does not count:
-   * deleting it refuses its commit for good, and the repository is no longer
-   * seen to have produced it.
+   * The last Note to arrive from one repository's commits, and the instant it
+   * arrived — a Note a sweep met just now is the last one, however long ago
+   * its work was done. What the Observing section reads back beside each
+   * repository, to answer "is this on?" right after enabling and "why isn't my
+   * merge here?" before a fetch. The Note is read from its own source columns,
+   * so one the user deleted does not count: deleting it refuses its commit for
+   * good, and the repository is no longer seen to have produced it.
    */
   lastCommitNote(
     repository: string,
@@ -1217,15 +1217,22 @@ const COUNT_CAPTURED_NOTES_ON_DAY = `
 `
 
 /**
- * The last commit Note one repository produced, with the instant it arrived
- * in the journal beside it. The repository is everything after the first `@`
- * of the source key — a hash never holds one, which is how `commitEventKey`
- * writes it — so the Note is read from its own provenance and nothing else:
- * no handled event outlives a deletion here. The arrival is the handled
- * event's own instant, joined on the very pair the Note carries: what the
- * Note is comes from the Note, when it came comes from the handling — and a
- * row with no handled event beside it, which no write can produce, reads as
- * arriving when its work happened.
+ * The last commit Note to arrive from one repository, with the instant it
+ * arrived beside it. The repository is everything after the first `@` of the
+ * source key — a hash never holds one, which is how `commitEventKey` writes
+ * it — so the Note is read from its own provenance and nothing else: no
+ * handled event outlives a deletion here. The arrival is the handled event's
+ * own instant, joined on the very pair the Note carries: what the Note is
+ * comes from the Note, when it came comes from the handling — and a row with
+ * no handled event beside it, which no write can produce, reads as arriving
+ * when its work happened.
+ *
+ * Which Note is last is which arrived last: a commit met by a sweep just now
+ * is the last one, however long ago its work was done — which is what answers
+ * "why isn't my merge here?" before a fetch. What arrives together, arrives
+ * together: a sweep writes what it brought oldest first, so one sweep's
+ * Notes fall back to the work's own order and the newest produced of them is
+ * the one shown.
  */
 const SELECT_LAST_COMMIT_NOTE = `
   SELECT
@@ -1238,7 +1245,7 @@ const SELECT_LAST_COMMIT_NOTE = `
   FROM notes
   WHERE source = 'commit'
     AND substr(source_key, instr(source_key, '@') + 1) = ?
-  ORDER BY captured_at DESC, id DESC
+  ORDER BY arrived_at DESC, captured_at DESC, id DESC
   LIMIT 1
 `
 
@@ -2402,8 +2409,9 @@ function fromCommitEventKey(key: string): { hash: string; repository: string } {
 /**
  * How long ago an instant was, as the small span a glance reads: "just now",
  * "5 min ago", "2 h ago", "3 days ago". What the Observing section says
- * beside a repository's last Note — and it is the Note's own time, the
- * instant the work happened, which is the one time a Note carries.
+ * beside a repository's last Note — and the instant it is given is that
+ * Note's arrival, the "when it arrived" the section promises, not the instant
+ * its work was done.
  *
  * Said here rather than through `Intl.RelativeTimeFormat`, which renders "2
  * hours ago" in one place and "2 hr. ago" in another: this is copy, and the

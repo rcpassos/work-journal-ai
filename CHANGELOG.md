@@ -9,6 +9,10 @@ What changed in each released version, newest first. Every `vX.Y.Z` section here
 - Commits from before you turn it on, or from while it or a repository was off, are never added.
 - Each repository can skip commits whose subject begins with a prefix you write, such as release commits.
 - Hovering a commit's Note in History names the commit and its repository.
+- Observing can be paused from the Tray Menu or Settings, for an hour, until tomorrow, or until resumed: work done during a pause never enters the journal, however late a sweep meets it.
+- While a pause is in force the Tray Menu and Settings both say so and say until when, and a pause with an end runs out on its own.
+- Each repository in Settings shows the last Note it produced and when it arrived, or that nothing has arrived since you turned this on.
+- A repository that cannot be read says why beside it, such as a folder that is gone or a default branch that cannot be resolved, and the other repositories keep producing Notes.
 
 ## 0.15.1 — 2026-09-21
 

@@ -10,6 +10,7 @@ import {
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { useOnScreenToast } from '@/components/on-screen-toast'
+import { useOnScreen } from '@/components/on-screen-context'
 import { formatAgo, repositoryName, type Journal } from '@/journal/journal'
 import type { Desktop, PauseLength, PauseState, RepositoryUnreadable } from '@/platform/desktop'
 import type { AppSettings } from '@/settings/app-settings'
@@ -196,7 +197,14 @@ export default function ObservingSettings({
   // What the pause controls say, from the same rule the Tray Menu's are
   // given — read against the clock when the state changes, and again the
   // moment a timed pause runs out, so the row says "Paused" only while one
-  // is in force.
+  // is in force. And read again whenever the clock has moved while the timer
+  // could not: a Mac that slept through a pause's end stops it part-way, and
+  // a section that sat off screen keeps its row the while — so waking and
+  // coming back on screen are both a moment to read the clock again.
+  const onScreen = useOnScreen()
+  // Ticked by the wake below, and nothing else: waking is one more reason to
+  // sample and re-arm, which the effect does from one place.
+  const [woke, setWoke] = useState(0)
   const [pause, setPause] = useState<PauseState>({ state: 'nothing' })
   useEffect(() => {
     const active = pauseState(observing, Date.now())
@@ -210,7 +218,26 @@ export default function ObservingSettings({
       setPause(pauseState(observing, Date.now()))
     }, Math.max(0, active.until - Date.now()))
     return () => clearTimeout(timer)
-  }, [observing])
+  }, [observing, onScreen, woke])
+
+  // What the row above reads is the clock, and a sleeping Mac runs no timer:
+  // the wake is what says the clock moved on its own.
+  useEffect(() => {
+    let listening = true
+    let stop: (() => void) | null = null
+    void desktop
+      .onSystemWoke(() => {
+        if (listening) setWoke((count) => count + 1)
+      })
+      .then((unlisten) => {
+        if (listening) stop = unlisten
+        else unlisten()
+      })
+    return () => {
+      listening = false
+      stop?.()
+    }
+  }, [desktop])
 
   function pauseFor(length: PauseLength) {
     update((current, now) => pauseObserving(current, length, now), {
@@ -365,12 +392,12 @@ function RepositoryEntry({
   useEffect(() => {
     void desktop.repositoryIdentities(listed.path).then(
       (read) => {
-        if (read.state === 'read') {
-          setSuggested(read.identities)
-          setUnreadable(null)
-        } else {
-          setUnreadable(read.reason)
-        }
+        if (read.state === 'read') setSuggested(read.identities)
+        // Both answers say why nothing can be read from this repository, when
+        // that is so: the unreadable one has nothing else to say, and one with
+        // suggestions carries the same reason beside them — a repository with
+        // nothing on its branches yet is still worth asking who the user is.
+        setUnreadable(read.reason)
       },
       (error: unknown) => {
         console.error('could not suggest identities', error)

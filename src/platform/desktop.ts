@@ -550,12 +550,21 @@ export type CommitsRead =
   | { state: 'unreadable'; reason: RepositoryUnreadable }
 
 /**
- * Who might be the user in one repository, or why it could not be asked. Must
+ * Who might be the user in one repository, or why it could not be asked —
+ * and, beside the suggestions, why nothing can be read from it yet when that
+ * is so. `no-head` is the one reason a repository that was read can carry,
+ * beside suggestions that are still worth offering, and this is the read
+ * Settings makes — the sweep's own answer never reaches the section. Must
  * match `IdentitiesRead` in `src-tauri/src/commits.rs`, as
  * `src/platform/desktop-rust.test.ts` checks.
  */
 export type IdentitiesRead =
-  | { state: 'read'; repository: string; identities: string[] }
+  | {
+      state: 'read'
+      repository: string
+      identities: string[]
+      reason: RepositoryUnreadable | null
+    }
   | { state: 'unreadable'; reason: RepositoryUnreadable }
 
 /**

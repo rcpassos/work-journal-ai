@@ -131,7 +131,14 @@ export function createObserveSession({
           if (read.state !== 'read') continue
 
           const core = await journal
-          for (const event of commitsToObserve({ observing, listed, commits: read.commits })) {
+          // Written oldest first, the way the reader does not answer: what
+          // one sweep brings arrives together, and its arrival is the moment
+          // each was written down — so writing them the other way round from
+          // the walk leaves one sweep's arrival order the work's own, and "the
+          // last Note to arrive" names the newest produced of them either
+          // way. See `SELECT_LAST_COMMIT_NOTE`.
+          const events = commitsToObserve({ observing, listed, commits: read.commits })
+          for (const event of events.toReversed()) {
             if (!running) return
             // Per commit, so one the journal refuses never stops the ones
             // behind it — on this sweep and on every sweep after it.

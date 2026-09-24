@@ -1,15 +1,17 @@
 // @vitest-environment jsdom
 
-import { afterEach, beforeAll, describe, expect, it } from 'vitest'
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
+import { useState } from 'react'
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
 import {
   fakeDesktop,
   type FakeDesktop,
   type FakeRepository,
+  type FakeUnreadablePath,
 } from '@/platform/testing/desktop'
-import type { RepositoryUnreadable } from '@/platform/desktop'
+import OnScreenContext from '@/components/on-screen-context'
 import { createJournal, type Journal, type SourceEvent } from '@/journal/journal'
 import { fixedClock, openTestDatabase } from '@/journal/testing/database'
 import ThemeProvider from '@/components/ThemeProvider'
@@ -59,6 +61,28 @@ function showSettings(
     </ThemeProvider>,
   )
   return settings
+}
+
+/** The Settings view under a visibility this test can change the slow way. */
+function showSettingsOnScreen(desktop: FakeDesktop, journal: Promise<Journal>) {
+  const settings = createAppSettings(desktop)
+  const control: { hide(): void; show(): void } = { hide: () => {}, show: () => {} }
+  function Harness() {
+    const [onScreen, setOnScreen] = useState(true)
+    control.hide = () => setOnScreen(false)
+    control.show = () => setOnScreen(true)
+    return (
+      <ThemeProvider settings={settings}>
+        <OnScreenContext.Provider value={onScreen}>
+          <div hidden={!onScreen}>
+            <SettingsView desktop={desktop} settings={settings} journal={journal} />
+          </div>
+        </OnScreenContext.Provider>
+      </ThemeProvider>
+    )
+  }
+  render(<Harness />)
+  return control
 }
 
 function observingSwitch(): HTMLElement {
@@ -233,7 +257,7 @@ describe('a repository on the list', () => {
 /** Observing on with one repository listed at `path`. */
 function listedAt(
   path: string,
-  found: FakeRepository | RepositoryUnreadable,
+  found: FakeRepository | FakeUnreadablePath,
   journal: Promise<Journal> = new Promise<Journal>(() => {}),
 ) {
   return {
@@ -270,10 +294,9 @@ async function journalWith(events: SourceEvent[] = []) {
 }
 
 describe('a repository that is not working', () => {
-  it.each<[RepositoryUnreadable, string]>([
+  it.each<[FakeUnreadablePath, string]>([
     ['missing', 'That folder is gone.'],
     ['not-a-repository', 'That folder is not a git repository.'],
-    ['no-head', 'The default branch of that repository cannot be resolved.'],
   ])('says its reason beside the entry it concerns: %s', async (reason, sentence) => {
     const { journal } = await journalWith()
     const { desktop } = listedAt('/code/gone', reason, journal)
@@ -284,6 +307,35 @@ describe('a repository that is not working', () => {
       await screen.findByText(`${sentence} Its commits are not being added.`),
     ).toBeTruthy()
     // The reason is a line in the section, never a prompt of any kind.
+    expect(screen.queryByRole('dialog')).toBeNull()
+  })
+
+  it('says a repository with nothing on its branches yet cannot be read, beside what it still offers', async () => {
+    // The reader answers this way and no other: a repository with nothing
+    // resolvable is read for who the user might be — and the reason nothing
+    // can be read comes back beside them, because this read is the one
+    // Settings makes and the sweep's answer never reaches the section.
+    const { journal } = await journalWith()
+    const { desktop } = listedAt(
+      '/code/fresh',
+      {
+        repository: '/code/fresh/.git',
+        configuredEmail: 'me@example.com',
+        commits: [],
+        noHead: true,
+      },
+      journal,
+    )
+
+    showSettings(desktop, journal)
+
+    expect(
+      await screen.findByText(
+        'The default branch of that repository cannot be resolved. Its commits are not being added.',
+      ),
+    ).toBeTruthy()
+    // Not a dead entry: the addresses are still there to tick.
+    expect(await screen.findByRole('checkbox', { name: 'me@example.com' })).toBeTruthy()
     expect(screen.queryByRole('dialog')).toBeNull()
   })
 })
@@ -310,8 +362,9 @@ describe('a repository that is working', () => {
 
     showSettings(desktop, journal)
 
-    // The newest by when the work happened, and the "when" is its arrival —
-    // both met at this sweep, so both say "just now" whatever the work says.
+    // One sweep brings them together, so what arrived together is told apart
+    // by the work's own instant — and the "when" is their arrival: "just now"
+    // whatever the work says.
     expect(
       await screen.findByText(
         'Last: Fix the second scrollbar on Settings (#256) · just now',
@@ -425,5 +478,63 @@ describe('the pause', () => {
 
     expect(await screen.findByText('Paused')).toBeTruthy()
     await screen.findByRole('button', { name: 'Resume' })
+  })
+})
+
+describe('the pause row after time passed unseen', () => {
+  // The row ends itself with a timer, and a timer is no use through a sleep —
+  // WebKit stops it — or through a trip to another section, where the row
+  // stays mounted and stale. Both moments read the clock again: the system
+  // wake, and the section coming back on screen.
+
+  /** Observing on, one repository listed, and an hour's pause already taken. */
+  async function paused() {
+    const { desktop, journal } = listedAt('/code/work-journal-ai', WORK_JOURNAL)
+    // Taken while Settings was closed, as the Tray Menu takes it.
+    await createAppSettings(desktop).updateObserving((observing, now) =>
+      pauseObserving(observing, 'an-hour', now),
+    )
+    return { desktop, journal }
+  }
+
+  it('reads the clock again when the Mac wakes', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    try {
+      const { desktop, journal } = await paused()
+      showSettings(desktop, journal)
+      await screen.findByRole('button', { name: 'Resume' })
+
+      // The pause ended while the Mac slept; its timer stopped with the
+      // sleep and has fired for nobody since.
+      vi.setSystemTime(Date.now() + 2 * 60 * 60 * 1000)
+      desktop.wake()
+
+      expect(
+        await screen.findByRole('button', { name: 'Pause observing' }),
+      ).toBeTruthy()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('reads the clock again when the section comes back on screen', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    try {
+      const { desktop, journal } = await paused()
+      const control = showSettingsOnScreen(desktop, journal)
+      await screen.findByRole('button', { name: 'Resume' })
+
+      // Each on its own render: a view hidden and shown again in one would
+      // never have been away.
+      await act(async () => control.hide())
+      vi.setSystemTime(Date.now() + 2 * 60 * 60 * 1000)
+      await act(async () => control.show())
+
+      expect(
+        await screen.findByRole('button', { name: 'Pause observing' }),
+      ).toBeTruthy()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

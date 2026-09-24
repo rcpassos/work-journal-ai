@@ -1,12 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { createJournal, rangeForJournalDay, type Journal } from './journal'
+import {
+  createJournal,
+  rangeForJournalDay,
+  type Clock,
+  type Journal,
+} from './journal'
 import { fixedClock, openTestDatabase } from './testing/database'
 import {
   fakeDesktop,
   type FakeCommit,
   type FakeRepository,
+  type FakeUnreadablePath,
 } from '../platform/testing/desktop'
-import type { PauseLength, RepositoryUnreadable } from '../platform/desktop'
+import type { PauseLength } from '../platform/desktop'
 import { createAppSettings, type AppSettings } from '../settings/app-settings'
 import {
   addRepository,
@@ -57,11 +63,12 @@ function repository(name: string, commits: FakeCommit[] = []): FakeRepository {
 
 async function observeSessionAt(
   instant: string,
-  repositories: Record<string, FakeRepository | RepositoryUnreadable> = {},
+  repositories: Record<string, FakeRepository | FakeUnreadablePath> = {},
+  /** The clock the whole stack reads; a test about arrival passes one that ticks. */
+  clock: Clock & { set(next: Date): void } = fixedClock(instant),
 ) {
   const { driver, close } = await openTestDatabase()
   openJournals.push(close)
-  const clock = fixedClock(instant)
   const journal = createJournal({ clock, driver })
   const desktop = fakeDesktop({ driver, repositories })
   const settings = createAppSettings(desktop, clock)
@@ -151,6 +158,40 @@ describe('a day of commits', () => {
       sourceKey: 'b2@/code/work-journal-ai/.git',
       capturedAt: new Date('2026-03-09T22:10').toISOString(),
     })
+  })
+
+  it('writes one sweep\'s commits oldest first, so the last Note to arrive is the newest produced', async () => {
+    // A clock that ticks on every read, as the app's own does between one
+    // Note and the next: what is written later arrives later, and one sweep
+    // writes what it brought the other way round from the walk. The last Note
+    // to arrive is then the newest produced of the sweep — the reader's own
+    // order would leave it the oldest.
+    let tick = new Date('2026-03-09T08:00:00').getTime()
+    const ticking: Clock & { set(next: Date): void } = {
+      now: () => new Date((tick += 1000)),
+      set: (next) => {
+        tick = next.getTime()
+      },
+    }
+    const { journal, settings, session } = await observeSessionAt(
+      '2026-03-09T08:00:00',
+      {
+        '/code/work-journal-ai': repository('work-journal-ai', [
+          commit('b3', 'Newest of the sweep', '2026-03-09T09:30'),
+          commit('b2', 'Middle of the sweep', '2026-03-09T09:00'),
+          commit('b1', 'Oldest of the sweep', '2026-03-09T08:30'),
+        ]),
+      },
+      ticking,
+    )
+    await turn(settings, true)
+    await list(settings, 'work-journal-ai')
+
+    await session.start()
+
+    expect((await journal.lastCommitNote('/code/work-journal-ai/.git'))?.body).toBe(
+      'Newest of the sweep',
+    )
   })
 
   it('never brings in a commit by an identity the user has not named', async () => {

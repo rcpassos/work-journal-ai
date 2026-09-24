@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { fixedClock } from './testing/database'
 import { fakeDesktop } from '../platform/testing/desktop'
 import { createAppSettings } from '../settings/app-settings'
@@ -87,6 +87,48 @@ describe('the Tray Menu', () => {
         until: new Date('2026-03-09T10:00:00').getTime(),
       },
     ])
+  })
+
+  it('tells the menu again as a timed pause runs out on its own', async () => {
+    vi.useFakeTimers()
+    try {
+      const { desktop, clock, session } = trayAt('2026-03-09T10:00:00')
+      await session.start()
+      desktop.requestObservingPause('an-hour')
+      await flush()
+      expect(desktop.trayObserving?.state).toBe('paused')
+
+      // The end comes for a pause nobody pressed anything about — and what
+      // the tray holds is what a reader who opens the menu without a click is
+      // shown, so it is told as the pause ends rather than at the next press.
+      clock.set(new Date('2026-03-09T11:00:00'))
+      await vi.advanceTimersByTimeAsync(60 * 60 * 1000)
+      await flush()
+
+      expect(desktop.trayObserving).toEqual({ state: 'running' })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('says no more about a pause running out once this is stopped', async () => {
+    vi.useFakeTimers()
+    try {
+      const { desktop, clock, session } = trayAt('2026-03-09T10:00:00')
+      await session.start()
+      desktop.requestObservingPause('an-hour')
+      await flush()
+      session.stop()
+      desktop.trayObserving = null
+
+      clock.set(new Date('2026-03-09T11:00:00'))
+      await vi.advanceTimersByTimeAsync(60 * 60 * 1000)
+      await flush()
+
+      expect(desktop.trayObserving).toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('hears a change made in Settings as readily as its own press', async () => {

@@ -36,13 +36,26 @@ export interface FakeCommit extends Omit<Commit, 'repository'> {
 /**
  * A repository the fake reader can read: its identity, the address
  * `git config user.email` would answer with, and its first-parent history,
- * newest first — what the real reader walks, already walked.
+ * newest first — what the real reader walks, already walked. `noHead` is a
+ * repository with nothing resolvable at any ref yet: the suggestions are
+ * still read, with the reason beside them, and the commits read says why
+ * there are none — exactly as `Git::tip` answering `None` does in
+ * `src-tauri/src/commits.rs`.
  */
 export interface FakeRepository {
   repository: string
   configuredEmail?: string
   commits: FakeCommit[]
+  noHead?: boolean
 }
+
+/**
+ * Why a path cannot be read at all, as the fake answers it. `no-head` is not
+ * one of these — the real reader cannot fail an identities read with it,
+ * which is a `FakeRepository` carrying `noHead` instead — so a test cannot
+ * put a reason on the wrong call.
+ */
+export type FakeUnreadablePath = Exclude<RepositoryUnreadable, 'no-head'>
 
 /**
  * The desktop a test runs on: the same surface, in memory. Announcements are
@@ -227,7 +240,7 @@ export interface FakeDesktop extends Desktop {
    * What is on disk, by path: a repository, or why the path is not one that
    * can be read. A path not here is missing. Writable, as a disk is.
    */
-  repositories: Record<string, FakeRepository | RepositoryUnreadable>
+  repositories: Record<string, FakeRepository | FakeUnreadablePath>
   /** The folder the next picker answers with; null is a cancel. */
   chosenFolder: string | null
 }
@@ -272,7 +285,7 @@ export function fakeDesktop({
   apiKey?: string | null
   /** Whether the Keychain is locked, or the prompt was refused. */
   keychainRefuses?: boolean
-  repositories?: Record<string, FakeRepository | RepositoryUnreadable>
+  repositories?: Record<string, FakeRepository | FakeUnreadablePath>
 } = {}): FakeDesktop {
   const captureShown = subscribers<boolean>()
   const windowBlurred = subscribers<void>()
@@ -545,6 +558,9 @@ export function fakeDesktop({
     repositoryCommits: async (path, identities, since): Promise<CommitsRead> => {
       const found = desktop.repositories[path] ?? 'missing'
       if (typeof found === 'string') return { state: 'unreadable', reason: found }
+      // Nothing resolvable at any ref: the reason the reader gives, and no
+      // commits to read under it.
+      if (found.noHead) return { state: 'unreadable', reason: 'no-head' }
 
       // Matched on the whole address regardless of case, as the reader does.
       const named = new Set(identities.map((identity) => identity.toLowerCase()))
@@ -587,6 +603,9 @@ export function fakeDesktop({
         state: 'read',
         repository: found.repository,
         identities: [...identities.values()],
+        // Beside the suggestions, as the reader answers: a repository with
+        // nothing resolvable is still worth asking who the user is.
+        reason: found.noHead ? 'no-head' : null,
       }
     },
 
