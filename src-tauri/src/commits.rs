@@ -30,7 +30,10 @@
 //! **Authorship is a set** of addresses, matched on the address alone and
 //! regardless of case. **Dates are author dates**, filtered here rather than
 //! by `--since`, which prunes by committer date — a rebase moves that, and the
-//! work did not move with it.
+//! work did not move with it. `--since` still narrows every walk, since git
+//! never writes a committer date before the author date beside it: pruning
+//! can keep too much, and misses only work dated past when it was committed.
+//! The filter below is the answer either way.
 //!
 //! **A repository is its common directory**, which every worktree of it
 //! shares: one project reached through three directories is one repository.
@@ -188,6 +191,9 @@ impl Git {
             .iter()
             .map(|identity| format!("--author=<{identity}>"))
             .collect();
+        // Narrowed to the lookback and no further: it prunes by committer
+        // date and the filter below is the answer — see the note on dates.
+        let cutoff = format!("--since=@{}", (since / 1000.0) as i64);
         let mut args = vec![
             "log",
             "--first-parent",
@@ -197,6 +203,7 @@ impl Git {
             "--no-show-signature",
             "-z",
             "--format=%H%x00%at%x00%s",
+            cutoff.as_str(),
         ];
         args.extend(authors.iter().map(String::as_str));
         args.extend([tip.as_str(), "--"]);
@@ -241,6 +248,9 @@ impl Git {
         // commit read gives for there being nothing to read.
         let tip = self.tip(path)?;
         if let Some(tip) = tip.as_deref() {
+            // Narrowed the same way `commits` is; the filter below decides.
+            // See the note on dates.
+            let cutoff = format!("--since=@{}", (since / 1000.0) as i64);
             let log = self.succeed(
                 path,
                 &[
@@ -250,6 +260,7 @@ impl Git {
                     "--no-show-signature",
                     "-z",
                     "--format=%at%x00%ae",
+                    cutoff.as_str(),
                     tip,
                     "--",
                 ],

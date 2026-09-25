@@ -389,18 +389,24 @@ function RepositoryEntry({
   )
   const [asked, setAsked] = useState(false)
 
-  // Read, and read again: whether this repository can be read is a fact
-  // about the disk that moves on its own — the first commit lands in an empty
-  // one, a folder goes away — and this section stays mounted while the window
-  // is open. The journal saying it changed is the moment that follows either,
-  // and coming back on screen is where a line gone stale would be read.
+  // Read again when something says this repository moved. The journal is not
+  // that signal: a folder that goes away, or a first commit that becomes no
+  // Note, changes nothing in it — only the sweep sees either happen, and it
+  // says so when what a repository reads as changes. Nothing is read while
+  // the section is off screen, because it is not being looked at: coming back
+  // on screen reads it then. And only the newest read is ever applied — two
+  // of them overlap, and an older one landing late would put a reason back
+  // that a newer one cleared.
   const onScreen = useOnScreen()
+  const reads = useRef(0)
   useEffect(() => {
+    if (!onScreen) return
     let listening = true
     let stop: (() => void) | null = null
     async function readIdentities(): Promise<void> {
+      const mine = (reads.current += 1)
       const read = await desktop.repositoryIdentities(listed.path)
-      if (!listening) return
+      if (!listening || mine !== reads.current) return
       if (read.state === 'read') setSuggested(read.identities)
       // Both answers say why nothing can be read from this repository, when
       // that is so: the unreadable one has nothing else to say, and one with
@@ -412,7 +418,7 @@ function RepositoryEntry({
       console.error('could not suggest identities', error)
     void readIdentities().catch(failed)
     void desktop
-      .onJournalChanged(() => {
+      .onRepositoryStateChanged(() => {
         void readIdentities().catch(failed)
       })
       .then((unlisten) => {

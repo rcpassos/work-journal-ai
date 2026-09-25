@@ -103,6 +103,12 @@ export function createObserveSession({
   // each see it unhandled. The late one is dropped; the next trigger finds
   // whatever it would have.
   let sweeping = false
+  // What each listed repository last read as — read, or unreadable and why —
+  // so a sweep speaks only when one of them moves. The settings rows' reason
+  // lines follow this and nothing else: a folder that goes away, or a first
+  // commit that becomes no Note, leaves the journal silent about both, and
+  // the sweep is the only thing that sees either happen.
+  const readAs: Record<string, string> = {}
 
   /**
    * One look at every listed repository. A repository that cannot be read is
@@ -119,15 +125,21 @@ export function createObserveSession({
 
       const since = clock.now().getTime() - OBSERVE_LOOKBACK_MS
       let observed = 0
+      let moved = false
       for (const listed of observing.repositories) {
-        // No identity ticked is nobody's commits: nothing to ask `git` for.
-        if (listed.identities.length === 0) continue
         try {
+          // Every listed repository is read, identities or not: what it reads
+          // as — gone, not a repository, nothing on its branches yet — moves
+          // whatever the journal does. With nobody ticked the read answers
+          // with no commits and only this to say.
           const read = await desktop.repositoryCommits(
             listed.path,
             listed.identities,
             since,
           )
+          const reads = read.state === 'read' ? 'read' : read.reason
+          if (listed.path in readAs && readAs[listed.path] !== reads) moved = true
+          readAs[listed.path] = reads
           if (read.state !== 'read') continue
 
           const core = await journal
@@ -157,6 +169,13 @@ export function createObserveSession({
       // Filter, and a sweep has nothing to say about the user.
       if (observed > 0) {
         await desktop.announceJournalChanged()
+      }
+      // What a repository reads as moving is not the journal moving, and said
+      // apart: a row reads its repository again on this and on nothing the
+      // journal says — every Capture making one read git again was the cost
+      // of saying it together.
+      if (moved) {
+        await desktop.announceRepositoryStateChanged()
       }
     } catch (error) {
       console.error('could not observe commits', error)

@@ -338,6 +338,16 @@ export const JOURNAL_CHANGED_EVENT = 'journal://changed'
 export const TASKS_CHANGED_EVENT = 'tasks://changed'
 
 /**
+ * One of the listed repositories changed what it reads as: read, or unreadable
+ * and why. The journal says nothing about this — a folder that goes away, or a
+ * first commit that becomes no Note, changes nothing in it — so the sweep says
+ * it instead, and a settings row reads its repository again. Separate from
+ * `JOURNAL_CHANGED_EVENT` because the two answer different questions: what
+ * arrived in the journal, and what the sources say about themselves.
+ */
+export const REPOSITORY_STATE_CHANGED_EVENT = 'repository://state'
+
+/**
  * The user clicked a Task Alert. Spoken by the Rust side, which is the only
  * part of the app macOS hands the click to, and carried to Tasks View so it can
  * open focused on that Task. Must match `TASK_ALERT_OPENED_EVENT` in
@@ -875,6 +885,8 @@ export interface Desktop {
   onNoteCaptured(handle: (journalDay: string) => void): Promise<Unlisten>
   announceJournalChanged(): Promise<void>
   onJournalChanged(handle: () => void): Promise<Unlisten>
+  announceRepositoryStateChanged(): Promise<void>
+  onRepositoryStateChanged(handle: () => void): Promise<Unlisten>
   announceTheme(theme: Theme): Promise<void>
   onThemeChanged(handle: (theme: Theme) => void): Promise<Unlisten>
 

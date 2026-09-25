@@ -126,6 +126,7 @@ const typeScriptOnly = new Set([
   'IMPORT_CHANGED_EVENT',
   'OBSERVING_CHANGED_EVENT',
   'JOURNAL_CHANGED_EVENT',
+  'REPOSITORY_STATE_CHANGED_EVENT',
   'TASKS_CHANGED_EVENT',
   'TASK_ALERTS_RECONCILED_EVENT',
   // The start-at-login answer is this side's own now: it is stored in the

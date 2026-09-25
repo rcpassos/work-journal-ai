@@ -269,7 +269,7 @@ describe('what is swept at all', () => {
     expect(read).not.toHaveBeenCalled()
   })
 
-  it('is nothing from a repository with no identity ticked', async () => {
+  it('is nothing from a repository with no identity ticked, though it is still read', async () => {
     const { journal, desktop, clock, settings, session } = await observeSessionAt(
       '2026-03-09T08:00:00',
       {
@@ -285,8 +285,74 @@ describe('what is swept at all', () => {
     clock.set(new Date('2026-03-09T12:00:00'))
     await session.start()
 
-    expect(read).not.toHaveBeenCalled()
+    // Read for what the repository says about itself and nothing more: one
+    // that gains its first commit with nobody ticked moves on from "nothing
+    // on its branches yet", and Settings has to hear that — while no commit
+    // is read for anyone.
+    expect(read).toHaveBeenCalledWith('/code/work-journal-ai', [], expect.any(Number))
     expect(await bodiesOn(journal, '2026-03-09')).toEqual([])
+  })
+})
+
+describe('what a sweep says about the repositories', () => {
+  it('says one reads differently, and repeats nothing', async () => {
+    const { desktop, clock, settings, session } = await observeSessionAt(
+      '2026-03-09T08:00:00',
+      {
+        '/code/work-journal-ai': repository('work-journal-ai', [
+          commit('b1', 'Mine', '2026-03-09T09:00'),
+        ]),
+      },
+    )
+    await turn(settings, true)
+    await list(settings, 'work-journal-ai')
+    let moved = 0
+    await desktop.onRepositoryStateChanged(() => (moved += 1))
+
+    clock.set(new Date('2026-03-09T12:00:00'))
+    await session.start()
+
+    // First sight is not a change: whoever is reading has just read.
+    expect(moved).toBe(0)
+
+    // The folder goes away. Nothing in the journal says so — the next sweep
+    // is the only thing that sees it, and it is what speaks.
+    desktop.repositories['/code/work-journal-ai'] = 'missing'
+    desktop.wake()
+    await flushSweep()
+    expect(moved).toBe(1)
+
+    // Still gone: nothing moved, nothing said.
+    desktop.wake()
+    await flushSweep()
+    expect(moved).toBe(1)
+  })
+
+  it('says it again when a repository that could not be read starts working', async () => {
+    const { desktop, clock, settings, session } = await observeSessionAt(
+      '2026-03-09T08:00:00',
+      { '/code/fresh': { repository: '/code/fresh/.git', commits: [], noHead: true } },
+    )
+    await turn(settings, true)
+    // Nobody ticked: its commits are never anybody's, and still the
+    // repository moves on and says so.
+    await list(settings, 'fresh', [])
+    let moved = 0
+    await desktop.onRepositoryStateChanged(() => (moved += 1))
+
+    clock.set(new Date('2026-03-09T12:00:00'))
+    await session.start()
+    expect(moved).toBe(0)
+
+    // The first commit lands — and becomes no Note at all.
+    desktop.repositories['/code/fresh'] = {
+      repository: '/code/fresh/.git',
+      commits: [commit('f1', 'First', '2026-03-09T11:00')],
+    }
+    desktop.wake()
+    await flushSweep()
+
+    expect(moved).toBe(1)
   })
 })
 

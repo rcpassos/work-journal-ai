@@ -40,6 +40,7 @@ import {
   JOURNAL_CHANGED_EVENT,
   NOTE_CAPTURED_EVENT,
   PRACTICE_ENDED_EVENT,
+  REPOSITORY_STATE_CHANGED_EVENT,
   SETTINGS_FILE,
   SECTION_REQUESTED_EVENT,
   SYSTEM_WOKE_EVENT,
@@ -276,6 +277,9 @@ export function createTauriDesktop(): Desktop {
 
     announceJournalChanged: () => emit(JOURNAL_CHANGED_EVENT),
     onJournalChanged: (handle) => listen(JOURNAL_CHANGED_EVENT, () => handle()),
+    announceRepositoryStateChanged: () => emit(REPOSITORY_STATE_CHANGED_EVENT),
+    onRepositoryStateChanged: (handle) =>
+      listen(REPOSITORY_STATE_CHANGED_EVENT, () => handle()),
 
     announceTheme: (theme) => emit(THEME_CHANGED_EVENT, { theme }),
     onThemeChanged: (handle) =>

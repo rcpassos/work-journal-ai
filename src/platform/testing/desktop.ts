@@ -300,6 +300,7 @@ export function fakeDesktop({
   const noteCaptured = subscribers<string>()
   const practiceEnded = subscribers<PracticeEnded>()
   const journalChanged = subscribers<void>()
+  const repositoryStateChanged = subscribers<void>()
   const themeChanged = subscribers<Theme>()
   const windowFocused = subscribers<void>()
   const closeRequested = subscribers<void>()
@@ -625,6 +626,8 @@ export function fakeDesktop({
     onNoteCaptured: async (handle) => noteCaptured.add(handle),
     announceJournalChanged: async () => journalChanged.announce(undefined),
     onJournalChanged: async (handle) => journalChanged.add(handle),
+    announceRepositoryStateChanged: async () => repositoryStateChanged.announce(undefined),
+    onRepositoryStateChanged: async (handle) => repositoryStateChanged.add(handle),
     announceTheme: async (theme) => themeChanged.announce(theme),
     onThemeChanged: async (handle) => themeChanged.add(handle),
 

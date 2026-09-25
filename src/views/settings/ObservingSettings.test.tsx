@@ -13,6 +13,7 @@ import {
 } from '@/platform/testing/desktop'
 import OnScreenContext from '@/components/on-screen-context'
 import { createJournal, type Journal, type SourceEvent } from '@/journal/journal'
+import { createObserveSession } from '@/journal/observe-session'
 import { fixedClock, openTestDatabase } from '@/journal/testing/database'
 import ThemeProvider from '@/components/ThemeProvider'
 import { createAppSettings } from '@/settings/app-settings'
@@ -293,6 +294,18 @@ async function journalWith(events: SourceEvent[] = []) {
   return { journal: Promise.resolve(core), core, notes }
 }
 
+/** The commit sweep, running as the app runs it over this desktop. */
+function sweeping(desktop: FakeDesktop, journal: Promise<Journal>) {
+  const clock = fixedClock(new Date())
+  const settings = createAppSettings(desktop, clock)
+  return createObserveSession({ journal, desktop, settings, clock })
+}
+
+/** Lets a sweep the session started on its own finish before asserting. */
+async function flushSweep(): Promise<void> {
+  for (let turn = 0; turn < 40; turn += 1) await Promise.resolve()
+}
+
 describe('a repository that is not working', () => {
   it.each<[FakeUnreadablePath, string]>([
     ['missing', 'That folder is gone.'],
@@ -341,18 +354,33 @@ describe('a repository that is not working', () => {
 })
 
 describe('a repository whose state moves on', () => {
-  it('takes its reason away when it starts working, and shows it again when it stops', async () => {
-    const { journal, core } = await journalWith()
-    const { desktop } = listedAt(
-      '/code/fresh',
-      {
-        repository: '/code/fresh/.git',
-        configuredEmail: 'me@example.com',
-        commits: [],
-        noHead: true,
+  it('takes its reason away when the first commit becomes no Note, and shows it again when the folder goes', async () => {
+    const { journal } = await journalWith()
+    const desktop = fakeDesktop({
+      stored: {
+        observing: {
+          enabled: true,
+          repositories: [
+            {
+              path: '/code/fresh',
+              repository: '/code/fresh/.git',
+              identities: ['me@example.com'],
+              ignoredPrefixes: ['Merge'],
+            },
+          ],
+          consent: { '/code/fresh/.git': [{ from: 1, until: null }] },
+          pauses: {},
+        },
       },
-      journal,
-    )
+      repositories: {
+        '/code/fresh': {
+          repository: '/code/fresh/.git',
+          configuredEmail: 'me@example.com',
+          commits: [],
+          noHead: true,
+        },
+      },
+    })
     showSettings(desktop, journal)
     expect(
       await screen.findByText(
@@ -360,32 +388,125 @@ describe('a repository whose state moves on', () => {
       ),
     ).toBeTruthy()
 
-    // The first commit lands: a sweep writes it and says the journal changed.
+    // The sweep, as the app runs it. What Settings says about a repository
+    // follows the sweep: it is the only thing that sees the disk move, and
+    // nothing here announces anything by hand.
+    const session = sweeping(desktop, journal)
+    await session.start()
+
+    // The first commit lands — a merge, which is never a Note. The journal
+    // says nothing happened at all.
     desktop.repositories['/code/fresh'] = {
       repository: '/code/fresh/.git',
       configuredEmail: 'me@example.com',
-      commits: [],
+      commits: [
+        {
+          hash: 'm1',
+          subject: "Merge branch 'main'",
+          author: 'me@example.com',
+          authoredAt: Date.now(),
+        },
+      ],
     }
-    await core.observe({
-      source: 'commit',
-      eventKey: 'f1@/code/fresh/.git',
-      body: 'First',
-      happenedAt: new Date().toISOString(),
-      project: null,
-    })
-    await desktop.announceJournalChanged()
+    desktop.beginCapture()
+    await flushSweep()
 
-    // The reason and the Note must never stand beside each other.
+    // The reason and a Note must never stand beside each other — and here
+    // there is no Note at all.
     await expect
       .poll(() => screen.queryByText(/Its commits are not being added\./))
       .toBeNull()
-    expect(await screen.findByText(/^Last: First/)).toBeTruthy()
+    expect(
+      await screen.findByText('Nothing yet since you turned this on'),
+    ).toBeTruthy()
 
     // And the other way: a folder deleted while Settings sits open is flagged.
     desktop.repositories['/code/fresh'] = 'missing'
-    await desktop.announceJournalChanged()
+    desktop.beginCapture()
+    await flushSweep()
 
     expect(await screen.findByText(/^That folder is gone\./)).toBeTruthy()
+    session.stop()
+  })
+
+  it('applies only its newest read: an older one landing late is not heard', async () => {
+    const { journal } = await journalWith()
+    const { desktop } = listedAt('/code/work-journal-ai', WORK_JOURNAL, journal)
+    // A slow disk: every read answers with what it saw when it began, and
+    // lands only when the test lets it.
+    const held: Array<() => void> = []
+    const disk = desktop.repositoryIdentities.bind(desktop)
+    desktop.repositoryIdentities = async (path) => {
+      const answer = await disk(path)
+      await new Promise<void>((resolve) => held.push(resolve))
+      return answer
+    }
+    const control = showSettingsOnScreen(desktop, journal)
+    await screen.findByRole('checkbox', { name: 'me@example.com' })
+    expect(held).toHaveLength(1)
+
+    // The folder goes while that first read is still in flight.
+    await act(async () => control.hide())
+    desktop.repositories['/code/work-journal-ai'] = 'missing'
+    await act(async () => control.show())
+    expect(held).toHaveLength(2)
+
+    // The newer read lands: gone. (The later of the two held — the earlier
+    // one is the read that began when the folder was still there.)
+    const newer = held.pop()
+    if (newer) await act(async () => newer())
+    expect(await screen.findByText(/^That folder is gone\./)).toBeTruthy()
+
+    // And then the older one, which saw the folder where it was.
+    const older = held.shift()
+    if (older) await act(async () => older())
+    expect(screen.queryByText(/^That folder is gone\./)).toBeTruthy()
+  })
+
+  it('is read again only for what the repository says about itself', async () => {
+    const { journal } = await journalWith()
+    const { desktop } = listedAt('/code/work-journal-ai', WORK_JOURNAL, journal)
+    const reads = vi.spyOn(desktop, 'repositoryIdentities')
+    showSettings(desktop, journal)
+    await screen.findByRole('checkbox', { name: 'me@example.com' })
+    await expect.poll(() => reads.mock.calls.length).toBeGreaterThan(0)
+    const asked = reads.mock.calls.length
+
+    // A sweep lands a Note: the journal changes, the repository does not.
+    desktop.repositories['/code/work-journal-ai'] = {
+      ...WORK_JOURNAL,
+      commits: [
+        {
+          hash: 'n1',
+          subject: 'A Note',
+          author: 'me@example.com',
+          authoredAt: Date.now(),
+        },
+      ],
+    }
+    const session = sweeping(desktop, journal)
+    await session.start()
+    await flushSweep()
+
+    // The Last line follows the journal. The reason line is not re-read for
+    // it: every journal change reading git again was the cost of that.
+    expect(await screen.findByText(/^Last: A Note/)).toBeTruthy()
+    expect(reads.mock.calls.length).toBe(asked)
+    session.stop()
+  })
+
+  it('is not read while the section is off screen, and once when it comes back', async () => {
+    const { journal } = await journalWith()
+    const { desktop } = listedAt('/code/work-journal-ai', WORK_JOURNAL, journal)
+    const control = showSettingsOnScreen(desktop, journal)
+    await screen.findByRole('checkbox', { name: 'me@example.com' })
+    const reads = vi.spyOn(desktop, 'repositoryIdentities')
+
+    await act(async () => control.hide())
+    expect(reads).not.toHaveBeenCalled()
+
+    await act(async () => control.show())
+    expect(reads).toHaveBeenCalledTimes(1)
   })
 
   it('reads its reason again when the section comes back on screen', async () => {
