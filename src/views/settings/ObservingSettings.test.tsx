@@ -441,14 +441,15 @@ describe('a repository whose state moves on', () => {
       await new Promise<void>((resolve) => held.push(resolve))
       return answer
     }
-    const control = showSettingsOnScreen(desktop, journal)
+    showSettings(desktop, journal)
     await screen.findByRole('checkbox', { name: 'me@example.com' })
     expect(held).toHaveLength(1)
 
-    // The folder goes while that first read is still in flight.
-    await act(async () => control.hide())
+    // The folder goes, and the sweep's word of it arrives while that first
+    // read is still in flight — the section never leaves the screen, so the
+    // two reads are one after the other and only which is newest can speak.
     desktop.repositories['/code/work-journal-ai'] = 'missing'
-    await act(async () => control.show())
+    await act(async () => desktop.announceRepositoryStateChanged())
     expect(held).toHaveLength(2)
 
     // The newer read lands: gone. (The later of the two held — the earlier

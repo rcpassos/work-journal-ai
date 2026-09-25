@@ -30,10 +30,10 @@
 //! **Authorship is a set** of addresses, matched on the address alone and
 //! regardless of case. **Dates are author dates**, filtered here rather than
 //! by `--since`, which prunes by committer date — a rebase moves that, and the
-//! work did not move with it. `--since` still narrows every walk, since git
-//! never writes a committer date before the author date beside it: pruning
-//! can keep too much, and misses only work dated past when it was committed.
-//! The filter below is the answer either way.
+//! work did not move with it — and which cannot even narrow the walk: git
+//! stops at the first commit older than its date and reads nothing behind
+//! that one, so a tip committed before the lookback would hide the work under
+//! it, on every walk that ever met the tip.
 //!
 //! **A repository is its common directory**, which every worktree of it
 //! shares: one project reached through three directories is one repository.
@@ -191,9 +191,6 @@ impl Git {
             .iter()
             .map(|identity| format!("--author=<{identity}>"))
             .collect();
-        // Narrowed to the lookback and no further: it prunes by committer
-        // date and the filter below is the answer — see the note on dates.
-        let cutoff = format!("--since=@{}", (since / 1000.0) as i64);
         let mut args = vec![
             "log",
             "--first-parent",
@@ -203,7 +200,6 @@ impl Git {
             "--no-show-signature",
             "-z",
             "--format=%H%x00%at%x00%s",
-            cutoff.as_str(),
         ];
         args.extend(authors.iter().map(String::as_str));
         args.extend([tip.as_str(), "--"]);
@@ -248,9 +244,6 @@ impl Git {
         // commit read gives for there being nothing to read.
         let tip = self.tip(path)?;
         if let Some(tip) = tip.as_deref() {
-            // Narrowed the same way `commits` is; the filter below decides.
-            // See the note on dates.
-            let cutoff = format!("--since=@{}", (since / 1000.0) as i64);
             let log = self.succeed(
                 path,
                 &[
@@ -260,7 +253,6 @@ impl Git {
                     "--no-show-signature",
                     "-z",
                     "--format=%at%x00%ae",
-                    cutoff.as_str(),
                     tip,
                     "--",
                 ],
@@ -921,6 +913,44 @@ mod tests {
         };
 
         assert_eq!(identities, [ME, "Maintainer@Example.com", ME_ON_GITHUB]);
+    }
+
+    /// The commit at the top can be dated behind the one under it — a clock
+    /// that was behind on the machine that made it, or a rebuild that kept
+    /// committer dates. Nothing may be narrowed by `--since` here: git stops
+    /// the walk at the first commit older than its date and reads nothing
+    /// behind that one, so the tip alone would hide the work under it, and
+    /// hide it again on every later walk.
+    #[test]
+    fn a_tip_committed_before_the_lookback_hides_nothing_behind_it() {
+        let root = TempDir::new("backwards");
+        init(&root.path);
+        git(&root.path, &["config", "user.email", ME]);
+        // The work, inside the lookback, by nobody configured: it reaches the
+        // suggestions only through the log.
+        commit(&root.path, ME_ON_GITHUB, -24 * 2, "Two days ago");
+        // And on top of it, dated behind — which the lookback still refuses.
+        commit_at(
+            &root.path,
+            "long.gone@example.com",
+            -24 * 10,
+            -24 * 10,
+            "Dated back",
+        );
+
+        assert_eq!(
+            subjects(&read_by(
+                &root.path,
+                &[ME_ON_GITHUB, "long.gone@example.com"],
+                at(-24 * 7)
+            )),
+            ["Two days ago"]
+        );
+        let IdentitiesRead::Read { identities, .. } = identities_since(&root.path, at(-24 * 7))
+        else {
+            panic!("unreadable")
+        };
+        assert_eq!(identities, [ME, ME_ON_GITHUB]);
     }
 
     #[test]

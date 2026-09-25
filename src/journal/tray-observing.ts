@@ -116,7 +116,7 @@ export function createTrayObserving({
         // And the clock moves while nothing is watched: WebKit stops the
         // timer above across a sleep, so the wake is what says a pause ended
         // overnight — to a reader who opens the menu without a click, and for
-        // whom a rebuild at the open is already too late to be the only one.
+        // whom a change made only at the open would never arrive.
         desktop.onSystemWoke(() => void show()),
       ])
 
