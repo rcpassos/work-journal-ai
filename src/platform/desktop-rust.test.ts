@@ -22,6 +22,8 @@ import {
   HISTORY_SECTION,
   MAIN_WINDOW,
   ONBOARDING_KEY,
+  OBSERVING_PAUSE_EVENT,
+  OBSERVING_RESUME_EVENT,
   PRACTICE_ENDED_EVENT,
   SECTION_REQUESTED_EVENT,
   WORK_SUMMARY_SECTION,
@@ -81,6 +83,8 @@ const shared: Record<string, string> = {
   CAPTURE_SHOWN_EVENT,
   TASK_CREATION_SHOWN_EVENT,
   COPY_YESTERDAY_DIGEST_EVENT,
+  OBSERVING_PAUSE_EVENT,
+  OBSERVING_RESUME_EVENT,
   SYSTEM_WOKE_EVENT,
   SECTION_REQUESTED_EVENT,
   TASK_ALERT_COMPLETED_EVENT,
@@ -122,6 +126,7 @@ const typeScriptOnly = new Set([
   'IMPORT_CHANGED_EVENT',
   'OBSERVING_CHANGED_EVENT',
   'JOURNAL_CHANGED_EVENT',
+  'REPOSITORY_STATE_CHANGED_EVENT',
   'TASKS_CHANGED_EVENT',
   'TASK_ALERTS_RECONCILED_EVENT',
   // The start-at-login answer is this side's own now: it is stored in the
@@ -537,8 +542,11 @@ describe('the arguments commands are invoked with', () => {
 
   /** The parameter names of one Rust command, in snake_case as written. */
   function rustParameters(command: string): string[] {
+    // Read to the closing paren of the parameter list and no further: a
+    // command with no return type would otherwise be read on into the next
+    // declaration and answer for its parameters too.
     const signature = rustSource.match(
-      new RegExp(`(?:async )?fn ${command}\\b([\\s\\S]*?)\\) ->`),
+      new RegExp(`(?:async )?fn ${command}\\b([^)]*)\\)`),
     )?.[1]
     if (signature === undefined) {
       throw new Error(`${command} is not a command in ${RUST_FILE}`)
@@ -800,6 +808,56 @@ describe('the Work Summary call contract', () => {
       'userContent',
     ])
     expect(tsFields).toEqual(rustFields)
+  })
+})
+
+/**
+ * The pause's wire contract, held the way the rest are: the states and the
+ * lengths cross to the Rust side as enums, and a spelling that drifts is a
+ * Tray Menu whose pause items answer nothing — no error, no failed build.
+ * `src-tauri/src/lib.rs` pins the shapes from its side; these hold the
+ * TypeScript half of each pair, and the names the two ends meet under.
+ */
+describe('the pause contract', () => {
+  const desktopSource = read(DESKTOP_FILE)
+  const tauriSource = read('src/platform/tauri-desktop.ts')
+
+  it('spells the three lengths the same on both sides', () => {
+    const rustLengths = rustVariants(rustSource, 'PauseLength').map(kebab)
+
+    expect(rustLengths).toEqual(['an-hour', 'until-tomorrow', 'until-resumed'])
+    expect(tsUnionKinds(desktopSource, 'PauseLength')).toEqual(rustLengths)
+  })
+
+  it('spells the states the controls read the same on both sides', () => {
+    const rustStates = rustVariants(rustSource, 'PauseState').map(kebab)
+
+    expect(rustStates).toEqual(['nothing', 'running', 'paused'])
+    expect(tsUnionKinds(desktopSource, 'PauseState')).toEqual(rustStates)
+  })
+
+  it('carries the state over under the name the command receives it', () => {
+    // The webview sends the whole state under `pauseState`: `state` itself is
+    // this test's name for injected state and is dropped from the arguments
+    // it compares, so a command receiving `state` would take nothing this
+    // sends.
+    const handler = rustSource.match(
+      /invoke_handler\(tauri::generate_handler!\[([\s\S]*?)\]\)/,
+    )?.[1]
+    expect(rustSource).toMatch(
+      /fn show_tray_observing\(app: tauri::AppHandle, pause_state: PauseState\) -> Result<\(\), String>/,
+    )
+    expect(handler).toContain('show_tray_observing')
+    expect(tauriSource).toContain("invoke('show_tray_observing', { pauseState: state })")
+  })
+
+  it('asks the capture window under the event names this side hears', () => {
+    // The tray owns the menu and cannot reach the settings file, so a press
+    // is an ask to the capture window — under the names checked above.
+    expect(rustSource).toContain('OBSERVING_PAUSE_EVENT, PauseRequested { length }')
+    expect(rustSource).toContain('ask_the_capture_window(app, OBSERVING_RESUME_EVENT, ())')
+    expect(tauriSource).toContain('onObservingPauseRequested')
+    expect(tauriSource).toContain('onObservingResumeRequested')
   })
 })
 

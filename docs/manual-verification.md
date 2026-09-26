@@ -41,7 +41,9 @@ Everything else is checked against the release build.
 - [ ] The app launches and stays running with no Dock icon.
 - [ ] `Cmd+Tab` does not list the app.
 - [ ] A tray icon appears in the menu bar.
-- [ ] Clicking the tray icon opens a menu holding **New Note**, **New Task**, **View Notes**, **View Tasks**, **Work Summary**, **Settings**, a separator, **Copy Yesterday's Notes**, a separator and **Quit** — in that order, and nothing else.
+- [ ] Clicking the tray icon opens a menu holding **New Note**, **New Task**, **View Notes**, **View Tasks**, **Work Summary**, **Settings**, **Check for Updates…**, a separator, **Copy Yesterday's Notes**, a separator and **Quit** — in that order. With Observing turned on and a repository listed, the last group before **Quit** also holds **Pause Observing** with **For an Hour**, **Until Tomorrow** and **Until Resumed** under it; with Observing off it is absent entirely.
+- [ ] Opened without clicking it — from the keyboard or VoiceOver — the menu says exactly what a click shows: the live Hotkeys beside the two capture items, and the same pause controls. Take **Pause Observing ▸ For an Hour** from it, open it again the same way, and it reads **Paused until …** with **Resume Observing** under it. Left open while something changes — the pause runs out under it, or a Hotkey is remapped in Settings — the items change where they are and the menu stays open under the reader.
+- [ ] Today's Captured Note count sits beside the glyph and follows the journal — and waits while the Tray Menu is open, which cannot change under a reader. Press the Note Hotkey with the menu open and the app stays up through it. Then close the menu, finish the capture and save the Note: the count is up by one.
 - [ ] **New Note** opens a capture window, with the Note Hotkey spelled out beside the item.
 - [ ] **New Task** opens the Task Creation window, with the Task Hotkey spelled out beside the item.
 - [ ] **View Notes** opens the Main Window, showing History.
@@ -247,6 +249,16 @@ Against a release build and a repository with commits of your own from today.
 - [ ] A prefix such as `Release ` skips a release commit; clearing it lets the commit arrive at the next sweep.
 - [ ] Deleting an Observed Note and waking the machine does not bring it back.
 - [ ] `git status` in the repository is unchanged afterwards: nothing was written to it.
+- [ ] Each repository in the section shows its last Note and when it arrived — `Last: <subject> · 2 h ago` — updated within five minutes of a new commit arriving, with the age in it counting up while the section sits open and read again the moment the section comes back to the screen or the Mac wakes, and "Nothing yet since you turned this on" before the first does. Deleting the last Note of a repository puts the line back on the one before it.
+- [ ] Renaming the repository's folder, or pointing the entry at a path that is not a repository, shows the reason beside that entry — "That folder is gone." / "That folder is not a git repository." — within five minutes, even with Settings left open and nothing pressed. Its commits are simply not added: no alert, no prompt, nothing in the tray, and the other repositories keep producing Notes.
+- [ ] A repository with nothing on its branches yet shows "The default branch of that repository cannot be resolved. Its commits are not being added." and nothing else happens. Within five minutes its first commit takes the line away and appears under **Last**, with Settings left open and nothing pressed.
+- [ ] **Pause Observing ▸ For an Hour** from the Tray Menu toasts nothing and takes the pause: the menu item now reads **Paused until 11:00** with **Resume Observing** under it, and Settings shows the same line with **Resume**.
+- [ ] A commit authored during the pause never arrives — not at the next sweep, not after a resume, and not after quitting and relaunching the app. Commits from before and after the pause do arrive.
+- [ ] A pause **Until Tomorrow** holds through the evening and the night, and the menu and Settings both read "Paused until tomorrow"; after the day turns over, commits arrive again with nothing pressed.
+- [ ] With the Mac asleep through the pause's end, the first menu opened from the keyboard or VoiceOver the next morning offers **Pause Observing** again rather than reading as paused.
+- [ ] A pause **Until Resumed** reads "Paused" with no end and holds across a restart, until **Resume Observing** is chosen — from the Tray Menu or from Settings.
+- [ ] Two pause/resume pairs in one day each keep their own commits out: only the work done outside the pauses arrives.
+- [ ] With Observing turned off, the Tray Menu offers no pause at all.
 
 ## Capture after midnight
 

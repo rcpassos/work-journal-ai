@@ -139,6 +139,7 @@ export default function SettingsView({
             <ObservingSettings
               desktop={desktop}
               settings={settings}
+              journal={journal}
               initialSettings={initialSettings}
             />
 

@@ -101,6 +101,7 @@ describe('the fake commit reader', () => {
         'maintainer@example.com',
         '81316043+rp-pipecodes@users.noreply.github.com',
       ],
+      reason: null,
     })
   })
 
@@ -133,6 +134,36 @@ describe('the fake commit reader', () => {
     expect(await desktop.repositoryIdentities('/gone')).toEqual({
       state: 'unreadable',
       reason: 'missing',
+    })
+  })
+
+  it('reads a repository with nothing resolvable the way the reader does', async () => {
+    // The real reader cannot fail an identities read with `no-head`: it
+    // answers with the suggestions and the reason beside them, and only the
+    // commits read cannot go on. The fake says it the same way, so no test
+    // can put the reason on the wrong call.
+    const desktop = fakeDesktop({
+      repositories: {
+        '/code/fresh': {
+          repository: '/code/fresh/.git',
+          configuredEmail: 'me@example.com',
+          commits: [],
+          noHead: true,
+        },
+      },
+    })
+
+    expect(await desktop.repositoryIdentities('/code/fresh')).toEqual({
+      state: 'read',
+      repository: '/code/fresh/.git',
+      identities: ['me@example.com'],
+      reason: 'no-head',
+    })
+    expect(
+      await desktop.repositoryCommits('/code/fresh', ['me@example.com'], 0),
+    ).toEqual({
+      state: 'unreadable',
+      reason: 'no-head',
     })
   })
 })

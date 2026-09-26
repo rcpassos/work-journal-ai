@@ -41,6 +41,18 @@ const VIEW_NOTES_MENU_ITEM: &str = "view-notes";
 const VIEW_TASKS_MENU_ITEM: &str = "view-tasks";
 const VIEW_WORK_SUMMARY_MENU_ITEM: &str = "view-work-summary";
 const COPY_YESTERDAY_DIGEST_MENU_ITEM: &str = "copy-yesterday-digest";
+
+/// The pause controls of the Tray Menu. The submenu is the pause offered,
+/// its items name the three lengths, and while a pause is in force the pair
+/// is replaced by the status line and the way out of it. Purely this side's
+/// own names: what a press means is `PauseLength`, below.
+const PAUSE_OBSERVING_MENU_ITEM: &str = "pause-observing";
+const PAUSE_AN_HOUR_MENU_ITEM: &str = "pause-an-hour";
+const PAUSE_UNTIL_TOMORROW_MENU_ITEM: &str = "pause-until-tomorrow";
+const PAUSE_UNTIL_RESUMED_MENU_ITEM: &str = "pause-until-resumed";
+const PAUSED_MENU_ITEM: &str = "paused";
+const RESUME_OBSERVING_MENU_ITEM: &str = "resume-observing";
+
 const SETTINGS_MENU_ITEM: &str = "settings";
 const CHECK_FOR_UPDATES_MENU_ITEM: &str = "check-for-updates";
 const MAIN_SETTINGS_MENU_ITEM: &str = "main-settings";
@@ -131,6 +143,19 @@ const TASK_CREATION_SHOWN_EVENT: &str = "task-creation://shown";
 /// `src/platform/desktop-rust.test.ts` checks.
 const COPY_YESTERDAY_DIGEST_EVENT: &str = "digest://yesterday";
 
+/// Asked of the capture window when the Tray Menu wants Observing paused, for
+/// one of the offered lengths — and when it wants it resumed. The same shape
+/// of ask as the Digest above, for the same reason: a pause is an interval in
+/// the settings file and every rule over it belongs to `@/settings/observing`,
+/// so the menu asks and the window that owns the file applies it. Must match
+/// `OBSERVING_PAUSE_EVENT` in `src/platform/desktop.ts`, as
+/// `src/platform/desktop-rust.test.ts` checks.
+const OBSERVING_PAUSE_EVENT: &str = "observing://pause";
+
+/// The other half of the same ask. Must match `OBSERVING_RESUME_EVENT` in
+/// `src/platform/desktop.ts`, as `src/platform/desktop-rust.test.ts` checks.
+const OBSERVING_RESUME_EVENT: &str = "observing://resume";
+
 /// The machine woke from sleep, so anything that looks at the world afresh has
 /// to look again — Import above all, since a lid closed before a meeting ended
 /// would otherwise lose that meeting for good. Must match `SYSTEM_WOKE_EVENT`
@@ -183,11 +208,6 @@ const RESIDENT_WINDOW_WIDTH: f64 = 626.0;
 /// reads, so the preload entry says the same thing in words beside it.
 const DATABASE_URL: &str = "sqlite:work-journal.db";
 
-/// The two Entry Point items of the Tray Menu, held so that remapping either
-/// Hotkey can update the combination shown beside its own item.
-struct NewNoteMenuItem(MenuItem<tauri::Wry>);
-struct NewTaskMenuItem(MenuItem<tauri::Wry>);
-
 /// The section of the Main Window the last Entry Point named, waiting for a
 /// window to claim it.
 ///
@@ -228,6 +248,152 @@ struct CompletedTaskAlert(Mutex<Vec<TaskAlertCompletion>>);
 /// dismisses it for the instance that is actually showing it.
 #[derive(Default)]
 struct OpenedForOnboarding(std::sync::atomic::AtomicBool);
+
+/// How long one pause is offered for, as a press in the Tray Menu carries it
+/// to the capture window. The three the menu and Settings both offer: a timed
+/// pause ends by itself, so it cannot be forgotten, and `until-resumed` holds
+/// until the user says otherwise. Must match `PauseLength` in
+/// `src/platform/desktop.ts`, as `src/platform/desktop-rust.test.ts` checks.
+#[derive(Clone, Copy, Debug, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum PauseLength {
+    AnHour,
+    UntilTomorrow,
+    UntilResumed,
+}
+
+/// What the pause controls read, as the capture window carries it here —
+/// decided there and already said there, because the rules and the words are
+/// `@/settings/observing`'s and this side only puts them in a menu. Must
+/// match `PauseState` in `src/platform/desktop.ts`, as
+/// `src/platform/desktop-rust.test.ts` checks.
+#[derive(Clone, Debug, Default, serde::Deserialize, serde::Serialize)]
+#[serde(tag = "state", rename_all = "kebab-case")]
+pub enum PauseState {
+    /// Nothing is being observed, so the controls stay out of the menu.
+    #[default]
+    Nothing,
+    /// Observing, with no pause in force: the menu offers one.
+    Running,
+    /// Paused until `until` — null while it has no end — with that end
+    /// already said as `label`.
+    Paused {
+        until: Option<f64>,
+        label: String,
+    },
+}
+
+/// What the capture window is asked for when the Tray Menu wants a pause: the
+/// length, and only that. The `{ length }` the `onObservingPauseRequested`
+/// listener reads on the other side.
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PauseRequested {
+    length: PauseLength,
+}
+
+/// What the Tray Menu's Observing controls were last told to read, and what
+/// the pause block is placed against each time the state says to place it.
+/// The only state the tray keeps: the settings file it all comes from is the
+/// webview's.
+#[derive(Default)]
+struct TrayMenuState(Mutex<PauseState>);
+
+/// The pause block of the Tray Menu and the shape it is in the menu right
+/// now. Every item the commands change is kept this way and changed in place:
+/// the menu is built once, and `set_menu` is never called again. An open menu
+/// holds the tray borrowed for the whole life of its tracking session, and
+/// `set_menu` takes the tray mutably — a borrow refused from there is a panic
+/// inside a callback of the system, and the app aborts with it. In place an
+/// open menu also stays open under a keyboard or VoiceOver reader while the
+/// state changes under them.
+struct TrayPauseItems {
+    menu: Menu<tauri::Wry>,
+    separator: PredefinedMenuItem<tauri::Wry>,
+    offer_pause: Submenu<tauri::Wry>,
+    paused_line: MenuItem<tauri::Wry>,
+    resume_observing: MenuItem<tauri::Wry>,
+    /// Which shape the menu holds: each is a block of items of its own, so a
+    /// change takes out what is there before the next one goes in.
+    held: Mutex<PauseShape>,
+}
+
+/// The three answers the pause controls give, as sets of menu items. Which
+/// items appear stays `pause_controls`' decision, made against the clock.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PauseShape {
+    Hidden,
+    Offered,
+    Paused,
+}
+
+/// The New Note item, kept so a remap can move its Hotkey with it — in place,
+/// for the reason the pause block above gives.
+struct NewNoteMenuItem(MenuItem<tauri::Wry>);
+/// The same, for New Task.
+struct NewTaskMenuItem(MenuItem<tauri::Wry>);
+
+/// The count's line beside the glyph, and whether the menu is open: the one
+/// time the tray cannot be changed. `show_menu` holds the tray borrowed for
+/// as long as the menu tracks, and `set_title` takes it mutably — the same
+/// refused borrow, the same panic in a callback of the system. So the count
+/// asked for while the menu is open waits here, and is said the moment the
+/// menu is gone.
+#[derive(Default)]
+struct TrayTitle {
+    open: std::sync::atomic::AtomicBool,
+    waiting: Mutex<Option<String>>,
+}
+
+/// The pause to show at `now_ms` — its already-said line, and only while it
+/// is still in force. A pause with an end runs out on its own, and the moment
+/// the controls are put in place is where that has to be true: a "Paused" line
+/// shown after the pause is over is exactly the forgetting the interval exists
+/// to prevent.
+fn pause_in_force(state: &PauseState, now_ms: f64) -> Option<&str> {
+    match state {
+        PauseState::Paused { until: None, label } => Some(label.as_str()),
+        PauseState::Paused {
+            until: Some(end),
+            label,
+        } if *end > now_ms => Some(label.as_str()),
+        _ => None,
+    }
+}
+
+/// What the pause group of the Tray Menu holds at one instant: the pause
+/// offered, a pause in force — the status line with its end, and the way out
+/// under it — or nothing at all. Which items appear is decided here and
+/// nowhere else, a pure reading of the state against the clock, so the choice
+/// is tested without a menu bar.
+#[derive(Debug, PartialEq)]
+enum PauseControls {
+    /// Observing off, or nothing on the list: the controls would mean nothing.
+    Hidden,
+    /// Observing, with no pause in force: the pause is offered.
+    Offered,
+    /// In force: the status line's own words, then the way out of it.
+    Paused(String),
+}
+
+fn pause_controls(state: &PauseState, now_ms: f64) -> PauseControls {
+    match pause_in_force(state, now_ms) {
+        Some(label) => PauseControls::Paused(label.to_string()),
+        // A pause that has ended reads as ended: Observing is running again,
+        // so the pause is offered again.
+        None if !matches!(state, PauseState::Nothing) => PauseControls::Offered,
+        None => PauseControls::Hidden,
+    }
+}
+
+/// This instant, in the milliseconds the webview counts in — what a pause's
+/// end is compared against.
+fn now_ms() -> f64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_millis() as f64)
+        .unwrap_or(0.0)
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -348,6 +514,7 @@ pub fn run() {
             set_hotkey,
             export_journal,
             show_tray_count,
+            show_tray_observing,
             calendar_access,
             request_calendar_access,
             calendars,
@@ -1334,6 +1501,30 @@ fn hotkey_status(hotkeys: tauri::State<'_, Mutex<Hotkeys>>) -> Result<Hotkeys, S
     Ok(hotkeys.lock().map_err(|_| lost_hotkey())?.clone())
 }
 
+/// One Hotkey moved to another combination, over the two things a change
+/// touches: the map held here, and whatever the change has to be told to —
+/// `then` runs only once the lock is out of the way. That order is the whole
+/// point of the seam: the world being told may read these very Hotkeys again,
+/// and a Rust mutex is not taken twice by one thread. Held across it, that is
+/// a deadlock on the thread the command runs on — the main thread — and every
+/// window hangs with it.
+fn move_hotkey(
+    hotkeys: &Mutex<Hotkeys>,
+    action: HotkeyAction,
+    combination: &str,
+    registrar: &impl hotkey::Registrar,
+    then: impl FnOnce(&Hotkeys) -> Result<(), String>,
+) -> Result<Hotkeys, String> {
+    let next = {
+        let mut held = hotkeys.lock().map_err(|_| lost_hotkey())?;
+        let next = hotkey::remap(&held, action, combination, registrar)?;
+        *held = next.clone();
+        next
+    };
+    then(&next)?;
+    Ok(next)
+}
+
 /// Moves one Hotkey to another combination. A combination the OS refuses — or
 /// one the other Hotkey already holds — is reported as an error and is not
 /// remembered: restoring it on the next run would leave the app with a Hotkey
@@ -1346,32 +1537,31 @@ fn set_hotkey(
     hotkey: String,
 ) -> Result<Hotkeys, String> {
     let registrar = GlobalShortcuts { app: app.clone() };
-    let mut current = hotkeys.lock().map_err(|_| lost_hotkey())?;
-    let next = hotkey::remap(&current, action, &hotkey, &registrar)?;
+    move_hotkey(&hotkeys, action, &hotkey, &registrar, |next| {
+        let store = app.store(SETTINGS_FILE).map_err(|error| error.to_string())?;
+        store.set(hotkey_key(action), next.of(action).hotkey());
+        store.save().map_err(|error| error.to_string())?;
 
-    let store = app.store(SETTINGS_FILE).map_err(|error| error.to_string())?;
-    store.set(hotkey_key(action), next.of(action).hotkey());
-    store.save().map_err(|error| error.to_string())?;
-
-    *current = next.clone();
-    // The Tray Menu spells each Hotkey out beside its own item; a remap that
-    // left one showing the old combination would be worse than showing none.
-    let moved = next.of(action).hotkey();
-    let updated = match action {
-        HotkeyAction::Note => app
-            .state::<NewNoteMenuItem>()
-            .0
-            .set_accelerator(Some(moved)),
-        HotkeyAction::Task => app
-            .state::<NewTaskMenuItem>()
-            .0
-            .set_accelerator(Some(moved)),
-    };
-    if let Err(error) = updated {
-        log::warn!("the Tray Menu kept the old Hotkey: {error}");
-    }
-
-    Ok(next)
+        // The Tray Menu spells each Hotkey out beside its Entry Point, and
+        // the item says the new combination in place: a remap that left one
+        // showing the old would be worse than showing none. In place and
+        // never by swapping the menu, which an open one would not survive.
+        let moved = next.of(action).hotkey();
+        let updated = match action {
+            HotkeyAction::Note => app
+                .state::<NewNoteMenuItem>()
+                .0
+                .set_accelerator(Some(moved)),
+            HotkeyAction::Task => app
+                .state::<NewTaskMenuItem>()
+                .0
+                .set_accelerator(Some(moved)),
+        };
+        if let Err(error) = updated {
+            log::warn!("the Tray Menu kept the old Hotkey: {error}");
+        }
+        Ok(())
+    })
 }
 
 fn lost_hotkey() -> String {
@@ -1714,7 +1904,9 @@ async fn generate_work_summary(
 /// and the tray lives here.
 ///
 /// A missing tray is not worth failing over: the count is a reminder, and the
-/// window that asked for it is in the middle of a Capture.
+/// window that asked for it is in the middle of a Capture. Nor is a change
+/// under an open menu: the tray cannot take it while the menu holds it, so it
+/// waits and is said when the menu closes.
 #[tauri::command]
 fn show_tray_count(app: tauri::AppHandle, title: String) {
     let Some(tray) = app.tray_by_id(TRAY_ID) else {
@@ -1722,9 +1914,37 @@ fn show_tray_count(app: tauri::AppHandle, title: String) {
         return;
     };
 
+    let held = app.state::<TrayTitle>();
+    if held.open.load(std::sync::atomic::Ordering::Relaxed) {
+        if let Ok(mut waiting) = held.waiting.lock() {
+            *waiting = Some(title);
+        }
+        return;
+    }
     if let Err(error) = tray.set_title(Some(title)) {
         log::warn!("the tray kept the old count: {error}");
     }
+}
+
+/// What the Tray Menu's Observing controls should read — decided and already
+/// said by the capture window, which owns the settings file and the rules
+/// over it. Kept for the menu to show, and the menu's own items changed as it
+/// is told: what is in the menu is what a reader who opens it without a click
+/// — VoiceOver, the keyboard — is shown, so a change reaches the menu itself
+/// rather than waiting for the next one to be clicked open.
+#[tauri::command]
+fn show_tray_observing(app: tauri::AppHandle, pause_state: PauseState) -> Result<(), String> {
+    {
+        let held = app.state::<TrayMenuState>();
+        let mut state = held
+            .0
+            .lock()
+            .map_err(|_| "the Tray Menu's state could not be read".to_string())?;
+        *state = pause_state;
+        // Out of this block before what follows: the pause block is placed
+        // from this very state, lock and all.
+    }
+    apply_pause_controls(&app)
 }
 
 /// What the OS allows the app to read of the user's calendars. Asked rather
@@ -2181,21 +2401,63 @@ fn activate_for_tray_menu(app: &tauri::AppHandle) {
 /// A failure is not worth taking the app down for — the clipboard simply keeps
 /// what it had, which is the same thing an empty yesterday does.
 fn copy_yesterday_digest(app: &tauri::AppHandle) {
+    ask_the_capture_window(app, COPY_YESTERDAY_DIGEST_EVENT, ());
+}
+
+/// Asks the capture window to pause Observing for one of the offered lengths.
+/// The pause is an interval in the settings file, written under
+/// `@/settings/observing`'s rules — and this side keeps neither, so the tray
+/// asks exactly as it does for a Digest.
+fn pause_observing(app: &tauri::AppHandle, length: PauseLength) {
+    ask_the_capture_window(app, OBSERVING_PAUSE_EVENT, PauseRequested { length });
+}
+
+/// Asks the capture window to resume Observing: whatever pause is in force
+/// ends now, and what it already excluded stays excluded.
+fn resume_observing(app: &tauri::AppHandle) {
+    ask_the_capture_window(app, OBSERVING_RESUME_EVENT, ());
+}
+
+/// Hands one Tray Menu ask to the capture window — the window that owns the
+/// settings file and the journal, and the one that lives exactly as long as
+/// the tray does, so it is always there to hear it; see
+/// docs/adr/0002-capture-window-is-hidden-never-closed.md. Addressed rather
+/// than broadcast, so no second window acts on one ask. An ask with nowhere
+/// to go is logged and dropped: nothing the menu says is worth prompting
+/// over.
+fn ask_the_capture_window<T: serde::Serialize + Clone>(
+    app: &tauri::AppHandle,
+    event: &str,
+    payload: T,
+) {
     if app.get_webview_window(CAPTURE_WINDOW).is_none() {
-        log::warn!("there is no capture window to render yesterday's Digest");
+        log::warn!("there is no capture window to hear {event}");
         return;
     }
-    // Addressed rather than broadcast: one window answers this, and a second
-    // one hearing it would copy the same Digest twice over the first.
-    if let Err(error) = app.emit_to(CAPTURE_WINDOW, COPY_YESTERDAY_DIGEST_EVENT, ()) {
-        log::warn!("could not ask for yesterday's Digest: {error}");
+    if let Err(error) = app.emit_to(CAPTURE_WINDOW, event, payload) {
+        log::warn!("could not send {event} to the capture window: {error}");
     }
 }
 
-/// The Tray Menu — the Entry Point that always works, and the one Settings
-/// points at when the Hotkey cannot be registered. Quit is here because without
-/// a Dock icon it is the only way out.
-fn build_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
+/// The Tray Menu, as it should read at this moment — changed in its own items
+/// as what it says changes, with the pause block put in place once more as
+/// the menu opens, so the pause controls are the ones the state calls for at
+/// that very instant: a pause that ran out while the menu was shut reads as
+/// ended. The Hotkeys beside the Entry Points say the live ones for a plainer
+/// reason: each follows its own remap.
+///
+/// Never by swapping the menu, though. An open menu holds the tray borrowed
+/// for the whole life of its tracking session, and `set_menu` takes the tray
+/// mutably — a panic inside a callback of the system, and the app aborts with
+/// it. So everything a command changes is kept and managed here, with
+/// somewhere to go: the two Hotkey items' accelerators, and the pause block.
+///
+/// The pause controls sit in their own group, and are absent rather than
+/// greyed when there is nothing to pause: Observing off, or nothing on the
+/// list, is a user who has no business with them. Otherwise the group is the
+/// pause offered, or — while one is in force — the status line with its end
+/// and the way out of it: the three shapes `pause_controls` decides between.
+fn tray_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     // The Hotkey is spelled out next to New Note so the Tray Menu teaches the
     // faster Entry Point. Only when it is actually live: an accelerator beside
     // a combination the OS refused would promise a keystroke that does nothing.
@@ -2229,15 +2491,6 @@ fn build_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
         true,
         None::<&str>,
     )?;
-    // The other half of the loop: what was captured yesterday, ready to paste
-    // into the work log the user owes their chat group every morning.
-    let copy_yesterday = MenuItem::with_id(
-        app,
-        COPY_YESTERDAY_DIGEST_MENU_ITEM,
-        "Copy Yesterday's Notes",
-        true,
-        None::<&str>,
-    )?;
     let settings = MenuItem::with_id(app, SETTINGS_MENU_ITEM, "Settings", true, None::<&str>)?;
     // The update check lives inside Settings, so the Tray Menu takes the user
     // there rather than running a check with nowhere to show the answer.
@@ -2249,27 +2502,169 @@ fn build_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
         None::<&str>,
     )?;
     let readback_separator = PredefinedMenuItem::separator(app)?;
+    // The other half of the loop: what was captured yesterday, ready to paste
+    // into the work log the user owes their chat group every morning.
+    let copy_yesterday = MenuItem::with_id(
+        app,
+        COPY_YESTERDAY_DIGEST_MENU_ITEM,
+        "Copy Yesterday's Notes",
+        true,
+        None::<&str>,
+    )?;
+
+    // The pause controls: the block takes a different shape as the state
+    // does, so all of it is built and kept whether or not the first shape
+    // shows it — what a change takes out has to be here to be taken out.
+    let pause_separator = PredefinedMenuItem::separator(app)?;
+    let an_hour =
+        MenuItem::with_id(app, PAUSE_AN_HOUR_MENU_ITEM, "For an Hour", true, None::<&str>)?;
+    let until_tomorrow = MenuItem::with_id(
+        app,
+        PAUSE_UNTIL_TOMORROW_MENU_ITEM,
+        "Until Tomorrow",
+        true,
+        None::<&str>,
+    )?;
+    let until_resumed = MenuItem::with_id(
+        app,
+        PAUSE_UNTIL_RESUMED_MENU_ITEM,
+        "Until Resumed",
+        true,
+        None::<&str>,
+    )?;
+    let offer_pause = Submenu::with_id_and_items(
+        app,
+        PAUSE_OBSERVING_MENU_ITEM,
+        "Pause Observing",
+        true,
+        &[&an_hour, &until_tomorrow, &until_resumed],
+    )?;
+    // The status line takes the pause's own words when there is a pause.
+    let paused_line = MenuItem::with_id(app, PAUSED_MENU_ITEM, "Paused", false, None::<&str>)?;
+    let resume_observing = MenuItem::with_id(
+        app,
+        RESUME_OBSERVING_MENU_ITEM,
+        "Resume Observing",
+        true,
+        None::<&str>,
+    )?;
+
     let separator = PredefinedMenuItem::separator(app)?;
     let quit = MenuItem::with_id(app, QUIT_MENU_ITEM, "Quit", true, None::<&str>)?;
+
     // Entry Points first, then everything that opens the Main Window on a
-    // section, then the one action that reads back without opening a window,
-    // alone in its group, then out.
-    let menu = Menu::with_items(
-        app,
-        &[
-            &new_note,
-            &new_task,
-            &view_notes,
-            &view_tasks,
-            &view_work_summary,
-            &settings,
-            &check_for_updates,
-            &readback_separator,
-            &copy_yesterday,
-            &separator,
-            &quit,
-        ],
-    )?;
+    // section, then the actions that change or read the journal without
+    // opening a window — copy alone in its group, the pause controls in
+    // theirs — then out. The pause block goes in at the mark below as the
+    // state stands: nothing is paused at startup, so it starts out of the
+    // menu entirely and `apply_pause_controls` places it from then on.
+    let items: Vec<&dyn tauri::menu::IsMenuItem<tauri::Wry>> = vec![
+        &new_note,
+        &new_task,
+        &view_notes,
+        &view_tasks,
+        &view_work_summary,
+        &settings,
+        &check_for_updates,
+        &readback_separator,
+        &copy_yesterday,
+        &separator,
+        &quit,
+    ];
+
+    let menu = Menu::with_items(app, &items)?;
+    app.manage(TrayPauseItems {
+        menu: menu.clone(),
+        separator: pause_separator,
+        offer_pause,
+        paused_line,
+        resume_observing,
+        held: Mutex::new(PauseShape::Hidden),
+    });
+    Ok(menu)
+}
+
+/// The pause block of the Tray Menu, put in place as the state stands —
+/// added, changed in its words, or taken out. Which items appear is
+/// `pause_controls`' decision against the clock and nothing else; this only
+/// places them, and places them in the menu's own items rather than by
+/// swapping the menu, which an open one does not survive.
+fn apply_pause_controls(app: &tauri::AppHandle) -> Result<(), String> {
+    let state = app
+        .state::<TrayMenuState>()
+        .0
+        .lock()
+        .map_err(|_| "the Tray Menu's state could not be read".to_string())?
+        .clone();
+    let control = pause_controls(&state, now_ms());
+    let shape = match &control {
+        PauseControls::Hidden => PauseShape::Hidden,
+        PauseControls::Offered => PauseShape::Offered,
+        PauseControls::Paused(_) => PauseShape::Paused,
+    };
+
+    let held = app.state::<TrayPauseItems>();
+    let mut was = held
+        .held
+        .lock()
+        .map_err(|_| "the Tray Menu's pause block could not be read".to_string())?;
+    if *was != shape {
+        // Each shape is a block of items of its own: what the menu holds
+        // comes out before the next one goes in.
+        let taken_out = match *was {
+            PauseShape::Hidden => Ok(()),
+            PauseShape::Offered => held
+                .menu
+                .remove(&held.offer_pause)
+                .and_then(|_| held.menu.remove(&held.separator)),
+            PauseShape::Paused => held
+                .menu
+                .remove(&held.paused_line)
+                .and_then(|_| held.menu.remove(&held.resume_observing))
+                .and_then(|_| held.menu.remove(&held.separator)),
+        };
+        taken_out.map_err(|error| error.to_string())?;
+        // The block goes before the separator and Quit that close the menu:
+        // two from the end of the list as it now stands, worked out rather
+        // than counted anywhere — so an item added above carries the block
+        // along into the right group.
+        let at = held
+            .menu
+            .items()
+            .map_err(|error| error.to_string())?
+            .len()
+            .saturating_sub(2);
+        let put_in = match shape {
+            PauseShape::Hidden => Ok(()),
+            PauseShape::Offered => held
+                .menu
+                .insert_items(&[&held.separator, &held.offer_pause], at),
+            PauseShape::Paused => held.menu.insert_items(
+                &[&held.separator, &held.paused_line, &held.resume_observing],
+                at,
+            ),
+        };
+        put_in.map_err(|error| error.to_string())?;
+        *was = shape;
+    }
+    // The words can move while the shape does not: a pause's end is said in
+    // its own line, and that line follows it.
+    if let PauseControls::Paused(label) = control {
+        held.paused_line
+            .set_text(label)
+            .map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
+/// The Tray Menu — the Entry Point that always works, and the one Settings
+/// points at when the Hotkey cannot be registered. Quit is here because without
+/// a Dock icon it is the only way out.
+fn build_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
+    // The state the menu reads as it opens, written by `show_tray_observing`.
+    app.manage(TrayMenuState::default());
+    app.manage(TrayTitle::default());
+    let menu = tray_menu(app)?;
 
     // tray-icon opens the menu from `mouseDown` via `performClick`. On an
     // Accessory app that has never been active, that same click also activates
@@ -2290,7 +2685,26 @@ fn build_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
             };
             #[cfg(target_os = "macos")]
             activate_for_tray_menu(tray.app_handle());
+            // What the state became since the last time is put in place
+            // first: the menu is read at the moment it is opened.
+            if let Err(error) = apply_pause_controls(tray.app_handle()) {
+                log::warn!("the Tray Menu kept the state it had: {error}");
+            }
+            // From here until this returns the tray is borrowed by the open
+            // menu and cannot be changed — the count would be refused it, and
+            // a refused borrow is a panic inside this callback of the system.
+            // So it waits, and is said below the moment the menu is gone.
+            let busy = tray.app_handle().state::<TrayTitle>();
+            busy.open.store(true, std::sync::atomic::Ordering::Relaxed);
             let _ = tray.with_inner_tray_icon(|inner| inner.show_menu());
+            busy.open.store(false, std::sync::atomic::Ordering::Relaxed);
+            if let Ok(mut waiting) = busy.waiting.lock() {
+                if let Some(title) = waiting.take() {
+                    if let Err(error) = tray.set_title(Some(title)) {
+                        log::warn!("the tray kept the old count: {error}");
+                    }
+                }
+            };
         })
         .on_menu_event(|app, event| match event.id().as_ref() {
             NEW_NOTE_MENU_ITEM => start_capture(app),
@@ -2299,6 +2713,12 @@ fn build_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
             VIEW_TASKS_MENU_ITEM => open_main_window(app, Some(TASKS_SECTION)),
             VIEW_WORK_SUMMARY_MENU_ITEM => open_main_window(app, Some(WORK_SUMMARY_SECTION)),
             COPY_YESTERDAY_DIGEST_MENU_ITEM => copy_yesterday_digest(app),
+            PAUSE_AN_HOUR_MENU_ITEM => pause_observing(app, PauseLength::AnHour),
+            PAUSE_UNTIL_TOMORROW_MENU_ITEM => {
+                pause_observing(app, PauseLength::UntilTomorrow)
+            }
+            PAUSE_UNTIL_RESUMED_MENU_ITEM => pause_observing(app, PauseLength::UntilResumed),
+            RESUME_OBSERVING_MENU_ITEM => resume_observing(app),
             SETTINGS_MENU_ITEM | CHECK_FOR_UPDATES_MENU_ITEM => open_settings(app),
             QUIT_MENU_ITEM => app.exit(0),
             _ => {}
@@ -2372,5 +2792,151 @@ mod tests {
             rendered,
             serde_json::json!({"outcome": "submitted", "journalDay": "2026-03-12"})
         );
+    }
+
+    /// A pause with an end is over once that end has passed — decided as the
+    /// menu opens, which is the only moment it has to be true. A drift here
+    /// is a "Paused" line shown after the pause is over: exactly the
+    /// forgetting the interval exists to prevent.
+    #[test]
+    fn the_menu_reads_a_pause_only_while_it_is_in_force() {
+        let timed = PauseState::Paused {
+            until: Some(1_000.0),
+            label: "Paused until 11:00 AM".into(),
+        };
+        assert_eq!(pause_in_force(&timed, 999.0), Some("Paused until 11:00 AM"));
+        assert_eq!(pause_in_force(&timed, 1_000.0), None);
+
+        let open = PauseState::Paused {
+            until: None,
+            label: "Paused".into(),
+        };
+        assert_eq!(pause_in_force(&open, 1_000_000.0), Some("Paused"));
+
+        assert_eq!(pause_in_force(&PauseState::Running, 0.0), None);
+        assert_eq!(pause_in_force(&PauseState::Nothing, 0.0), None);
+    }
+
+    /// Which items the pause group holds at one instant — the choice itself,
+    /// tested without a menu bar: nothing to pause, the pause offered, a pause
+    /// in force with its end already said and the way out under it, and a
+    /// pause that has ended reading as ended rather than showing a "Paused"
+    /// line over an end that has passed.
+    #[test]
+    fn the_pause_items_follow_the_state_against_the_clock() {
+        let timed = PauseState::Paused {
+            until: Some(1_000.0),
+            label: "Paused until 11:00 AM".into(),
+        };
+        let open = PauseState::Paused {
+            until: None,
+            label: "Paused".into(),
+        };
+
+        assert_eq!(
+            pause_controls(&PauseState::Nothing, 0.0),
+            PauseControls::Hidden
+        );
+        assert_eq!(
+            pause_controls(&PauseState::Running, 0.0),
+            PauseControls::Offered
+        );
+        assert_eq!(
+            pause_controls(&timed, 999.0),
+            PauseControls::Paused("Paused until 11:00 AM".into())
+        );
+        assert_eq!(
+            pause_controls(&open, 999.0),
+            PauseControls::Paused("Paused".into())
+        );
+        // The end has passed: Observing is running again, and the pause is
+        // offered again.
+        assert_eq!(pause_controls(&timed, 1_000.0), PauseControls::Offered);
+    }
+
+    /// Changing a Hotkey, through the unit `set_hotkey` is built on. What
+    /// comes after the change — persisting it, and the Tray Menu's item
+    /// saying it — reads these very Hotkeys, exactly as the menu does, and
+    /// must find the lock free to do so. Held across it, that is a deadlock
+    /// on the command's thread — the main thread — and a whole app that
+    /// hangs: this says so in milliseconds instead.
+    #[test]
+    fn a_hotkey_change_gives_up_the_lock_before_the_world_is_told() {
+        struct Accepting;
+        impl hotkey::Registrar for Accepting {
+            fn register(&self, _action: HotkeyAction, _hotkey: &str) -> Result<(), String> {
+                Ok(())
+            }
+            fn unregister(&self, _hotkey: &str) {}
+        }
+
+        let hotkeys = Mutex::new(hotkey::register_both(
+            hotkey::DEFAULT_NOTE_HOTKEY,
+            hotkey::DEFAULT_TASK_HOTKEY,
+            &Accepting,
+        ));
+
+        let next = move_hotkey(
+            &hotkeys,
+            HotkeyAction::Note,
+            "Ctrl+Shift+Cmd+K",
+            &Accepting,
+            |next| {
+                let reread = hotkeys
+                    .try_lock()
+                    .expect("the change was told with the Hotkeys lock still held");
+                assert_eq!(*reread, *next);
+                Ok(())
+            },
+        )
+        .expect("a combination nothing else holds must be taken");
+
+        assert_eq!(next.of(HotkeyAction::Note).hotkey(), "Ctrl+Shift+Cmd+K");
+        assert_eq!(
+            next.of(HotkeyAction::Task).hotkey(),
+            hotkey::DEFAULT_TASK_HOTKEY
+        );
+    }
+
+    /// The pause wire shapes, pinned as serde reads and writes them — the
+    /// states the webview sends under `pauseState`, and the lengths a press
+    /// travels back under as `{ length }`.
+    #[test]
+    fn the_pause_states_spell_themselves_the_way_the_webview_does() {
+        let paused: PauseState =
+            serde_json::from_str(r#"{"state":"paused","until":1000.0,"label":"Paused"}"#)
+                .expect("a paused state must deserialize");
+        let PauseState::Paused { until, label } = paused else {
+            panic!("a paused state must read back as paused");
+        };
+        assert_eq!(until, Some(1000.0));
+        assert_eq!(label, "Paused");
+
+        let nothing: PauseState =
+            serde_json::from_str(r#"{"state":"nothing"}"#).expect("must deserialize");
+        let running: PauseState =
+            serde_json::from_str(r#"{"state":"running"}"#).expect("must deserialize");
+        assert!(matches!(nothing, PauseState::Nothing));
+        assert!(matches!(running, PauseState::Running));
+
+        assert_eq!(
+            serde_json::to_value(&PauseState::Paused {
+                until: None,
+                label: "Paused".into()
+            })
+            .expect("must serialize"),
+            serde_json::json!({"state": "paused", "until": null, "label": "Paused"})
+        );
+
+        for (length, name) in [
+            (PauseLength::AnHour, "an-hour"),
+            (PauseLength::UntilTomorrow, "until-tomorrow"),
+            (PauseLength::UntilResumed, "until-resumed"),
+        ] {
+            assert_eq!(
+                serde_json::to_value(PauseRequested { length }).expect("must serialize"),
+                serde_json::json!({"length": name})
+            );
+        }
     }
 }

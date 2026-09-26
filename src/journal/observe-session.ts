@@ -6,8 +6,9 @@
  * the settings and a clock, and looking on the same occasions — and apart
  * from it because the two answer to different rules about time. Meetings are
  * today-only; commits are the last seven days, and only inside an interval
- * the user consented to, filtered by when the work happened and never by when
- * a sweep found it. See docs/adr/0011-imported-meetings-are-today-only.md.
+ * the user consented to and outside every pause, filtered by when the work
+ * happened and never by when a sweep found it. See
+ * docs/adr/0011-imported-meetings-are-today-only.md.
  * Which commits count is `commitsToObserve`; what an Observe writes is
  * `Journal.observe`. What lives here is *when* to look.
  *
@@ -23,8 +24,8 @@ import type { Commit, Desktop } from '@/platform/desktop'
 import type { AppSettings } from '@/settings/app-settings'
 import {
   OBSERVE_LOOKBACK_MS,
-  consentedAt,
   ignoredSubject,
+  observedAt,
   type ObservedRepository,
   type Observing,
 } from '@/settings/observing'
@@ -48,11 +49,12 @@ export interface ObserveSession {
 }
 
 /**
- * The commits from one listed repository that become Notes: consented to at
- * the instant they were authored, not skipped by a prefix the user wrote, and
- * with a subject to say. A skipped commit becomes nothing at all — no Note and
- * no handled row — so removing its prefix lets it arrive within the lookback.
- * Always Unfiled: nothing is ever inferred from a path.
+ * The commits from one listed repository that become Notes: observed at the
+ * instant they were authored — consented to, and not inside a pause — not
+ * skipped by a prefix the user wrote, and with a subject to say. A skipped
+ * commit becomes nothing at all — no Note and no handled row — so removing
+ * its prefix lets it arrive within the lookback. Always Unfiled: nothing is
+ * ever inferred from a path.
  */
 export function commitsToObserve({
   observing,
@@ -67,7 +69,7 @@ export function commitsToObserve({
     .filter(
       ({ subject, authoredAt }) =>
         subject.trim() !== '' &&
-        consentedAt(observing, listed.repository, authoredAt) &&
+        observedAt(observing, listed.repository, authoredAt) &&
         !ignoredSubject(listed.ignoredPrefixes, subject),
     )
     .map(({ hash, subject, authoredAt }) => ({
@@ -101,6 +103,12 @@ export function createObserveSession({
   // each see it unhandled. The late one is dropped; the next trigger finds
   // whatever it would have.
   let sweeping = false
+  // What each listed repository last read as — read, or unreadable and why —
+  // so a sweep speaks only when one of them moves. The settings rows' reason
+  // lines follow this and nothing else: a folder that goes away, or a first
+  // commit that becomes no Note, leaves the journal silent about both, and
+  // the sweep is the only thing that sees either happen.
+  const readAs: Record<string, string> = {}
 
   /**
    * One look at every listed repository. A repository that cannot be read is
@@ -117,19 +125,32 @@ export function createObserveSession({
 
       const since = clock.now().getTime() - OBSERVE_LOOKBACK_MS
       let observed = 0
+      let moved = false
       for (const listed of observing.repositories) {
-        // No identity ticked is nobody's commits: nothing to ask `git` for.
-        if (listed.identities.length === 0) continue
         try {
+          // Every listed repository is read, identities or not: what it reads
+          // as — gone, not a repository, nothing on its branches yet — moves
+          // whatever the journal does. With nobody ticked the read answers
+          // with no commits and only this to say.
           const read = await desktop.repositoryCommits(
             listed.path,
             listed.identities,
             since,
           )
+          const reads = read.state === 'read' ? 'read' : read.reason
+          if (listed.path in readAs && readAs[listed.path] !== reads) moved = true
+          readAs[listed.path] = reads
           if (read.state !== 'read') continue
 
           const core = await journal
-          for (const event of commitsToObserve({ observing, listed, commits: read.commits })) {
+          // Written oldest first, the way the reader does not answer: what
+          // one sweep brings arrives together, and its arrival is the moment
+          // each was written down — so writing them the other way round from
+          // the walk leaves one sweep's arrival order the work's own, and "the
+          // last Note to arrive" names the newest produced of them either
+          // way. See `SELECT_LAST_COMMIT_NOTE`.
+          const events = commitsToObserve({ observing, listed, commits: read.commits })
+          for (const event of events.toReversed()) {
             if (!running) return
             // Per commit, so one the journal refuses never stops the ones
             // behind it — on this sweep and on every sweep after it.
@@ -148,6 +169,13 @@ export function createObserveSession({
       // Filter, and a sweep has nothing to say about the user.
       if (observed > 0) {
         await desktop.announceJournalChanged()
+      }
+      // What a repository reads as moving is not the journal moving, and said
+      // apart: a row reads its repository again on this and on nothing the
+      // journal says — every Capture making one read git again was the cost
+      // of saying it together.
+      if (moved) {
+        await desktop.announceRepositoryStateChanged()
       }
     } catch (error) {
       console.error('could not observe commits', error)

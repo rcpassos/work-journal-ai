@@ -17,6 +17,8 @@ import type {
   IdentitiesRead,
   MainSection,
   OnboardingState,
+  PauseLength,
+  PauseState,
   PracticeEnded,
   RepositoryUnreadable,
   WorkSummaryRequest,
@@ -34,13 +36,26 @@ export interface FakeCommit extends Omit<Commit, 'repository'> {
 /**
  * A repository the fake reader can read: its identity, the address
  * `git config user.email` would answer with, and its first-parent history,
- * newest first — what the real reader walks, already walked.
+ * newest first — what the real reader walks, already walked. `noHead` is a
+ * repository with nothing resolvable at any ref yet: the suggestions are
+ * still read, with the reason beside them, and the commits read says why
+ * there are none — exactly as `Git::tip` answering `None` does in
+ * `src-tauri/src/commits.rs`.
  */
 export interface FakeRepository {
   repository: string
   configuredEmail?: string
   commits: FakeCommit[]
+  noHead?: boolean
 }
+
+/**
+ * Why a path cannot be read at all, as the fake answers it. `no-head` is not
+ * one of these — the real reader cannot fail an identities read with it,
+ * which is a `FakeRepository` carrying `noHead` instead — so a test cannot
+ * put a reason on the wrong call.
+ */
+export type FakeUnreadablePath = Exclude<RepositoryUnreadable, 'no-head'>
 
 /**
  * The desktop a test runs on: the same surface, in memory. Announcements are
@@ -113,10 +128,20 @@ export interface FakeDesktop extends Desktop {
   fits: CaptureFit[]
   /** What is beside the menu bar glyph; null until something is put there. */
   trayTitle: string | null
+  /**
+   * What the Tray Menu's Observing controls were last told to read; null
+   * until something is put there. Writable, so a test can start from a state
+   * a previous window had already pushed.
+   */
+  trayObserving: PauseState | null
   /** What is on the clipboard; null until something is copied there. */
   clipboard: string | null
   /** The Tray Menu asks for yesterday's Digest. */
   requestYesterdayDigest(): void
+  /** The Tray Menu asks for Observing to be paused, for one of its lengths. */
+  requestObservingPause(length: PauseLength): void
+  /** The Tray Menu asks for Observing to be resumed. */
+  requestObservingResume(): void
   /** The machine wakes from sleep. */
   wake(): void
   /** Whether the caller's window is on screen, as the OS would report it. */
@@ -215,7 +240,7 @@ export interface FakeDesktop extends Desktop {
    * What is on disk, by path: a repository, or why the path is not one that
    * can be read. A path not here is missing. Writable, as a disk is.
    */
-  repositories: Record<string, FakeRepository | RepositoryUnreadable>
+  repositories: Record<string, FakeRepository | FakeUnreadablePath>
   /** The folder the next picker answers with; null is a cancel. */
   chosenFolder: string | null
 }
@@ -260,7 +285,7 @@ export function fakeDesktop({
   apiKey?: string | null
   /** Whether the Keychain is locked, or the prompt was refused. */
   keychainRefuses?: boolean
-  repositories?: Record<string, FakeRepository | RepositoryUnreadable>
+  repositories?: Record<string, FakeRepository | FakeUnreadablePath>
 } = {}): FakeDesktop {
   const captureShown = subscribers<boolean>()
   const windowBlurred = subscribers<void>()
@@ -269,10 +294,13 @@ export function fakeDesktop({
   const systemWoke = subscribers<void>()
   const importChanged = subscribers<void>()
   const observingChanged = subscribers<void>()
+  const observingPauseRequested = subscribers<PauseLength>()
+  const observingResumeRequested = subscribers<void>()
   const yesterdayDigestRequested = subscribers<void>()
   const noteCaptured = subscribers<string>()
   const practiceEnded = subscribers<PracticeEnded>()
   const journalChanged = subscribers<void>()
+  const repositoryStateChanged = subscribers<void>()
   const themeChanged = subscribers<Theme>()
   const windowFocused = subscribers<void>()
   const closeRequested = subscribers<void>()
@@ -297,6 +325,7 @@ export function fakeDesktop({
     revealFails: false,
     fits: [],
     trayTitle: null,
+    trayObserving: null,
     clipboard: null,
     access,
     prompted: false,
@@ -334,6 +363,8 @@ export function fakeDesktop({
     beginCapture: () => captureShown.announce(false),
     showTaskCreation: () => taskCreationShown.announce(undefined),
     requestYesterdayDigest: () => yesterdayDigestRequested.announce(undefined),
+    requestObservingPause: (length) => observingPauseRequested.announce(length),
+    requestObservingResume: () => observingResumeRequested.announce(undefined),
     wake: () => systemWoke.announce(undefined),
 
     windowLabel: () => 'main',
@@ -528,6 +559,9 @@ export function fakeDesktop({
     repositoryCommits: async (path, identities, since): Promise<CommitsRead> => {
       const found = desktop.repositories[path] ?? 'missing'
       if (typeof found === 'string') return { state: 'unreadable', reason: found }
+      // Nothing resolvable at any ref: the reason the reader gives, and no
+      // commits to read under it.
+      if (found.noHead) return { state: 'unreadable', reason: 'no-head' }
 
       // Matched on the whole address regardless of case, as the reader does.
       const named = new Set(identities.map((identity) => identity.toLowerCase()))
@@ -570,12 +604,19 @@ export function fakeDesktop({
         state: 'read',
         repository: found.repository,
         identities: [...identities.values()],
+        // Beside the suggestions, as the reader answers: a repository with
+        // nothing resolvable is still worth asking who the user is.
+        reason: found.noHead ? 'no-head' : null,
       }
     },
 
     chooseRepositoryFolder: async () => desktop.chosenFolder,
     announceObservingChanged: async () => observingChanged.announce(undefined),
     onObservingChanged: async (handle) => observingChanged.add(handle),
+    onObservingPauseRequested: async (handle) =>
+      observingPauseRequested.add(handle),
+    onObservingResumeRequested: async (handle) =>
+      observingResumeRequested.add(handle),
 
     onSystemWoke: async (handle) => systemWoke.add(handle),
     announceImportChanged: async () => importChanged.announce(undefined),
@@ -585,6 +626,8 @@ export function fakeDesktop({
     onNoteCaptured: async (handle) => noteCaptured.add(handle),
     announceJournalChanged: async () => journalChanged.announce(undefined),
     onJournalChanged: async (handle) => journalChanged.add(handle),
+    announceRepositoryStateChanged: async () => repositoryStateChanged.announce(undefined),
+    onRepositoryStateChanged: async (handle) => repositoryStateChanged.add(handle),
     announceTheme: async (theme) => themeChanged.announce(theme),
     onThemeChanged: async (handle) => themeChanged.add(handle),
 
@@ -694,6 +737,10 @@ export function fakeDesktop({
 
     showTrayCount: async (title) => {
       desktop.trayTitle = title
+    },
+
+    showTrayObserving: async (state) => {
+      desktop.trayObserving = state
     },
   }
 

@@ -147,6 +147,24 @@ export const TASK_CREATION_SHOWN_EVENT = 'task-creation://shown'
 export const COPY_YESTERDAY_DIGEST_EVENT = 'digest://yesterday'
 
 /**
+ * The Tray Menu asked for Observing to be paused, for one of the offered
+ * lengths. Spoken by the Rust side for the reason yesterday's Digest is: the
+ * menu is Rust's, but a pause is an interval in the settings store and every
+ * rule over it is `@/settings/observing`'s, so the tray asks and a window
+ * applies it. Must match `OBSERVING_PAUSE_EVENT` in `src-tauri/src/lib.rs`,
+ * as `src/platform/desktop-rust.test.ts` checks.
+ */
+export const OBSERVING_PAUSE_EVENT = 'observing://pause'
+
+/**
+ * The Tray Menu asked for Observing to be resumed: whatever pause is in
+ * force ends now, and work done from here arrives again. Must match
+ * `OBSERVING_RESUME_EVENT` in `src-tauri/src/lib.rs`, as
+ * `src/platform/desktop-rust.test.ts` checks.
+ */
+export const OBSERVING_RESUME_EVENT = 'observing://resume'
+
+/**
  * What sits under the Capture field right now, and so how tall the window has
  * to be. Both parts grow the window rather than sharing the field's room: the
  * Body being predicted for, or refused, has to stay in sight and stay editable.
@@ -318,6 +336,16 @@ export const JOURNAL_CHANGED_EVENT = 'journal://changed'
  * Note is corrected, and vice versa.
  */
 export const TASKS_CHANGED_EVENT = 'tasks://changed'
+
+/**
+ * One of the listed repositories changed what it reads as: read, or unreadable
+ * and why. The journal says nothing about this — a folder that goes away, or a
+ * first commit that becomes no Note, changes nothing in it — so the sweep says
+ * it instead, and a settings row reads its repository again. Separate from
+ * `JOURNAL_CHANGED_EVENT` because the two answer different questions: what
+ * arrived in the journal, and what the sources say about themselves.
+ */
+export const REPOSITORY_STATE_CHANGED_EVENT = 'repository://state'
 
 /**
  * The user clicked a Task Alert. Spoken by the Rust side, which is the only
@@ -532,13 +560,46 @@ export type CommitsRead =
   | { state: 'unreadable'; reason: RepositoryUnreadable }
 
 /**
- * Who might be the user in one repository, or why it could not be asked. Must
+ * Who might be the user in one repository, or why it could not be asked —
+ * and, beside the suggestions, why nothing can be read from it yet when that
+ * is so. `no-head` is the one reason a repository that was read can carry,
+ * beside suggestions that are still worth offering, and this is the read
+ * Settings makes — the sweep's own answer never reaches the section. Must
  * match `IdentitiesRead` in `src-tauri/src/commits.rs`, as
  * `src/platform/desktop-rust.test.ts` checks.
  */
 export type IdentitiesRead =
-  | { state: 'read'; repository: string; identities: string[] }
+  | {
+      state: 'read'
+      repository: string
+      identities: string[]
+      reason: RepositoryUnreadable | null
+    }
   | { state: 'unreadable'; reason: RepositoryUnreadable }
+
+/**
+ * How long one pause is offered for. A timed pause ends by itself — so it
+ * cannot be forgotten — and `until-resumed` holds until the user says
+ * otherwise. The three the Tray Menu and Settings both offer. Must match
+ * `PauseLength` in `src-tauri/src/lib.rs`, as
+ * `src/platform/desktop-rust.test.ts` checks.
+ */
+export type PauseLength =
+  | 'an-hour'
+  | 'until-tomorrow'
+  | 'until-resumed'
+
+/**
+ * What the pause controls say at one instant, carried to the Tray Menu
+ * already decided and already said: the rules and the words are
+ * `@/settings/observing`'s, and this only carries them across to the menu,
+ * which is Rust's. Must match `PauseState` in `src-tauri/src/lib.rs`, as
+ * `src/platform/desktop-rust.test.ts` checks.
+ */
+export type PauseState =
+  | { state: 'nothing' }
+  | { state: 'running' }
+  | { state: 'paused'; until: number | null; label: string }
 
 export interface Desktop {
   /** Which window this bundle is running in; empty outside the desktop app. */
@@ -807,6 +868,14 @@ export interface Desktop {
   chooseRepositoryFolder(): Promise<string | null>
   announceObservingChanged(): Promise<void>
   onObservingChanged(handle: () => void): Promise<Unlisten>
+  /**
+   * The Tray Menu asked for Observing to be paused — `PauseLength` says for
+   * how long. Heard by the capture window, which owns the settings file the
+   * pause is written to.
+   */
+  onObservingPauseRequested(handle: (length: PauseLength) => void): Promise<Unlisten>
+  /** The Tray Menu asked for Observing to be resumed. Same path, same answer. */
+  onObservingResumeRequested(handle: () => void): Promise<Unlisten>
   /** The machine woke from sleep: whatever was missed is worth looking for. */
   onSystemWoke(handle: () => void): Promise<Unlisten>
   announceImportChanged(): Promise<void>
@@ -816,6 +885,8 @@ export interface Desktop {
   onNoteCaptured(handle: (journalDay: string) => void): Promise<Unlisten>
   announceJournalChanged(): Promise<void>
   onJournalChanged(handle: () => void): Promise<Unlisten>
+  announceRepositoryStateChanged(): Promise<void>
+  onRepositoryStateChanged(handle: () => void): Promise<Unlisten>
   announceTheme(theme: Theme): Promise<void>
   onThemeChanged(handle: (theme: Theme) => void): Promise<Unlisten>
 
@@ -957,4 +1028,14 @@ export interface Desktop {
    * only — elsewhere the glyph stands alone and this does nothing.
    */
   showTrayCount(title: string): Promise<void>
+
+  /**
+   * What the Tray Menu's Observing controls read, carried across the same way
+   * the count is: decided by `@/settings/observing`, said there, and only
+   * delivered here. The menu's own items are changed as it is carried — what
+   * is in the menu is what a reader who opens it without a click is shown —
+   * so what this last carried has to be true of the moment: a pause that runs
+   * out is carried again as it ends, and again when the Mac wakes from sleep.
+   */
+  showTrayObserving(state: PauseState): Promise<void>
 }
