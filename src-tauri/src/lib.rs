@@ -292,9 +292,10 @@ struct PauseRequested {
     length: PauseLength,
 }
 
-/// What the Tray Menu's Observing controls were last told to read, waiting
-/// for the menu to open and show it. The only state the tray keeps: the
-/// settings file it all comes from is the webview's.
+/// What the Tray Menu's Observing controls were last told to read, and what
+/// the pause block is placed against each time the state says to place it.
+/// The only state the tray keeps: the settings file it all comes from is the
+/// webview's.
 #[derive(Default)]
 struct TrayMenuState(Mutex<PauseState>);
 
@@ -346,8 +347,9 @@ struct TrayTitle {
 
 /// The pause to show at `now_ms` — its already-said line, and only while it
 /// is still in force. A pause with an end runs out on its own, and the moment
-/// the menu is built is where that has to be true: a "Paused" line shown after
-/// the pause is over is exactly the forgetting the interval exists to prevent.
+/// the controls are put in place is where that has to be true: a "Paused" line
+/// shown after the pause is over is exactly the forgetting the interval exists
+/// to prevent.
 fn pause_in_force(state: &PauseState, now_ms: f64) -> Option<&str> {
     match state {
         PauseState::Paused { until: None, label } => Some(label.as_str()),
@@ -2582,108 +2584,6 @@ fn tray_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     Ok(menu)
 }
 
-/// One item of the pause block, by name: which items belong to which of its
-/// shapes is decided as these, and only the tray turns a name into a menu
-/// item.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum PausePiece {
-    Separator,
-    OfferPause,
-    PausedLine,
-    Resume,
-}
-
-impl PausePiece {
-    fn name(self) -> &'static str {
-        match self {
-            PausePiece::Separator => "the pause separator",
-            PausePiece::OfferPause => "Pause Observing",
-            PausePiece::PausedLine => "the paused line",
-            PausePiece::Resume => "Resume Observing",
-        }
-    }
-}
-
-impl PauseShape {
-    /// This shape's items, in their order — the block whole, always.
-    fn block(self) -> &'static [PausePiece] {
-        match self {
-            PauseShape::Hidden => &[],
-            PauseShape::Offered => &[PausePiece::Separator, PausePiece::OfferPause],
-            PauseShape::Paused => {
-                &[PausePiece::Separator, PausePiece::PausedLine, PausePiece::Resume]
-            }
-        }
-    }
-}
-
-/// What a pause block is placed in: the Tray Menu in the app, and in the
-/// tests a list of item names. Three questions are all the block asks of one
-/// — how many items it holds, one of its own out, and its own items in at a
-/// position — so the switching is written once over them.
-trait PauseBlockHost {
-    fn items(&self) -> Result<usize, String>;
-    fn take_out(&self, piece: PausePiece) -> Result<(), String>;
-    fn put_in(&self, pieces: &[PausePiece], at: usize) -> Result<(), String>;
-}
-
-/// The pause block placed in `host` as `shape` says: the whole block it holds
-/// out, the whole new one in — at the block's place, which is worked out from
-/// how many items there are rather than counted: before the separator and
-/// Quit that close the menu, whatever else sits above. A mistake here is a
-/// doubled separator or a pause group split across the menu, so the switching
-/// is decided over names and tested over names, with no menu bar to watch.
-fn place_pause_block(
-    host: &impl PauseBlockHost,
-    was: PauseShape,
-    shape: PauseShape,
-) -> Result<(), String> {
-    if was == shape {
-        return Ok(());
-    }
-    for piece in was.block() {
-        host.take_out(*piece)?;
-    }
-    let at = host.items()?.saturating_sub(2);
-    host.put_in(shape.block(), at)
-}
-
-impl PauseBlockHost for TrayPauseItems {
-    fn items(&self) -> Result<usize, String> {
-        self.menu
-            .items()
-            .map(|items| items.len())
-            .map_err(|error| error.to_string())
-    }
-
-    fn take_out(&self, piece: PausePiece) -> Result<(), String> {
-        let taken_out = match piece {
-            PausePiece::Separator => self.menu.remove(&self.separator),
-            PausePiece::OfferPause => self.menu.remove(&self.offer_pause),
-            PausePiece::PausedLine => self.menu.remove(&self.paused_line),
-            PausePiece::Resume => self.menu.remove(&self.resume_observing),
-        };
-        taken_out.map_err(|error| format!("{} could not come out: {error}", piece.name()))
-    }
-
-    fn put_in(&self, pieces: &[PausePiece], at: usize) -> Result<(), String> {
-        let items: Vec<&dyn tauri::menu::IsMenuItem<tauri::Wry>> = pieces
-            .iter()
-            .map(|piece| match piece {
-                PausePiece::Separator => {
-                    &self.separator as &dyn tauri::menu::IsMenuItem<tauri::Wry>
-                }
-                PausePiece::OfferPause => &self.offer_pause,
-                PausePiece::PausedLine => &self.paused_line,
-                PausePiece::Resume => &self.resume_observing,
-            })
-            .collect();
-        self.menu
-            .insert_items(&items, at)
-            .map_err(|error| format!("the pause block could not go in: {error}"))
-    }
-}
-
 /// The pause block of the Tray Menu, put in place as the state stands —
 /// added, changed in its words, or taken out. Which items appear is
 /// `pause_controls`' decision against the clock and nothing else; this only
@@ -2708,8 +2608,45 @@ fn apply_pause_controls(app: &tauri::AppHandle) -> Result<(), String> {
         .held
         .lock()
         .map_err(|_| "the Tray Menu's pause block could not be read".to_string())?;
-    place_pause_block(&*held, *was, shape)?;
-    *was = shape;
+    if *was != shape {
+        // Each shape is a block of items of its own: what the menu holds
+        // comes out before the next one goes in.
+        let taken_out = match *was {
+            PauseShape::Hidden => Ok(()),
+            PauseShape::Offered => held
+                .menu
+                .remove(&held.offer_pause)
+                .and_then(|_| held.menu.remove(&held.separator)),
+            PauseShape::Paused => held
+                .menu
+                .remove(&held.paused_line)
+                .and_then(|_| held.menu.remove(&held.resume_observing))
+                .and_then(|_| held.menu.remove(&held.separator)),
+        };
+        taken_out.map_err(|error| error.to_string())?;
+        // The block goes before the separator and Quit that close the menu:
+        // two from the end of the list as it now stands, worked out rather
+        // than counted anywhere — so an item added above carries the block
+        // along into the right group.
+        let at = held
+            .menu
+            .items()
+            .map_err(|error| error.to_string())?
+            .len()
+            .saturating_sub(2);
+        let put_in = match shape {
+            PauseShape::Hidden => Ok(()),
+            PauseShape::Offered => held
+                .menu
+                .insert_items(&[&held.separator, &held.offer_pause], at),
+            PauseShape::Paused => held.menu.insert_items(
+                &[&held.separator, &held.paused_line, &held.resume_observing],
+                at,
+            ),
+        };
+        put_in.map_err(|error| error.to_string())?;
+        *was = shape;
+    }
     // The words can move while the shape does not: a pause's end is said in
     // its own line, and that line follows it.
     if let PauseControls::Paused(label) = control {
@@ -2958,134 +2895,6 @@ mod tests {
         assert_eq!(
             next.of(HotkeyAction::Task).hotkey(),
             hotkey::DEFAULT_TASK_HOTKEY
-        );
-    }
-
-    /// A menu as the pause block sees one: the items it holds, by name. What
-    /// `place_pause_block` does to this is what it does to the tray's own.
-    struct FakeMenu(std::cell::RefCell<Vec<String>>);
-
-    /// The items the Tray Menu holds above the pause block.
-    const ABOVE: [&str; 9] = [
-        "New Note",
-        "New Task",
-        "View Notes",
-        "View Tasks",
-        "Work Summary",
-        "Settings",
-        "Check for Updates…",
-        "the readback separator",
-        "Copy Yesterday's Notes",
-    ];
-
-    impl FakeMenu {
-        fn of(above: &[&str]) -> Self {
-            let mut items: Vec<String> = above.iter().map(|each| each.to_string()).collect();
-            items.push("the closing separator".to_string());
-            items.push("Quit".to_string());
-            FakeMenu(std::cell::RefCell::new(items))
-        }
-
-        fn names(&self) -> Vec<String> {
-            self.0.borrow().clone()
-        }
-    }
-
-    impl PauseBlockHost for FakeMenu {
-        fn items(&self) -> Result<usize, String> {
-            Ok(self.0.borrow().len())
-        }
-
-        fn take_out(&self, piece: PausePiece) -> Result<(), String> {
-            let name = piece.name();
-            let mut items = self.0.borrow_mut();
-            match items.iter().position(|each| each.as_str() == name) {
-                Some(at) => {
-                    items.remove(at);
-                    Ok(())
-                }
-                None => Err(format!("{name} was taken out of a menu that held none")),
-            }
-        }
-
-        fn put_in(&self, pieces: &[PausePiece], at: usize) -> Result<(), String> {
-            let mut items = self.0.borrow_mut();
-            if at > items.len() {
-                return Err("the pause block went in outside the menu".to_string());
-            }
-            for (step, piece) in pieces.iter().enumerate() {
-                items.insert(at + step, piece.name().to_string());
-            }
-            Ok(())
-        }
-    }
-
-    /// The menu read as the block leaves it: `above`, the block, and the
-    /// separator and Quit that close the menu.
-    fn reading(above: &[&str], block: &[&str]) -> Vec<String> {
-        let mut items: Vec<String> = above.iter().map(|each| each.to_string()).collect();
-        items.extend(block.iter().map(|each| each.to_string()));
-        items.extend(["the closing separator".to_string(), "Quit".to_string()]);
-        items
-    }
-
-    /// The pause block's switching over a menu laid out as the Tray Menu's
-    /// is: each shape takes out and puts in its own whole block, at the
-    /// block's place. This is the whole of what `apply_pause_controls`
-    /// changes about a shape.
-    #[test]
-    fn the_pause_block_switches_between_its_three_shapes_in_place() {
-        let menu = FakeMenu::of(&ABOVE);
-
-        // Observing on and nothing in force: the pause is offered.
-        place_pause_block(&menu, PauseShape::Hidden, PauseShape::Offered).unwrap();
-        assert_eq!(
-            menu.names(),
-            reading(&ABOVE, &["the pause separator", "Pause Observing"])
-        );
-
-        // A pause in force: the offer gives way to the status line and the
-        // way out of it.
-        place_pause_block(&menu, PauseShape::Offered, PauseShape::Paused).unwrap();
-        assert_eq!(
-            menu.names(),
-            reading(
-                &ABOVE,
-                &["the pause separator", "the paused line", "Resume Observing"]
-            )
-        );
-
-        // Observing off: the block goes whole, absent rather than greyed.
-        place_pause_block(&menu, PauseShape::Paused, PauseShape::Hidden).unwrap();
-        assert_eq!(menu.names(), reading(&ABOVE, &[]));
-    }
-
-    /// Where the block goes follows the list it goes into: an item added
-    /// above it carries it along. What working the position out of the list
-    /// is for — a count kept somewhere else would send Pause and Resume into
-    /// the wrong group with nothing to catch it.
-    #[test]
-    fn the_pause_block_goes_before_the_closing_separator_however_long_the_menu() {
-        let menu = FakeMenu::of(&[
-            "New Note",
-            "New Task",
-            "Copy Yesterday's Notes",
-            "One More Above",
-        ]);
-
-        place_pause_block(&menu, PauseShape::Hidden, PauseShape::Paused).unwrap();
-
-        assert_eq!(
-            menu.names(),
-            reading(
-                &[
-                    "New Note",
-                    "New Task",
-                    "Copy Yesterday's Notes",
-                    "One More Above"
-                ],
-                &["the pause separator", "the paused line", "Resume Observing"]
-            )
         );
     }
 

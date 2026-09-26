@@ -464,13 +464,42 @@ function RepositoryEntry({
   // The clock the Last line reads its "ago" against: fixed at render, it
   // would say "just now" all afternoon while the section sits open. It moves
   // about once a minute — the words go no finer than "5 min ago" — and only
-  // while the section is on screen.
+  // while the section is on screen. Coming back on screen and waking are both
+  // read at once rather than left to the next tick: a line looked at after
+  // either would otherwise keep the time it was left with, saying "5 min ago"
+  // of a Note hours old.
   const [now, setNow] = useState(() => new Date())
+  // Ticked by the wake below, and nothing else: waking is one more reason to
+  // sample and re-arm, which the effect does from one place.
+  const [woke, setWoke] = useState(0)
   useEffect(() => {
+    // Sampled here rather than in the render: the clock is not a render's to
+    // read — the same reason the pause row above sets its own state from an
+    // effect.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setNow(new Date())
     if (!onScreen) return
     const timer = setInterval(() => setNow(new Date()), 60_000)
     return () => clearInterval(timer)
-  }, [onScreen])
+  }, [onScreen, woke])
+  // A sleeping Mac runs no timer: the wake is what says the clock moved on
+  // its own.
+  useEffect(() => {
+    let listening = true
+    let stop: (() => void) | null = null
+    void desktop
+      .onSystemWoke(() => {
+        if (listening) setWoke((count) => count + 1)
+      })
+      .then((unlisten) => {
+        if (listening) stop = unlisten
+        else unlisten()
+      })
+    return () => {
+      listening = false
+      stop?.()
+    }
+  }, [desktop])
 
   // What is ticked, then what is suggested, one address in any case.
   const offered = [...listed.identities]

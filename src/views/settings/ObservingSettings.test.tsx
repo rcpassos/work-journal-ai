@@ -569,7 +569,8 @@ describe('a repository that is working', () => {
     ).toBeTruthy()
   })
 
-  it('ages its "ago" as the Last line sits there', async () => {
+  // A repository whose last Note arrived just now: the line to age.
+  async function arrived() {
     const { journal } = await journalWith([
       {
         source: 'commit',
@@ -580,6 +581,11 @@ describe('a repository that is working', () => {
       },
     ])
     const { desktop } = listedAt('/code/work-journal-ai', WORK_JOURNAL, journal)
+    return { desktop, journal }
+  }
+
+  it('ages its "ago" as the Last line sits there', async () => {
+    const { desktop, journal } = await arrived()
     // Faked from the render on — Date and the line's own tick — so the words
     // move as the test says: they are computed at render and would otherwise
     // say "just now" for the rest of the afternoon. The rest of the timers
@@ -592,6 +598,45 @@ describe('a repository that is working', () => {
       await act(async () => {
         vi.advanceTimersByTime(2 * 60 * 60 * 1000)
       })
+
+      expect(screen.getByText(/· 2 h ago$/)).toBeTruthy()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('reads the clock again when the section comes back on screen', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    try {
+      const { desktop, journal } = await arrived()
+      const control = showSettingsOnScreen(desktop, journal)
+      expect(await screen.findByText(/· just now$/)).toBeTruthy()
+
+      // Two hours in another section: left alone, the line would say "just
+      // now" of a Note two hours old until the next tick came round. Each on
+      // its own render: a view hidden and shown again in one would never have
+      // been away.
+      await act(async () => control.hide())
+      vi.setSystemTime(Date.now() + 2 * 60 * 60 * 1000)
+      await act(async () => control.show())
+
+      expect(screen.getByText(/· 2 h ago$/)).toBeTruthy()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('reads the clock again when the Mac wakes', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    try {
+      const { desktop, journal } = await arrived()
+      showSettings(desktop, journal)
+      expect(await screen.findByText(/· just now$/)).toBeTruthy()
+
+      // The Mac slept through the age: its tick froze with the sleep and has
+      // fired for nobody since.
+      vi.setSystemTime(Date.now() + 2 * 60 * 60 * 1000)
+      await act(async () => desktop.wake())
 
       expect(screen.getByText(/· 2 h ago$/)).toBeTruthy()
     } finally {
