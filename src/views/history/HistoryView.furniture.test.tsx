@@ -96,6 +96,34 @@ describe('the beginning', () => {
     const empty = await emptyState('No Notes yet')
     expect(empty.querySelector('svg')).toBeTruthy()
   })
+
+  it('names a Project that exists only as a mapping, with the rename question', async () => {
+    const user = userEvent.setup()
+    // A repository mapped before anything was captured: the journal holds no
+    // Notes at all, and the Project is one anyway.
+    await showFurniture([], {
+      arrive: (core) =>
+        core.setProjectMapping('/code/work-journal-ai/.git', 'work-journal-ai'),
+    })
+
+    const empty = await emptyState('No Notes yet')
+    expect(empty.textContent).toContain('#work-journal-ai')
+
+    await user.click(
+      within(empty).getByRole('button', { name: 'Rename #work-journal-ai' }),
+    )
+    const dialog = await screen.findByRole('alertdialog')
+    expect(dialog.textContent).toContain('#work-journal-ai')
+    expect(within(dialog).getByLabelText('New Project name')).toBeTruthy()
+  })
+
+  it('names no Project at all when nothing names one', async () => {
+    await showFurniture([])
+
+    const empty = await emptyState('No Notes yet')
+    expect(empty.textContent).not.toContain('Projects')
+    expect(screen.queryByRole('button', { name: /^Rename / })).toBeNull()
+  })
 })
 
 describe('an empty list', () => {

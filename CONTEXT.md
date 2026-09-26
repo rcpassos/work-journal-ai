@@ -114,19 +114,23 @@ _Avoid_: Import log, dedupe table, seen list
 Nothing. Text typed during a Capture but not committed does not exist — abandoning a Capture discards it, and the next Capture starts empty.
 
 **Project**:
-An optional named stream of work a Note is filed under. At most one per Note. First-class filing — parallel to Journal Day (when) rather than markup inside the Body (what was said). Identity is case-insensitive and stored lowercase; the name is a non-empty run of letters, digits, `_`, or `-`. Exists only as a value on Notes — no registry, so a name with no remaining Notes is gone. Renaming a Project changes that value on every Note filed under it in one operation, merging into the target when Notes already carry it; no Body text is rewritten, and renaming is not clearing — filing a Note under nothing stays a per-Note act.
+An optional named stream of work a Note is filed under. At most one per Note. First-class filing — parallel to Journal Day (when) rather than markup inside the Body (what was said). Identity is case-insensitive and stored lowercase; the name is a non-empty run of letters, digits, `_`, or `-`. Exists only as a value — on Notes and on Project Mappings — with no registry, so a name nothing holds is gone. Renaming a Project changes that value on every Note filed under it and every Project Mapping naming it in one operation, merging into the target when either already carries it; no Body text is rewritten, and renaming is not clearing — filing a Note under nothing stays a per-Note act.
 _Avoid_: Tag, label, category, context, hashtag
 
 **Project Marker**:
 The `#name` prefix typed at the start of a Capture to name the Project. Consumed when the Note is committed: Project is set, Body is whatever follows. A bare marker with no Body fails Capture like any empty Body. Mid-line or malformed `#` is plain Body text, not a marker.
 _Avoid_: Hashtag, tag prefix
 
+**Project Mapping**:
+Which Project one repository's Observed Notes arrive filed under: a value on the mapping, naming a Project exactly as a Note does, held in the journal and keyed on the repository's identity — its shared git directory, so every worktree of one repository is one mapping. Set on the repository's own row in Observing, as a field whose completion is Capture's own Predictions with the repository's name offered first; that name becomes the Project only when picked or typed, and nothing is ever inferred from a path. No mapping is Unfiled. It decides how work arrives and is never written back to: a Note refiled by hand stays where it was put. Renaming or merging a Project rewrites the mappings with the Notes, and a Project held only by a mapping stays discoverable, renameable and mergeable after its last Note is gone.
+_Avoid_: Repo rule, filing setting, repository tag
+
 **Unfiled**:
-A Note with no Project. A real state and a real Filter value — not the same as “any project.”
+A Note with no Project. A real state and a real Filter value — not the same as “any project” — and what a repository with no Project Mapping produces.
 _Avoid_: None, null project, untagged
 
 **Prediction**:
-A Project name offered from Projects already on Notes, matched by prefix as the user types. Offered wherever a Note is being filed — during a Capture after `#`, and when a Note already written is filed in History. Choosing one or typing a new name both work; a new name becomes a Project the moment a Note is filed under it, and a name the Project rule would refuse is never offered.
+A Project name offered from the Projects the journal already names — on Notes, or held by a Project Mapping — matched by prefix as the user types. Offered wherever something is being filed under a Project: during a Capture after `#`, when a Note already written is filed in History, and on a repository's Project Mapping field. Choosing one or typing a new name both work; a new name becomes a Project the moment something is filed under it, and a name the Project rule would refuse is never offered.
 _Avoid_: Autocomplete, suggestion chip, typeahead
 
 ## Getting in
@@ -272,7 +276,7 @@ Whether Import runs, and over which calendars. Off until turned on, with no cale
 _Avoid_: Calendar sync, integration, connection
 
 **Observing**:
-Whether Observe runs over commits, from which repositories, and which identities count as the user in each. Off until turned on, and a repository added through a folder picker — a path is never typed — with its identities offered from what the repository suggests and counted only once ticked; no repository, or no identity ticked, observes nothing. A second worktree of a listed repository is the entry it already is and adds nothing. Consent is kept per repository as the intervals it was on — Observing on and the repository listed — and a commit is observed only if it was authored inside one, within the last seven days: filtered by when the work happened, never by when a sweep found it, so work from before enablement, from a gap while it was off, or from while a repository was off the list never arrives. Each repository may skip commits whose subject begins with a prefix the user wrote; a skipped commit is not handled, so removing the prefix lets it arrive within the lookback. Beside each repository the section says what it is doing: why it cannot be read when it cannot be, and the last Note that arrived from it and when it arrived — or that nothing has arrived since Observing was turned on. Always Unfiled, and nothing is ever inferred from a path. The repositories are only ever read.
+Whether Observe runs over commits, from which repositories, and which identities count as the user in each. Off until turned on, and a repository added through a folder picker — a path is never typed — with its identities offered from what the repository suggests and counted only once ticked; no repository, or no identity ticked, observes nothing. A second worktree of a listed repository is the entry it already is and adds nothing. Each repository's row carries its Project Mapping, which is where its Observed Notes are filed: with none they are Unfiled, and nothing is ever inferred from a path. Consent is kept per repository as the intervals it was on — Observing on and the repository listed — and a commit is observed only if it was authored inside one, within the last seven days: filtered by when the work happened, never by when a sweep found it, so work from before enablement, from a gap while it was off, or from while a repository was off the list never arrives. Each repository may skip commits whose subject begins with a prefix the user wrote; a skipped commit is not handled, so removing the prefix lets it arrive within the lookback. Beside each repository the section says what it is doing: why it cannot be read when it cannot be, and the last Note that arrived from it and when it arrived — or that nothing has arrived since Observing was turned on. The repositories are only ever read.
 _Avoid_: Git sync, integration, commit import
 
 **Pause**:

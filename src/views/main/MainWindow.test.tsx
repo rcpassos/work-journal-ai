@@ -2189,6 +2189,44 @@ describe('practicing Capture from Onboarding', () => {
   })
 })
 
+describe('a Project Mapping saved in Settings', () => {
+  it('reaches History while the window stays open: a Project with no Notes yet, and its rename question', async () => {
+    const user = userEvent.setup()
+    await showMainWindow({
+      captured: [],
+      section: 'settings',
+      stored: {
+        startAtLogin: false,
+        observing: {
+          enabled: true,
+          repositories: [
+            {
+              path: '/code/work-journal-ai',
+              repository: '/code/work-journal-ai/.git',
+              identities: ['me@example.com'],
+              ignoredPrefixes: [],
+            },
+          ],
+          consent: { '/code/work-journal-ai/.git': [{ from: 1, until: null }] },
+          pauses: {},
+        },
+      },
+    })
+
+    const field = (await screen.findByLabelText('Project')) as HTMLInputElement
+    await user.click(field)
+    await user.keyboard('Beta{Enter}')
+    await expect.poll(() => field.value).toBe('beta')
+
+    // Back to History, the window open all along — the first-run case of
+    // mapping a repository before anything has been captured.
+    await user.click(within(sidebar()).getByRole('button', { name: 'History' }))
+    await showsHistory()
+
+    expect(await screen.findByRole('button', { name: 'Rename #beta' })).toBeTruthy()
+  })
+})
+
 describe('Escape', () => {
   it('reaches the section the Entry Point opened the window on', async () => {
     const { desktop } = await showMainWindow({

@@ -1,6 +1,14 @@
 import { useEffect, useId, useRef, useState } from 'react'
+import ProjectChip from '@/components/ProjectChip'
+import {
+  projectOptions,
+  projectPrefix,
+  useProjectPredictions,
+  type ProjectOption,
+} from '@/components/project-options'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
+import { Input } from '@/components/ui/input'
 import {
   Menu,
   MenuContent,
@@ -11,8 +19,20 @@ import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { useOnScreenToast } from '@/components/on-screen-toast'
 import { useOnScreen } from '@/components/on-screen-context'
-import { formatAgo, repositoryName, type Journal } from '@/journal/journal'
-import type { Desktop, PauseLength, PauseState, RepositoryUnreadable } from '@/platform/desktop'
+import {
+  formatAgo,
+  formatProject,
+  isProjectName,
+  projectName,
+  repositoryName,
+  type Journal,
+} from '@/journal/journal'
+import type {
+  Desktop,
+  PauseLength,
+  PauseState,
+  RepositoryUnreadable,
+} from '@/platform/desktop'
 import type { AppSettings } from '@/settings/app-settings'
 import {
   addRepository,
@@ -33,12 +53,15 @@ import { SettingsAside, SettingsGroup, SettingsProblem, SettingsRow } from './Se
 import { useSeededState } from './useSeededState'
 
 /**
- * Whether the user's commits are observed, from which repositories, and which
- * identities count as the user in each — and the pause, which is done in the
- * moment from the Tray Menu and is shown and resumed here too. Every change is
- * a rule from `@/settings/observing` applied to the file as it stands —
+ * Whether the user's commits are observed, from which repositories, which
+ * identities count as the user in each, which Project each repository's
+ * Notes arrive filed under, and the pause — which is done in the moment from
+ * the Tray Menu and is shown and resumed here too. Every change to the list
+ * is a rule from `@/settings/observing` applied to the file as it stands —
  * consent and pauses are kept as the instants they were given, so the file,
- * not this view, decides them — and the view shows what the file came to hold.
+ * not this view, decides them — and the view shows what the file came to
+ * hold. A Project Mapping is journal content rather than configuration, so
+ * it is written to the journal and shown as it reads there.
  */
 export default function ObservingSettings({
   desktop,
@@ -48,7 +71,7 @@ export default function ObservingSettings({
 }: {
   desktop: Desktop
   settings: AppSettings
-  /** The journal the repository rows read their last Note from. */
+  /** The journal the repository rows read their last Note from, and hold their Project Mapping in. */
   journal: Promise<Journal>
   initialSettings: Promise<SettingsInitialState | null> | null
 }) {
@@ -350,14 +373,15 @@ export default function ObservingSettings({
 
       <SettingsAside>
         Each commit becomes an ordinary Note: reword it, file it under a
-        Project, or delete it. Deleting one refuses that commit for good. The
-        repositories are only ever read.
+        Project, or delete it. Deleting one refuses that commit for good, and
+        one filed by hand stays filed that way. The repositories are only ever
+        read.
       </SettingsAside>
     </SettingsGroup>
   )
 }
 
-/** One repository on the list: who is the user there, and what to skip. */
+/** One repository on the list: what its Notes are filed under, who is the user there, and what to skip. */
 function RepositoryEntry({
   desktop,
   journal,
@@ -375,11 +399,15 @@ function RepositoryEntry({
   onIgnoredPrefixes: (prefixes: string[]) => void
   onRemove: () => void
 }) {
+  const says = useOnScreenToast()
   const name = repositoryName(listed.repository)
   // Two repositories may share a folder name, so ids come from React.
   const idBase = useId()
   const [suggested, setSuggested] = useState<string[]>([])
   const [unreadable, setUnreadable] = useState<RepositoryUnreadable | null>(null)
+  // The Project Mapping as the journal holds it: what this repository's Notes
+  // arrive filed under. Null is Unfiled.
+  const [mapping, setMapping] = useState<string | null>(null)
   // The text as typed, blank lines and all: the list saved from it drops the
   // blanks, and reading that back into the field would eat the line being
   // started.
@@ -403,6 +431,102 @@ function RepositoryEntry({
   // that a newer one cleared.
   const onScreen = useOnScreen()
   const reads = useRef(0)
+  // The mapping's own reads and writes, in order with each other: a read
+  // queues behind the saves, so one of them never shows a write that has not
+  // landed yet, and only the newest read is ever applied. A read that began
+  // before a press is discarded — an arriving read may only seed state that
+  // has not been touched since the snapshot was taken (ADR 0028) — and so is
+  // a rollback: a save refused once a newer change has landed puts nothing
+  // back over it.
+  const writes = useRef<Promise<void>>(Promise.resolve())
+  const touches = useRef(0)
+  const mappingReads = useRef(0)
+
+  // Read when the row opens and again whenever the journal changes: a rename
+  // or a merge in History moves what this row is showing, and the field says
+  // the name it moved to.
+  useEffect(() => {
+    let listening = true
+    let stop: (() => void) | null = null
+    async function readMapping(): Promise<void> {
+      const mine = (mappingReads.current += 1)
+      const touch = touches.current
+      await writes.current
+      try {
+        const core = await journal
+        const project = await core.projectMapping(listed.repository)
+        if (
+          !listening ||
+          mine !== mappingReads.current ||
+          touch !== touches.current
+        ) {
+          return
+        }
+        setMapping(project)
+      } catch (error) {
+        console.error('could not read the Project Mapping', error)
+      }
+    }
+    void readMapping()
+    void desktop
+      .onJournalChanged(() => {
+        void readMapping()
+      })
+      .then((unlisten) => {
+        if (listening) stop = unlisten
+        else unlisten()
+      })
+    return () => {
+      listening = false
+      stop?.()
+    }
+  }, [desktop, journal, listed.repository])
+
+  /**
+   * One repository's Project Mapping — which Project its Notes arrive filed
+   * under. Journal content rather than a setting, so the journal is what is
+   * written. The field moves under the press, and a write the journal refuses
+   * is rolled back before the toast raises, so what the user is told and what
+   * they can see never disagree (ADR 0029). Two presses close together are
+   * written one behind the other, so the older cannot settle last and hold
+   * the journal where the field no longer is.
+   *
+   * The journal moving is announced beside the write that moved it, never as
+   * part of it: an announcement that fails is logged, not raised as a save
+   * refused that in truth took.
+   */
+  function pick(project: string | null) {
+    const before = mapping
+    const mine = (touches.current += 1)
+    setMapping(project)
+    const write = writes.current.then(async () => {
+      const core = await journal
+      await core.setProjectMapping(listed.repository, project)
+      await desktop.announceJournalChanged().catch((error: unknown) => {
+        console.error('could not announce the Project Mapping', error)
+      })
+    })
+    writes.current = write.catch(() => undefined)
+    saySettled(
+      says,
+      write,
+      {
+        id: `observing-project-${listed.repository}`,
+        saved:
+          project === null
+            ? 'Commits will be Unfiled.'
+            : `Commits will be filed under ${formatProject(project)}.`,
+        couldNot: 'Could not save the Project.',
+        what: 'could not change the Project Mapping',
+        // A rollback belongs to the change that started it, and is discarded
+        // once a newer change has landed (ADR 0028).
+        onRefused: () => {
+          if (mine === touches.current) setMapping(before)
+        },
+      },
+    )
+  }
+
   useEffect(() => {
     if (!onScreen) return
     let listening = true
@@ -533,6 +657,13 @@ function RepositoryEntry({
         </SettingsProblem>
       )}
 
+      <ProjectMappingField
+        journal={journal}
+        repository={listed.repository}
+        value={mapping}
+        onPick={pick}
+      />
+
       <fieldset className="flex flex-col gap-2 pl-1">
         <legend className="type-meta text-muted-foreground">Addresses that are you</legend>
         {offered.length === 0 && (
@@ -576,6 +707,194 @@ function RepositoryEntry({
         }}
       />
     </div>
+  )
+}
+
+/**
+ * The Project Mapping for one repository: the Project its Observed Notes
+ * arrive filed under. A field rather than a picker, because the mapping has
+ * an empty state to say — nothing mapped is Unfiled, and the field says so by
+ * holding nothing — and its completion is the one a Capture gets, with the
+ * repository's own name offered first. That name becomes the Project only if
+ * the user picks or types it: nothing is ever inferred from a path.
+ *
+ * A mapping is decided rather than typed at the journal, so what has been
+ * typed lands only when it is picked or named with Enter — an emptied field
+ * is the repository left Unfiled, which is how a mapping is removed — and
+ * leaving the field abandons the rest.
+ */
+function ProjectMappingField({
+  journal,
+  repository,
+  value,
+  onPick,
+}: {
+  journal: Promise<Journal>
+  /** The repository's identity: what the mapping keys on, every worktree included. */
+  repository: string
+  /** The mapping as the journal holds it. Null is Unfiled. */
+  value: string | null
+  onPick: (project: string | null) => void
+}) {
+  // What has been typed and not yet said, or null while the field shows the
+  // mapping as it is. The buffer is not the value: until the user picks or
+  // says a name, the field is only text.
+  const [draft, setDraft] = useState<string | null>(null)
+  // The completions show while the field is open, and the keyboard is on one
+  // line of them only once the user has moved there — so a bare Enter is
+  // always what was typed, never the first thing that happened to be listed.
+  const [open, setOpen] = useState(false)
+  const [highlight, setHighlight] = useState<number | null>(null)
+  const fieldId = useId()
+  const listId = `${fieldId}-predictions`
+
+  const typed = draft ?? ''
+  // Untouched, the field offers everything: as much as a Capture with an
+  // empty marker shows. The first line is the repository's own name.
+  const predictions = useProjectPredictions(
+    journal,
+    open ? projectPrefix(typed) : null,
+  )
+  const options = projectOptions(
+    projectPrefix(typed),
+    predictions,
+    value,
+    repositoryName(repository),
+  )
+
+  /** What was typed and never said goes with the field. */
+  function abandon() {
+    setOpen(false)
+    setHighlight(null)
+    setDraft(null)
+  }
+
+  function choose(option: ProjectOption) {
+    abandon()
+    onPick(option.kind === 'unfiled' ? null : option.name)
+  }
+
+  function onKeyDown(event: React.KeyboardEvent<HTMLInputElement>) {
+    if (event.key === 'Escape') {
+      // Escape is the field's while there is something of the user's in it:
+      // what was typed is abandoned, and an open list is a popup, which
+      // closes before the window ever sees the keystroke (History's Escape
+      // order). Abandoned and closed, the keystroke is the window's again.
+      const holding =
+        draft !== null || highlight !== null || (open && options.length > 0)
+      if (!holding) return
+      event.stopPropagation()
+      abandon()
+      return
+    }
+
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault()
+      const step = event.key === 'ArrowDown' ? 1 : -1
+      setOpen(true)
+      setHighlight((line) => {
+        if (options.length === 0) return null
+        if (line === null) return step > 0 ? 0 : options.length - 1
+        return (line + step + options.length) % options.length
+      })
+      return
+    }
+
+    if (event.key !== 'Enter') return
+    event.preventDefault()
+
+    const pointed = highlight === null ? null : options[highlight]
+    if (pointed != null) {
+      choose(pointed)
+      return
+    }
+
+    // Nothing pointed at, so what has been typed is the decision: an emptied
+    // field is the repository left Unfiled — the way clearing a Project has
+    // always been said — and a name is mapped as the record stores it. What
+    // the record refuses is no decision at all, and stays in the field. A
+    // field nothing was typed into is no decision either: only one the user
+    // emptied takes the mapping away.
+    if (draft === null) return
+    const prefix = projectPrefix(typed)
+    if (prefix === '') {
+      abandon()
+      if (value !== null) onPick(null)
+      return
+    }
+    if (isProjectName(prefix)) {
+      const name = projectName(prefix)
+      abandon()
+      if (name !== value) onPick(name)
+    }
+  }
+
+  return (
+    <>
+      <label htmlFor={fieldId} className="type-meta text-muted-foreground">
+        Project
+      </label>
+      <div className="relative">
+        <Input
+          id={fieldId}
+          value={draft ?? value ?? ''}
+          placeholder="Unfiled"
+          autoComplete="off"
+          spellCheck={false}
+          role="combobox"
+          aria-expanded={open && options.length > 0}
+          aria-controls={options.length > 0 ? listId : undefined}
+          aria-autocomplete="list"
+          aria-activedescendant={
+            highlight === null ? undefined : `${listId}-${highlight}`
+          }
+          onFocus={() => setOpen(true)}
+          onChange={(event) => {
+            setDraft(event.target.value)
+            setOpen(true)
+            setHighlight(null)
+          }}
+          onKeyDown={onKeyDown}
+          onBlur={abandon}
+        />
+        {open && options.length > 0 && (
+          <ul
+            id={listId}
+            role="listbox"
+            aria-label="Project Predictions"
+            className="absolute z-20 mt-1 w-full rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-md"
+          >
+            {options.map((option, index) => (
+              <li
+                key={option.key}
+                id={`${listId}-${index}`}
+                role="option"
+                aria-selected={index === highlight}
+              >
+                <button
+                  type="button"
+                  // mousedown: a click would blur the field first, and blur
+                  // abandons what is being chosen before it lands.
+                  onMouseDown={(event) => {
+                    event.preventDefault()
+                    choose(option)
+                  }}
+                  className={`flex w-full items-center rounded-sm px-2 py-1 text-left type-body ${
+                    index === highlight
+                      ? 'bg-accent text-accent-foreground'
+                      : 'hover:bg-accent/50'
+                  }`}
+                >
+                  <ProjectChip
+                    project={option.kind === 'unfiled' ? null : option.name}
+                  />
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </>
   )
 }
 

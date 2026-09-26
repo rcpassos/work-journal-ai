@@ -14,6 +14,12 @@ import {
 } from 'lucide-react'
 import { Combobox as ComboboxPrimitive } from '@base-ui/react/combobox'
 import ProjectChip from '@/components/ProjectChip'
+import {
+  projectOptions,
+  projectPrefix,
+  useProjectPredictions,
+  type ProjectOption,
+} from '@/components/project-options'
 import DayRangeField from '@/components/DayRangeField'
 import SearchField from '@/components/SearchField'
 import WindowTitleBar from '@/components/WindowTitleBar'
@@ -81,7 +87,6 @@ import {
   formatNoteSource,
   formatProject,
   formatTimeOfDay,
-  isProjectName,
   journalDayFor,
   projectChoice,
   projectConstraintFor,
@@ -370,7 +375,13 @@ export default function HistoryView({
         {problem !== null && <Problem>{problem}</Problem>}
 
         <main className="flex-1 overflow-y-auto px-6 pb-5">
-          {history.state === 'empty' && <NoNotesYet hotkeys={hotkeys} />}
+          {history.state === 'empty' && (
+            <NoNotesYet
+              hotkeys={hotkeys}
+              projects={projects}
+              onRename={setRenaming}
+            />
+          )}
           {history.state === 'unreadable' && (
             <EmptyState
               icon={TriangleAlertIcon}
@@ -808,10 +819,10 @@ function RenameProjectDialog({
     }
   }
 
-  // The source is in `projects` too — it has Notes, which is why it is being
-  // renamed — so spelling it back is not a merge but the same name, however
-  // it is cased. Confirming it would close the question and do nothing at
-  // all: the button says Rename, says it cannot be pressed, and the dialog
+  // The source is in `projects` too — the journal names it, which is why it
+  // is being renamed — so spelling it back is not a merge but the same name,
+  // however it is cased. Confirming it would close the question and do nothing
+  // at all: the button says Rename, says it cannot be pressed, and the dialog
   // says why, rather than claiming two streams are about to become one.
   const same = target !== null && target === source
   const merging = target !== null && !same && projects.includes(target)
@@ -821,7 +832,8 @@ function RenameProjectDialog({
       <AlertDialogHeader>
         <AlertDialogTitle>Rename {formatProject(source)}?</AlertDialogTitle>
         <AlertDialogDescription>
-          Every Note filed under it moves, in this window and out of it.
+          Every Note filed under it moves, in this window and out of it. So
+          does every repository mapped to it.
           {merging && target !== null
             ? ` Notes already under ${formatProject(target)} stay where they are: the two streams become one.`
             : ''}
@@ -1138,7 +1150,6 @@ function ProjectField({
 }) {
   const [open, setOpen] = useState(false)
   const [typed, setTyped] = useState('')
-  const [predictions, setPredictions] = useState<string[]>([])
   // Portalled away from the row, like the day picker beside it. Nothing is
   // filed on the way out, here or anywhere else this list closes.
   useOffScreen(() => {
@@ -1149,20 +1160,12 @@ function ProjectField({
   // decision this field makes for itself.
   const highlighted = useRef<ProjectOption | null>(null)
 
-  useEffect(() => {
-    if (!open) return
-
-    let cancelled = false
-    void (async () => {
-      const names = await (await journal).projectPredictions(projectPrefix(typed))
-      if (!cancelled) setPredictions(names)
-    })()
-
-    return () => {
-      cancelled = true
-    }
-  }, [open, typed, journal])
-
+  // The Predictions are the journal's, matched by prefix the way a Capture
+  // matches them, so nothing is filtered again on the way to the list.
+  const predictions = useProjectPredictions(
+    journal,
+    open ? projectPrefix(typed) : null,
+  )
   const options = projectOptions(projectPrefix(typed), predictions, value)
 
   return (
@@ -1243,58 +1246,6 @@ function ProjectField({
 }
 
 /**
- * One line of the Project list: a Project already on Notes, the name being
- * typed for the first time, or Unfiled — which is a value like any other and
- * so is chosen like one, rather than by emptying a field.
- */
-type ProjectOption =
-  | { kind: 'unfiled'; key: string; label: string }
-  | { kind: 'project'; key: string; label: string; name: string }
-
-/** What has been typed, as a Project name: the display `#` is not part of it. */
-function projectPrefix(typed: string): string {
-  return typed.trim().replace(/^#/, '')
-}
-
-/**
- * The list under the field. Unfiled is offered only while nothing has been
- * typed — once the reader is naming a Project they are not looking for the
- * absence of one — and a new name is offered only when no Prediction already
- * is it, so the same Project is never on screen twice.
- */
-function projectOptions(
-  prefix: string,
-  predictions: string[],
-  filed: string | null,
-): ProjectOption[] {
-  const options: ProjectOption[] = []
-
-  if (prefix === '' && filed !== null) {
-    options.push({ kind: 'unfiled', key: 'unfiled', label: formatProject(null) })
-  }
-
-  for (const name of predictions) {
-    options.push({ kind: 'project', key: name, label: formatProject(name), name })
-  }
-
-  const known = predictions.some(
-    (name) => name.toLowerCase() === prefix.toLowerCase(),
-  )
-  // Offered only if it is a name at all: the record refuses anything else, and
-  // a list holding a choice that cannot be made is not a list of choices.
-  if (!known && isProjectName(prefix)) {
-    options.push({
-      kind: 'project',
-      key: `new:${prefix}`,
-      label: formatProject(prefix),
-      name: prefix,
-    })
-  }
-
-  return options
-}
-
-/**
  * A day outside the Filter has gained a Note. An inline banner, lifted just
  * off the page by an accent hairline and a shadow so it reads as something
  * that arrived — and unobtrusive all the same: it says what happened and
@@ -1340,12 +1291,35 @@ function Nudge({
  * The Tray Menu is the fallback, and is all this says when the Hotkey is
  * unavailable or unknown: an empty state that taught a combination doing
  * nothing would be worse than the slow way in.
+ *
+ * The Projects the journal already names come below it. With no Notes there
+ * is no Filter to carry them, and a Project held only by a Project Mapping —
+ * a repository mapped before anything was captured — would otherwise be one
+ * the user can neither see nor rename. Each is named here, with the same
+ * rename question the Filter's pencil asks.
  */
-function NoNotesYet({ hotkeys }: { hotkeys: HotkeyStatuses | null }) {
+function NoNotesYet({
+  hotkeys,
+  projects,
+  onRename,
+}: {
+  hotkeys: HotkeyStatuses | null
+  /** The Projects the journal still names, Project Mappings included. */
+  projects: string[]
+  onRename: (name: string) => void
+}) {
   const note = hotkeys?.note
 
   return (
-    <EmptyState icon={NotebookPenIcon} heading="No Notes yet">
+    <EmptyState
+      icon={NotebookPenIcon}
+      heading="No Notes yet"
+      footer={
+        projects.length > 0 ? (
+          <NamedProjects projects={projects} onRename={onRename} />
+        ) : undefined
+      }
+    >
       {note?.state === 'registered' ? (
         <>
           {/* The same keycaps Settings reads the Hotkey back in, so what is
@@ -1370,6 +1344,46 @@ function NoNotesYet({ hotkeys }: { hotkeys: HotkeyStatuses | null }) {
 }
 
 /**
+ * The Projects the journal names while it holds no Notes at all — every one of
+ * them held by a Project Mapping — each beside the pencil that opens the
+ * rename question, exactly as the Filter carries it.
+ */
+function NamedProjects({
+  projects,
+  onRename,
+}: {
+  projects: string[]
+  onRename: (name: string) => void
+}) {
+  return (
+    <div className="flex flex-wrap items-center justify-center gap-2">
+      <span className="type-meta text-muted-foreground">Projects</span>
+      {projects.map((name) => (
+        <span key={name} className="flex items-center gap-0.5">
+          <ProjectChip project={name} />
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  onClick={() => onRename(name)}
+                  aria-label={`Rename ${formatProject(name)}`}
+                  className="text-muted-foreground"
+                >
+                  <PencilIcon />
+                </Button>
+              }
+            />
+            <TooltipContent>Rename Project</TooltipContent>
+          </Tooltip>
+        </span>
+      ))}
+    </div>
+  )
+}
+
+/**
  * A list that is not there, and why. The icon and the heading are what make it
  * read as an answer rather than as a page still loading; the heading is the
  * whole of the answer, so each of the ways a list can be empty keeps its own
@@ -1380,10 +1394,13 @@ function EmptyState({
   icon: Icon,
   heading,
   children,
+  footer,
 }: {
   icon: LucideIcon
   heading: string
   children?: React.ReactNode
+  /** What the state carries below its answer: an empty day can still name Projects. */
+  footer?: React.ReactNode
 }) {
   const headingId = useId()
 
@@ -1404,6 +1421,7 @@ function EmptyState({
       {children !== undefined && (
         <p className="max-w-sm text-muted-foreground">{children}</p>
       )}
+      {footer}
     </section>
   )
 }

@@ -53,17 +53,22 @@ export interface ObserveSession {
  * instant they were authored — consented to, and not inside a pause — not
  * skipped by a prefix the user wrote, and with a subject to say. A skipped
  * commit becomes nothing at all — no Note and no handled row — so removing
- * its prefix lets it arrive within the lookback. Always Unfiled: nothing is
- * ever inferred from a path.
+ * its prefix lets it arrive within the lookback. Each Note arrives filed
+ * under the repository's Project Mapping, as it reads when the commit
+ * becomes a Note — or Unfiled when the repository has none. Nothing is ever
+ * inferred from a path.
  */
 export function commitsToObserve({
   observing,
   listed,
   commits,
+  project,
 }: {
   observing: Observing
   listed: ObservedRepository
   commits: Commit[]
+  /** The Project this repository maps to. Null is Unfiled. */
+  project: string | null
 }): SourceEvent[] {
   return commits
     .filter(
@@ -79,7 +84,7 @@ export function commitsToObserve({
       // break becomes a space rather than the commit becoming nothing.
       body: subject.replace(/[\r\n]+/g, ' '),
       happenedAt: new Date(authoredAt).toISOString(),
-      project: null,
+      project,
     }))
 }
 
@@ -143,13 +148,22 @@ export function createObserveSession({
           if (read.state !== 'read') continue
 
           const core = await journal
+          // What this repository's Notes arrive filed under. Read here and
+          // never written back: a Note the user has refiled by hand is
+          // already handled, and no later sweep touches it again.
+          const project = await core.projectMapping(listed.repository)
           // Written oldest first, the way the reader does not answer: what
           // one sweep brings arrives together, and its arrival is the moment
           // each was written down — so writing them the other way round from
           // the walk leaves one sweep's arrival order the work's own, and "the
           // last Note to arrive" names the newest produced of them either
           // way. See `SELECT_LAST_COMMIT_NOTE`.
-          const events = commitsToObserve({ observing, listed, commits: read.commits })
+          const events = commitsToObserve({
+            observing,
+            listed,
+            commits: read.commits,
+            project,
+          })
           for (const event of events.toReversed()) {
             if (!running) return
             // Per commit, so one the journal refuses never stops the ones

@@ -2,7 +2,7 @@
 
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { useState } from 'react'
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
 import {
@@ -30,6 +30,7 @@ afterEach(() => {
   for (const close of openJournals.splice(0)) close()
   cleanup()
   toast.dismiss()
+  vi.restoreAllMocks()
 })
 
 beforeAll(() => {
@@ -54,14 +55,21 @@ function showSettings(
   const settings = createAppSettings(desktop)
   render(
     <ThemeProvider settings={settings}>
-      <SettingsView
-        desktop={desktop}
-        settings={settings}
-        journal={journal}
-      />
+      <SettingsView desktop={desktop} settings={settings} journal={journal} />
     </ThemeProvider>,
   )
-  return settings
+  return { core: journal }
+}
+
+/**
+ * A real journal, on a database this file closes afterwards: a Project
+ * Mapping is journal content, so the field is driven against real SQL.
+ */
+function openJournal(): Promise<Journal> {
+  return openTestDatabase().then(({ driver, close }) => {
+    openJournals.push(close)
+    return createJournal({ clock: fixedClock('2026-03-09T10:00:00'), driver })
+  })
 }
 
 /** The Settings view under a visibility this test can change the slow way. */
@@ -797,3 +805,267 @@ describe('the pause row after time passed unseen', () => {
     }
   })
 })
+
+describe('the Project field', () => {
+  /** The repository added, and the field its row carries. */
+  async function addedRepository() {
+    const desktop = observingDesktop()
+    desktop.chosenFolder = '/code/work-journal-ai'
+    const { core } = showSettings(desktop, openJournal())
+    ;(await screen.findByRole('button', { name: 'Add Repository…' })).click()
+    const field = (await screen.findByLabelText('Project')) as HTMLInputElement
+    return { desktop, core, field }
+  }
+
+  function mapped(core: Promise<Journal>) {
+    return core.then((journal) =>
+      journal.projectMapping('/code/work-journal-ai/.git'),
+    )
+  }
+
+  it('starts empty — Unfiled — and maps nothing until a Project is picked or typed', async () => {
+    const { core, field } = await addedRepository()
+
+    expect(field.value).toBe('')
+    expect(field.placeholder).toBe('Unfiled')
+
+    // The repository's own name is the first completion offered — offered,
+    // and only that: it becomes the Project if the user picks it.
+    fireEvent.focus(field)
+    await expect
+      .poll(async () =>
+        (await screen.findAllByRole('option')).map((each) => each.textContent),
+      )
+      .toContain('#work-journal-ai')
+    expect((await screen.findAllByRole('option'))[0]?.textContent).toBe(
+      '#work-journal-ai',
+    )
+
+    // Not even typing at it maps anything: only a pick, or a name said with
+    // Enter, decides the filing.
+    fireEvent.change(field, { target: { value: 'half typed' } })
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(await mapped(core)).toBeNull()
+  })
+
+  it('maps the repository’s own name once it is picked', async () => {
+    const user = userEvent.setup()
+    const { core, field } = await addedRepository()
+
+    await user.click(field)
+    // The line of the list under the pointer, as it is drawn.
+    const offered = await screen.findByRole('option', { name: '#work-journal-ai' })
+    await user.click(within(offered).getByRole('button'))
+
+    await expect.poll(() => mapped(core)).toBe('work-journal-ai')
+    expect(field.value).toBe('work-journal-ai')
+    await expect
+      .poll(toasts)
+      .toContain('Commits will be filed under #work-journal-ai.')
+  })
+
+  it('maps a name that is typed, and takes the mapping away again when it is emptied', async () => {
+    const user = userEvent.setup()
+    const { core, field } = await addedRepository()
+
+    await user.click(field)
+    await user.keyboard('Beta{Enter}')
+
+    // Stored the way every Note's Project is stored.
+    await expect.poll(() => mapped(core)).toBe('beta')
+    expect(field.value).toBe('beta')
+
+    await user.clear(field)
+    await user.keyboard('{Enter}')
+
+    await expect.poll(() => mapped(core)).toBeNull()
+    expect(field.value).toBe('')
+    await expect.poll(toasts).toContain('Commits will be Unfiled.')
+  })
+
+  it('offers the Predictions the journal already names, under the repository’s own name', async () => {
+    const user = userEvent.setup()
+    const desktop = observingDesktop()
+    desktop.chosenFolder = '/code/work-journal-ai'
+    const { core } = showSettings(desktop, openJournal())
+    await (await core).capture('#alpha shipped the tray')
+    ;(await screen.findByRole('button', { name: 'Add Repository…' })).click()
+    const field = await screen.findByLabelText('Project')
+
+    await user.click(field)
+
+    await expect
+      .poll(async () =>
+        (await screen.findAllByRole('option')).map((each) => each.textContent),
+      )
+      .toEqual(['#work-journal-ai', '#alpha'])
+  })
+
+  it('puts the field back to what it held when the journal refuses the save', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    const refused = openJournal().then((journal) => ({
+      ...journal,
+      setProjectMapping: () => Promise.reject(new Error('no database')),
+    }))
+    const user = userEvent.setup()
+    const desktop = observingDesktop()
+    desktop.chosenFolder = '/code/work-journal-ai'
+    showSettings(desktop, refused)
+    ;(await screen.findByRole('button', { name: 'Add Repository…' })).click()
+    const field = (await screen.findByLabelText('Project')) as HTMLInputElement
+
+    await user.click(field)
+    await user.keyboard('Beta{Enter}')
+
+    // The field comes back before the toast raises, so what the user is told
+    // and what they are looking at agree (ADR 0029).
+    await expect.poll(toasts).toContain('Could not save the Project.')
+    expect(field.value).toBe('')
+  })
+
+  it('keeps the mapping when Enter is pressed with nothing typed', async () => {
+    const user = userEvent.setup()
+    const { core, field } = await addedRepository()
+
+    await user.click(field)
+    await user.keyboard('Beta{Enter}')
+    await expect.poll(() => mapped(core)).toBe('beta')
+
+    // Enter on a field nothing was typed into is no decision at all: only a
+    // field the user has emptied takes the mapping away.
+    await user.keyboard('{Enter}')
+    await new Promise((resolve) => setTimeout(resolve, 20))
+
+    expect(field.value).toBe('beta')
+    expect(await mapped(core)).toBe('beta')
+    expect(toasts()).not.toContain('Commits will be Unfiled.')
+  })
+
+  it('shows the name a rename moved it to, once the journal says so', async () => {
+    const user = userEvent.setup()
+    const { desktop, core, field } = await addedRepository()
+
+    await user.click(field)
+    await user.keyboard('Beta{Enter}')
+    await expect.poll(() => mapped(core)).toBe('beta')
+
+    // A rename in History rewrites the mapping with everything else — and
+    // announces the journal, which is what this row hears it by.
+    await (await core).renameProject('beta', 'gamma')
+    await desktop.announceJournalChanged()
+
+    await expect.poll(() => field.value).toBe('gamma')
+  })
+
+  it('closes the open list on Escape, and only the next Escape closes the window', async () => {
+    const user = userEvent.setup()
+    const { desktop, field } = await addedRepository()
+
+    // Focusing opens the list — and an open list is a popup, which closes
+    // before the window ever sees the keystroke (History's Escape order).
+    await user.click(field)
+    await expect.poll(() => screen.queryAllByRole('option').length).toBeGreaterThan(0)
+
+    await user.keyboard('{Escape}')
+    expect(screen.queryAllByRole('option')).toEqual([])
+    expect(desktop.windowsClosed).toBe(0)
+
+    // Closed and abandoned, the keystroke is the window's again.
+    await user.keyboard('{Escape}')
+    await expect.poll(() => desktop.windowsClosed).toBe(1)
+  })
+
+  it('gives Escape back to the window once there is nothing to abandon', async () => {
+    const user = userEvent.setup()
+    const { desktop, core, field } = await addedRepository()
+
+    await user.click(field)
+    await user.keyboard('Beta{Enter}')
+    await expect.poll(() => mapped(core)).toBe('beta')
+
+    // What was typed is the field's to abandon, and the window stays.
+    await user.keyboard('Gamma{Escape}')
+    expect(field.value).toBe('beta')
+    expect(desktop.windowsClosed).toBe(0)
+
+    // Abandoned, the window has Escape back.
+    await user.keyboard('{Escape}')
+    await expect.poll(() => desktop.windowsClosed).toBe(1)
+  })
+
+  it('saves two quick changes in the order they were made', async () => {
+    const first = heldWrite()
+    const journal = openJournal().then((core) => ({
+      ...core,
+      setProjectMapping: (repository: string, project: string | null) => {
+        if (first.unused) {
+          first.unused = false
+          return first.held.then(() => core.setProjectMapping(repository, project))
+        }
+        return core.setProjectMapping(repository, project)
+      },
+    }))
+    const user = userEvent.setup()
+    const desktop = observingDesktop()
+    desktop.chosenFolder = '/code/work-journal-ai'
+    const { core } = showSettings(desktop, journal)
+    ;(await screen.findByRole('button', { name: 'Add Repository…' })).click()
+    const field = (await screen.findByLabelText('Project')) as HTMLInputElement
+
+    await user.click(field)
+    await user.keyboard('Beta{Enter}')
+    await user.clear(field)
+    await user.keyboard('Gamma{Enter}')
+    first.settle('saved')
+
+    // The older save must not settle last and hold the journal where the
+    // field no longer is.
+    await expect.poll(() => mapped(core)).toBe('gamma')
+    expect(field.value).toBe('gamma')
+  })
+
+  it('puts nothing back when a save is refused after a newer one has landed', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    const first = heldWrite()
+    const journal = openJournal().then((core) => ({
+      ...core,
+      setProjectMapping: (repository: string, project: string | null) => {
+        if (first.unused) {
+          first.unused = false
+          return first.held.then(() => core.setProjectMapping(repository, project))
+        }
+        return core.setProjectMapping(repository, project)
+      },
+    }))
+    const user = userEvent.setup()
+    const desktop = observingDesktop()
+    desktop.chosenFolder = '/code/work-journal-ai'
+    const { core } = showSettings(desktop, journal)
+    ;(await screen.findByRole('button', { name: 'Add Repository…' })).click()
+    const field = (await screen.findByLabelText('Project')) as HTMLInputElement
+
+    await user.click(field)
+    await user.keyboard('Beta{Enter}')
+    await user.clear(field)
+    await user.keyboard('Gamma{Enter}')
+    first.settle('refused')
+
+    // The refusal is said of the save it belongs to — and a rollback is
+    // discarded once a newer change has landed (ADR 0028): what the newer
+    // save put down stays, in the field and in the journal.
+    await expect.poll(() => mapped(core)).toBe('gamma')
+    expect(field.value).toBe('gamma')
+    await expect.poll(toasts).toContain('Commits will be filed under #gamma.')
+  })
+})
+
+/** A write whose settlement this test decides, and with what. */
+function heldWrite() {
+  let settle!: (outcome: 'saved' | 'refused') => void
+  const held = new Promise<void>((resolve, reject) => {
+    settle = (outcome) =>
+      outcome === 'saved' ? resolve() : reject(new Error('no database'))
+  })
+  held.catch(() => {})
+  return { held, settle, unused: true }
+}

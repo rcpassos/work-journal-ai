@@ -1,3 +1,5 @@
 # Project is a first-class filing dimension
 
+> Amended by [#262](https://github.com/rcpassos/work-journal-ai/issues/262): a Project name lives in one other place too — on a **Project Mapping**, the value a repository's Observed Notes arrive filed under (ADR 0045). The decision here is untouched: a mapping is a value on the mapping, not a registry row, so predictions and pickers are still `DISTINCT` over what names a Project — Notes and mappings now, rather than Notes alone — and a name nothing holds is still gone.
+
 A Note may be filed under at most one optional Project, stored beside Journal Day — not as markup left in the Body. The `#name` Project Marker is consumed at Capture; Body is only what remains. Projects have no registry: they exist only as distinct values on Notes, so predictions and pickers are `DISTINCT` over current Notes, and a name with nothing left under it is gone. Rejected: tags-in-body (Filter and rename become text surgery) and multi-project notes (a second singular filing dimension stays coherent with Journal Day; multi-value is tags under another name).

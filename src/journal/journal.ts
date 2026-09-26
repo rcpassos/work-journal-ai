@@ -463,25 +463,29 @@ export interface Journal {
    * Files a Note under a different Project, or clears it to Unfiled. Captured
    * At, Body and Journal Day are untouched — Project is filing, not wording.
    * Null is Unfiled. A name is stored lowercase; the same Project is not an
-   * edit.
+   * edit. Filing one Note is one Note's business and never writes back to a
+   * Project Mapping: an Observed Note the user refiles by hand stays where
+   * they put it, and no later sweep moves it.
    */
   editProject(id: string, project: string | null): Promise<Note>
   /**
-   * Changes one Project into another on every Note filed under it, in one
-   * operation. Correcting a typo, or renaming a stream of work — the filing of
-   * a whole stream is one decision, not one edit per Note. There is no
-   * registry to update and no Body text to rewrite: Projects are values on
-   * Notes, so the rename is the UPDATE, and the Notes are what carries it.
+   * Changes one Project into another on every Note filed under it, and on
+   * every Project Mapping naming it, in one operation. Correcting a typo, or
+   * renaming a stream of work — the filing of a whole stream is one decision,
+   * not one edit per Note. There is no registry to update and no Body text to
+   * rewrite: Projects are values on Notes and on mappings, so the rename is
+   * the UPDATEs, and those are what carry it.
    *
    * Both names are normalized and validated by the same rules a single filing
-   * obeys. A target with Notes of its own is merged into: the streams become
-   * one, and no duplicate Project can outlive the operation. A target that is
-   * the source after normalization does nothing and marks nothing edited.
+   * obeys. A target with Notes or mappings of its own is merged into: the
+   * streams become one, and nothing afterwards distinguishes a merged mapping
+   * from a filed one. A target that is the source after normalization does
+   * nothing and marks nothing edited.
    *
    * Every moved Note receives the same Edited At instant — the rename is one
    * decision about the stream, applied at one moment — and Captured At, Body
-   * and Journal Day are untouched. A source with no Notes under it is refused:
-   * a rename that moved nothing would report a correction the record never
+   * and Journal Day are untouched. A source nothing names is refused: a
+   * rename that moved nothing would report a correction the record never
    * made, and with no registry there is nothing left of the name to be true
    * about.
    */
@@ -679,17 +683,40 @@ export interface Journal {
    */
   deleteTask(id: string): Promise<void>
   /**
-   * Project names currently on Notes, matched by case-insensitive prefix.
-   * Distinct and sorted — there is no registry, so a name with no remaining
-   * Notes is gone. What Capture offers as Predictions while the user types
-   * after `#`.
+   * The Project one repository's Observed Notes arrive filed under — the
+   * whole of a Project Mapping, keyed on the repository's identity, so every
+   * worktree of one repository answers with the same filing. Null is Unfiled:
+   * a repository with no mapping produces Unfiled Notes, and nothing is ever
+   * inferred from a path. See docs/adr/0045-a-project-mapping-files-what-arrives.md.
+   */
+  projectMapping(repository: string): Promise<string | null>
+  /**
+   * Creates, changes or removes one repository's Project Mapping. A name
+   * obeys the Note's own rule — stored lowercase, compared case-insensitively
+   * — and null removes the row rather than mapping the repository to nothing:
+   * Unfiled is the absence of a mapping. Naming what it already names is not
+   * a change.
+   *
+   * A mapping decides how work arrives and is never written back to: it is
+   * read once, as a commit becomes a Note, and a Note the user refiles by
+   * hand stays where they put it.
+   */
+  setProjectMapping(repository: string, project: string | null): Promise<void>
+  /**
+   * Project names the journal still names, matched by case-insensitive
+   * prefix. Distinct and sorted — there is no registry, so a name nothing
+   * holds any more is gone. What Capture offers as Predictions while the user
+   * types after `#`. A name held only by a Project Mapping is here too: its
+   * repository still files under it.
    */
   projectPredictions(prefix: string): Promise<string[]>
   /**
-   * Every Project currently on a Note, sorted. The same absence of a registry
-   * as Predictions — a name with nothing left under it is gone — but a
-   * different question: what History can narrow the Filter to, asked with no
-   * prefix and nobody typing.
+   * Every Project the journal still names, sorted. The same absence of a
+   * registry as Predictions — a name nothing holds is gone — but a different
+   * question: what History can narrow the Filter to, asked with no prefix and
+   * nobody typing. Notes and Project Mappings together, so a stream between
+   * two Notes — or waiting on a repository's next commit — stays discoverable,
+   * renameable and mergeable.
    */
   projectsInUse(): Promise<string[]>
   /**
@@ -1114,15 +1141,25 @@ const UPDATE_PROJECT = `
 `
 
 /**
- * The whole of a Project rename: one statement, because the Project is a value
- * on the Note and not a row anywhere else. There is no registry to update and
- * no Body text to rewrite — see docs/adr/0007-project-is-first-class-filing.md
- * — so renaming a stream is this, and merging two streams is this too: every
- * Note under the source is filed under the target, and nothing distinguishes
- * a merged Note from a filed one afterwards.
+ * The Notes half of a whole Project rename: one statement, because the
+ * Project is a value on the Note and not a row anywhere else. There is no
+ * registry to update and no Body text to rewrite — see
+ * docs/adr/0007-project-is-first-class-filing.md — so renaming a stream is
+ * this, and merging two streams is this too: every Note under the source is
+ * filed under the target, and nothing distinguishes a merged Note from a
+ * filed one afterwards.
+ *
+ * A Project Mapping names a Project the same way and is rewritten by its own
+ * statement below, in the same transaction — one operation over both, or the
+ * Notes and a repository's filing would come apart over the same name.
  */
 const UPDATE_PROJECT_EVERYWHERE = `
   UPDATE notes SET project = ?, edited_at = ? WHERE project = ?
+`
+
+/** The Project Mapping half of that same rename. */
+const UPDATE_MAPPING_PROJECT_EVERYWHERE = `
+  UPDATE project_mappings SET project = ? WHERE project = ?
 `
 
 const DELETE_NOTE = `
@@ -1249,37 +1286,71 @@ const SELECT_LAST_COMMIT_NOTE = `
   LIMIT 1
 `
 
-/** Every Project still on a Note: the Filter's Project axis, enumerated. */
+/**
+ * Every Project name the journal still holds, as one column: the filing of a
+ * Note, and the value a Project Mapping names. A mapping holds its name out
+ * past the last Note under it — the repository still files its next commit
+ * there — so a name is not gone when the Notes are.
+ */
+const NAMED_PROJECTS = `
+  SELECT project FROM notes WHERE project IS NOT NULL
+  UNION
+  SELECT project FROM project_mappings
+`
+
+/** Every Project still named, on a Note or by a mapping: the Filter's Project axis, enumerated. */
 const SELECT_PROJECTS_IN_USE = `
   SELECT DISTINCT project
-  FROM notes
-  WHERE project IS NOT NULL
+  FROM (${NAMED_PROJECTS})
   ORDER BY project ASC
 `
 
 /**
- * Whether a Project still has Notes under it, counted rather than read: a
- * rename refuses a source that has none, so a caller never reports a rename
- * that moved nothing — and with no registry, the Notes are the only place the
- * answer lives.
+ * Whether anything still names one Project — the Notes filed under it and the
+ * mappings naming it, together. A rename refuses a source nothing names, so a
+ * caller never reports a rename that moved nothing.
  */
-const COUNT_NOTES_UNDER_PROJECT = `
-  SELECT COUNT(*) AS count
-  FROM notes
-  WHERE project = ?
+const COUNT_NAMING_PROJECT = `
+  SELECT
+    (SELECT COUNT(*) FROM notes WHERE project = ?)
+    + (SELECT COUNT(*) FROM project_mappings WHERE project = ?) AS count
 `
 
 /**
- * Distinct Projects still on Notes. Prefix is matched case-insensitively;
+ * Distinct Projects still named. Prefix is matched case-insensitively;
  * Projects are already stored lowercase, so the LIKE is enough. Sorted so the
  * list is stable for Capture Predictions.
  */
 const SELECT_PROJECT_PREDICTIONS = `
   SELECT DISTINCT project
-  FROM notes
-  WHERE project IS NOT NULL
-    AND project LIKE ? ESCAPE '\\'
+  FROM (${NAMED_PROJECTS})
+  WHERE project LIKE ? ESCAPE '\\'
   ORDER BY project ASC
+`
+
+/** One repository's Project Mapping, as the Project it names. */
+const SELECT_PROJECT_MAPPING = `
+  SELECT project
+  FROM project_mappings
+  WHERE repository = ?
+`
+
+/**
+ * A Project Mapping created, or one corrected: one row per repository, so
+ * naming a Project the row already names is the same row again.
+ */
+const UPSERT_PROJECT_MAPPING = `
+  INSERT INTO project_mappings (repository, project)
+  VALUES (?, ?)
+  ON CONFLICT (repository) DO UPDATE SET project = excluded.project
+`
+
+/**
+ * A mapping removed. Unfiled is the absence of a mapping rather than a
+ * mapping to nothing, so clearing a repository's field deletes its row.
+ */
+const DELETE_PROJECT_MAPPING = `
+  DELETE FROM project_mappings WHERE repository = ?
 `
 
 export function createJournal({
@@ -1519,15 +1590,22 @@ export function createJournal({
       if (target === source) return
 
       const [row] = await driver.select<{ count: number }>(
-        COUNT_NOTES_UNDER_PROJECT,
-        [source],
+        COUNT_NAMING_PROJECT,
+        [source, source],
       )
       if (row === undefined || row.count === 0) {
-        throw new Error(`No Notes are filed under ${formatProject(source)}.`)
+        throw new Error(
+          `No Notes are filed under ${formatProject(source)}, and no Project Mapping names it.`,
+        )
       }
 
       const editedAt = clock.now().toISOString()
-      await driver.execute(UPDATE_PROJECT_EVERYWHERE, [target, editedAt, source])
+      // Notes and mappings in one operation, or half a rename would leave a
+      // repository filing under a name the Notes have left behind.
+      await driver.transaction([
+        { sql: UPDATE_PROJECT_EVERYWHERE, params: [target, editedAt, source] },
+        { sql: UPDATE_MAPPING_PROJECT_EVERYWHERE, params: [target, source] },
+      ])
     },
 
     async delete(id) {
@@ -1977,6 +2055,32 @@ export function createJournal({
         { sql: DELETE_OCCURRENCES_OF_TASK, params: [id] },
         { sql: DELETE_TASK, params: [id] },
       ])
+    },
+
+    async projectMapping(repository) {
+      const [row] = await driver.select<{ project: string }>(
+        SELECT_PROJECT_MAPPING,
+        [repository],
+      )
+      return row?.project ?? null
+    },
+
+    async setProjectMapping(repository, project) {
+      // The name is held to the Note's own rule by the same function, so a
+      // mapping can never name what a Capture could not have typed.
+      const next = project === null ? null : projectName(project)
+      const [row] = await driver.select<{ project: string }>(
+        SELECT_PROJECT_MAPPING,
+        [repository],
+      )
+      const current = row?.project ?? null
+      if (next === current) return
+
+      if (next === null) {
+        await driver.execute(DELETE_PROJECT_MAPPING, [repository])
+        return
+      }
+      await driver.execute(UPSERT_PROJECT_MAPPING, [repository, next])
     },
 
     async projectPredictions(prefix) {
