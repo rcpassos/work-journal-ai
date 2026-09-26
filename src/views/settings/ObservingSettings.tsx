@@ -461,6 +461,17 @@ function RepositoryEntry({
     }
   }, [desktop, journal, listed.repository])
 
+  // The clock the Last line reads its "ago" against: fixed at render, it
+  // would say "just now" all afternoon while the section sits open. It moves
+  // about once a minute — the words go no finer than "5 min ago" — and only
+  // while the section is on screen.
+  const [now, setNow] = useState(() => new Date())
+  useEffect(() => {
+    if (!onScreen) return
+    const timer = setInterval(() => setNow(new Date()), 60_000)
+    return () => clearInterval(timer)
+  }, [onScreen])
+
   // What is ticked, then what is suggested, one address in any case.
   const offered = [...listed.identities]
   for (const identity of suggested) {
@@ -493,7 +504,7 @@ function RepositoryEntry({
 
       {last !== null ? (
         <span className="type-micro text-muted-foreground">
-          Last: {last.body} · {formatAgo(new Date(last.arrivedAt), new Date())}
+          Last: {last.body} · {formatAgo(new Date(last.arrivedAt), now)}
         </span>
       ) : (
         asked && (

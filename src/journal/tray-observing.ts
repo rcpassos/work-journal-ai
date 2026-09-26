@@ -12,8 +12,8 @@
  * whenever Observing changes in any window, what the menu should read is
  * computed from the file and handed to the tray. A timed pause that later
  * runs out is told about the moment it does — by the timer, or by the wake
- * after a sleep — because the menu is read as it is attached by whoever opens
- * it without a click: VoiceOver, the keyboard. An end that has passed has to
+ * after a sleep — because the menu is read as it stands by whoever opens it
+ * without a click: VoiceOver, the keyboard. An end that has passed has to
  * have passed by the menu too, not only by the next one to be clicked open.
  *
  * Headless, like the tray count, and built from settings, a Desktop and a

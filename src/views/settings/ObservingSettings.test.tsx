@@ -569,6 +569,36 @@ describe('a repository that is working', () => {
     ).toBeTruthy()
   })
 
+  it('ages its "ago" as the Last line sits there', async () => {
+    const { journal } = await journalWith([
+      {
+        source: 'commit',
+        eventKey: '9a1c@/code/work-journal-ai/.git',
+        body: 'Age in place',
+        happenedAt: new Date().toISOString(),
+        project: null,
+      },
+    ])
+    const { desktop } = listedAt('/code/work-journal-ai', WORK_JOURNAL, journal)
+    // Faked from the render on — Date and the line's own tick — so the words
+    // move as the test says: they are computed at render and would otherwise
+    // say "just now" for the rest of the afternoon. The rest of the timers
+    // stay real: the journal's own work needs them.
+    vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] })
+    try {
+      showSettings(desktop, journal)
+      expect(await screen.findByText(/· just now$/)).toBeTruthy()
+
+      await act(async () => {
+        vi.advanceTimersByTime(2 * 60 * 60 * 1000)
+      })
+
+      expect(screen.getByText(/· 2 h ago$/)).toBeTruthy()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('does not count a Note the user deleted', async () => {
     const { journal, core, notes } = await journalWith([
       {
