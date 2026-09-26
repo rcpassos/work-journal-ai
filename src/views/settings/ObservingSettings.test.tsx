@@ -957,6 +957,24 @@ describe('the Project field', () => {
     await expect.poll(() => field.value).toBe('gamma')
   })
 
+  it('closes the open list on Escape, and only the next Escape closes the window', async () => {
+    const user = userEvent.setup()
+    const { desktop, field } = await addedRepository()
+
+    // Focusing opens the list — and an open list is a popup, which closes
+    // before the window ever sees the keystroke (History's Escape order).
+    await user.click(field)
+    await expect.poll(() => screen.queryAllByRole('option').length).toBeGreaterThan(0)
+
+    await user.keyboard('{Escape}')
+    expect(screen.queryAllByRole('option')).toEqual([])
+    expect(desktop.windowsClosed).toBe(0)
+
+    // Closed and abandoned, the keystroke is the window's again.
+    await user.keyboard('{Escape}')
+    await expect.poll(() => desktop.windowsClosed).toBe(1)
+  })
+
   it('gives Escape back to the window once there is nothing to abandon', async () => {
     const user = userEvent.setup()
     const { desktop, core, field } = await addedRepository()

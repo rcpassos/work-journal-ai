@@ -776,10 +776,13 @@ function ProjectMappingField({
 
   function onKeyDown(event: React.KeyboardEvent<HTMLInputElement>) {
     if (event.key === 'Escape') {
-      // Escape abandons what was typed, and is not the window's to close on
-      // while this field holds the keystroke. Once there is nothing left to
-      // abandon, the keystroke is the window's again.
-      if (draft === null && highlight === null) return
+      // Escape is the field's while there is something of the user's in it:
+      // what was typed is abandoned, and an open list is a popup, which
+      // closes before the window ever sees the keystroke (History's Escape
+      // order). Abandoned and closed, the keystroke is the window's again.
+      const holding =
+        draft !== null || highlight !== null || (open && options.length > 0)
+      if (!holding) return
       event.stopPropagation()
       abandon()
       return
