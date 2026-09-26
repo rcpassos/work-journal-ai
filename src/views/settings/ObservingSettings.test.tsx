@@ -922,4 +922,132 @@ describe('the Project field', () => {
     await expect.poll(toasts).toContain('Could not save the Project.')
     expect(field.value).toBe('')
   })
+
+  it('keeps the mapping when Enter is pressed with nothing typed', async () => {
+    const user = userEvent.setup()
+    const { core, field } = await addedRepository()
+
+    await user.click(field)
+    await user.keyboard('Beta{Enter}')
+    await expect.poll(() => mapped(core)).toBe('beta')
+
+    // Enter on a field nothing was typed into is no decision at all: only a
+    // field the user has emptied takes the mapping away.
+    await user.keyboard('{Enter}')
+    await new Promise((resolve) => setTimeout(resolve, 20))
+
+    expect(field.value).toBe('beta')
+    expect(await mapped(core)).toBe('beta')
+    expect(toasts()).not.toContain('Commits will be Unfiled.')
+  })
+
+  it('shows the name a rename moved it to, once the journal says so', async () => {
+    const user = userEvent.setup()
+    const { desktop, core, field } = await addedRepository()
+
+    await user.click(field)
+    await user.keyboard('Beta{Enter}')
+    await expect.poll(() => mapped(core)).toBe('beta')
+
+    // A rename in History rewrites the mapping with everything else — and
+    // announces the journal, which is what this row hears it by.
+    await (await core).renameProject('beta', 'gamma')
+    await desktop.announceJournalChanged()
+
+    await expect.poll(() => field.value).toBe('gamma')
+  })
+
+  it('gives Escape back to the window once there is nothing to abandon', async () => {
+    const user = userEvent.setup()
+    const { desktop, core, field } = await addedRepository()
+
+    await user.click(field)
+    await user.keyboard('Beta{Enter}')
+    await expect.poll(() => mapped(core)).toBe('beta')
+
+    // What was typed is the field's to abandon, and the window stays.
+    await user.keyboard('Gamma{Escape}')
+    expect(field.value).toBe('beta')
+    expect(desktop.windowsClosed).toBe(0)
+
+    // Abandoned, the window has Escape back.
+    await user.keyboard('{Escape}')
+    await expect.poll(() => desktop.windowsClosed).toBe(1)
+  })
+
+  it('saves two quick changes in the order they were made', async () => {
+    const first = heldWrite()
+    const journal = openJournal().then((core) => ({
+      ...core,
+      setProjectMapping: (repository: string, project: string | null) => {
+        if (first.unused) {
+          first.unused = false
+          return first.held.then(() => core.setProjectMapping(repository, project))
+        }
+        return core.setProjectMapping(repository, project)
+      },
+    }))
+    const user = userEvent.setup()
+    const desktop = observingDesktop()
+    desktop.chosenFolder = '/code/work-journal-ai'
+    const { core } = showSettings(desktop, journal)
+    ;(await screen.findByRole('button', { name: 'Add Repository…' })).click()
+    const field = (await screen.findByLabelText('Project')) as HTMLInputElement
+
+    await user.click(field)
+    await user.keyboard('Beta{Enter}')
+    await user.clear(field)
+    await user.keyboard('Gamma{Enter}')
+    first.settle('saved')
+
+    // The older save must not settle last and hold the journal where the
+    // field no longer is.
+    await expect.poll(() => mapped(core)).toBe('gamma')
+    expect(field.value).toBe('gamma')
+  })
+
+  it('puts nothing back when a save is refused after a newer one has landed', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    const first = heldWrite()
+    const journal = openJournal().then((core) => ({
+      ...core,
+      setProjectMapping: (repository: string, project: string | null) => {
+        if (first.unused) {
+          first.unused = false
+          return first.held.then(() => core.setProjectMapping(repository, project))
+        }
+        return core.setProjectMapping(repository, project)
+      },
+    }))
+    const user = userEvent.setup()
+    const desktop = observingDesktop()
+    desktop.chosenFolder = '/code/work-journal-ai'
+    const { core } = showSettings(desktop, journal)
+    ;(await screen.findByRole('button', { name: 'Add Repository…' })).click()
+    const field = (await screen.findByLabelText('Project')) as HTMLInputElement
+
+    await user.click(field)
+    await user.keyboard('Beta{Enter}')
+    await user.clear(field)
+    await user.keyboard('Gamma{Enter}')
+    first.settle('refused')
+
+    // The refusal is said of the save it belongs to — and a rollback is
+    // discarded once a newer change has landed (ADR 0028): what the newer
+    // save put down stays, in the field and in the journal.
+    await expect.poll(() => mapped(core)).toBe('gamma')
+    expect(field.value).toBe('gamma')
+    await expect.poll(toasts).toContain('Commits will be filed under #gamma.')
+  })
 })
+
+/** A write whose settlement this test decides, and with what. */
+function heldWrite() {
+  let settle!: (outcome: 'saved' | 'refused') => void
+  const held = new Promise<void>((resolve, reject) => {
+    settle = (outcome) =>
+      outcome === 'saved' ? resolve() : reject(new Error('no database'))
+  })
+  held.catch(() => {})
+  return { held, settle, unused: true }
+}

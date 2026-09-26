@@ -431,33 +431,85 @@ function RepositoryEntry({
   // that a newer one cleared.
   const onScreen = useOnScreen()
   const reads = useRef(0)
+  // The mapping's own reads and writes, in order with each other: a read
+  // queues behind the saves, so one of them never shows a write that has not
+  // landed yet, and only the newest read is ever applied. A read that began
+  // before a press is discarded — an arriving read may only seed state that
+  // has not been touched since the snapshot was taken (ADR 0028) — and so is
+  // a rollback: a save refused once a newer change has landed puts nothing
+  // back over it.
+  const writes = useRef<Promise<void>>(Promise.resolve())
+  const touches = useRef(0)
+  const mappingReads = useRef(0)
+
+  // Read when the row opens and again whenever the journal changes: a rename
+  // or a merge in History moves what this row is showing, and the field says
+  // the name it moved to.
   useEffect(() => {
-    void (async () => {
+    let listening = true
+    let stop: (() => void) | null = null
+    async function readMapping(): Promise<void> {
+      const mine = (mappingReads.current += 1)
+      const touch = touches.current
+      await writes.current
       try {
         const core = await journal
-        setMapping(await core.projectMapping(listed.repository))
+        const project = await core.projectMapping(listed.repository)
+        if (
+          !listening ||
+          mine !== mappingReads.current ||
+          touch !== touches.current
+        ) {
+          return
+        }
+        setMapping(project)
       } catch (error) {
         console.error('could not read the Project Mapping', error)
       }
-    })()
-  }, [journal, listed.repository])
+    }
+    void readMapping()
+    void desktop
+      .onJournalChanged(() => {
+        void readMapping()
+      })
+      .then((unlisten) => {
+        if (listening) stop = unlisten
+        else unlisten()
+      })
+    return () => {
+      listening = false
+      stop?.()
+    }
+  }, [desktop, journal, listed.repository])
 
   /**
    * One repository's Project Mapping — which Project its Notes arrive filed
    * under. Journal content rather than a setting, so the journal is what is
    * written. The field moves under the press, and a write the journal refuses
    * is rolled back before the toast raises, so what the user is told and what
-   * they can see never disagree (ADR 0029).
+   * they can see never disagree (ADR 0029). Two presses close together are
+   * written one behind the other, so the older cannot settle last and hold
+   * the journal where the field no longer is.
+   *
+   * The journal moving is announced beside the write that moved it, never as
+   * part of it: an announcement that fails is logged, not raised as a save
+   * refused that in truth took.
    */
   function pick(project: string | null) {
     const before = mapping
+    const mine = (touches.current += 1)
     setMapping(project)
+    const write = writes.current.then(async () => {
+      const core = await journal
+      await core.setProjectMapping(listed.repository, project)
+      await desktop.announceJournalChanged().catch((error: unknown) => {
+        console.error('could not announce the Project Mapping', error)
+      })
+    })
+    writes.current = write.catch(() => undefined)
     saySettled(
       says,
-      (async () => {
-        const core = await journal
-        await core.setProjectMapping(listed.repository, project)
-      })(),
+      write,
       {
         id: `observing-project-${listed.repository}`,
         saved:
@@ -466,7 +518,11 @@ function RepositoryEntry({
             : `Commits will be filed under ${formatProject(project)}.`,
         couldNot: 'Could not save the Project.',
         what: 'could not change the Project Mapping',
-        onRefused: () => setMapping(before),
+        // A rollback belongs to the change that started it, and is discarded
+        // once a newer change has landed (ADR 0028).
+        onRefused: () => {
+          if (mine === touches.current) setMapping(before)
+        },
       },
     )
   }
@@ -721,7 +777,9 @@ function ProjectMappingField({
   function onKeyDown(event: React.KeyboardEvent<HTMLInputElement>) {
     if (event.key === 'Escape') {
       // Escape abandons what was typed, and is not the window's to close on
-      // while this field holds the keystroke.
+      // while this field holds the keystroke. Once there is nothing left to
+      // abandon, the keystroke is the window's again.
+      if (draft === null && highlight === null) return
       event.stopPropagation()
       abandon()
       return
@@ -751,7 +809,10 @@ function ProjectMappingField({
     // Nothing pointed at, so what has been typed is the decision: an emptied
     // field is the repository left Unfiled — the way clearing a Project has
     // always been said — and a name is mapped as the record stores it. What
-    // the record refuses is no decision at all, and stays in the field.
+    // the record refuses is no decision at all, and stays in the field. A
+    // field nothing was typed into is no decision either: only one the user
+    // emptied takes the mapping away.
+    if (draft === null) return
     const prefix = projectPrefix(typed)
     if (prefix === '') {
       abandon()
