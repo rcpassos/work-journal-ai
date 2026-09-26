@@ -9,21 +9,37 @@ import {
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
+import {
+  Menu,
+  MenuContent,
+  MenuItem,
+  MenuTrigger,
+} from '@/components/ui/menu'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { useOnScreenToast } from '@/components/on-screen-toast'
+import { useOnScreen } from '@/components/on-screen-context'
 import {
+  formatAgo,
   formatProject,
   isProjectName,
   projectName,
   repositoryName,
   type Journal,
 } from '@/journal/journal'
-import type { Desktop, RepositoryUnreadable } from '@/platform/desktop'
+import type {
+  Desktop,
+  PauseLength,
+  PauseState,
+  RepositoryUnreadable,
+} from '@/platform/desktop'
 import type { AppSettings } from '@/settings/app-settings'
 import {
   addRepository,
+  pauseState,
+  pauseObserving,
   removeRepository,
+  resumeObserving,
   setIdentities,
   setIgnoredPrefixes,
   turnObserving,
@@ -38,13 +54,14 @@ import { useSeededState } from './useSeededState'
 
 /**
  * Whether the user's commits are observed, from which repositories, which
- * identities count as the user in each, and which Project each repository's
- * Notes arrive filed under. Every change to the list is a rule from
- * `@/settings/observing` applied to the file as it stands — consent is kept
- * as the instants it was given, so the file, not this view, decides them —
- * and the view shows what the file came to hold. A Project Mapping is journal
- * content rather than configuration, so it is written to the journal and
- * shown as it reads there.
+ * identities count as the user in each, which Project each repository's
+ * Notes arrive filed under, and the pause — which is done in the moment from
+ * the Tray Menu and is shown and resumed here too. Every change to the list
+ * is a rule from `@/settings/observing` applied to the file as it stands —
+ * consent and pauses are kept as the instants they were given, so the file,
+ * not this view, decides them — and the view shows what the file came to
+ * hold. A Project Mapping is journal content rather than configuration, so
+ * it is written to the journal and shown as it reads there.
  */
 export default function ObservingSettings({
   desktop,
@@ -54,6 +71,7 @@ export default function ObservingSettings({
 }: {
   desktop: Desktop
   settings: AppSettings
+  /** The journal the repository rows read their last Note from, and hold their Project Mapping in. */
   journal: Promise<Journal>
   initialSettings: Promise<SettingsInitialState | null> | null
 }) {
@@ -68,6 +86,11 @@ export default function ObservingSettings({
   // shown only for the newest one: an older save settling after a newer
   // press would otherwise put the older list back for a moment.
   const changes = useRef(0)
+  // How many are still in flight — which is when a change from another
+  // window is not taken from the announcement: the save already running
+  // answers with the file as it stands, and it holds everything written
+  // before it, this window's press included.
+  const saving = useRef(0)
 
   /**
    * One change, shown at once and then as the file came to hold it. The view
@@ -80,16 +103,19 @@ export default function ObservingSettings({
     messages: { id: string; saved: string; couldNot: string },
   ) {
     const started = ++changes.current
+    saving.current += 1
     const rollback = setObserving((current) => change(current, Date.now()))
     saySettled(says, settings.updateObserving(change), {
       ...messages,
       what: 'could not change what is observed',
       onSaved: (saved) => {
+        saving.current -= 1
         if (changes.current === started) setObserving(saved)
       },
       // Back to what the file holds now, for the same reason the calendar
       // ticks roll back that way.
       onRefused: () => {
+        saving.current -= 1
         void settings.load().then(
           (stored) => rollback(stored.observing),
           () => rollback(observing),
@@ -97,6 +123,34 @@ export default function ObservingSettings({
       },
     })
   }
+
+  // A pause is taken from the Tray Menu as often as from here, and turning
+  // Observing on or off changes what this section shows. The file is the one
+  // fact either way.
+  useEffect(() => {
+    let listening = true
+    let stop: (() => void) | null = null
+    void desktop
+      .onObservingChanged(() => {
+        if (saving.current > 0) return
+        void settings.load().then(
+          (stored) => {
+            if (listening) setObserving(stored.observing)
+          },
+          (error: unknown) => {
+            console.error('could not read what Observing came to hold', error)
+          },
+        )
+      })
+      .then((unlisten) => {
+        if (listening) stop = unlisten
+        else unlisten()
+      })
+    return () => {
+      listening = false
+      stop?.()
+    }
+  }, [desktop, settings, setObserving])
 
   function toggle(enabled: boolean) {
     update((current, now) => turnObserving(current, enabled, now), {
@@ -136,12 +190,18 @@ export default function ObservingSettings({
       // the view may not have read the file yet.
       let listed: ObservedRepository | undefined
       const started = ++changes.current
-      const saved = await settings.updateObserving((current, now) => {
-        listed = current.repositories.find(
-          ({ repository }) => repository === added.repository,
-        )
-        return listed === undefined ? addRepository(current, added, now) : current
-      })
+      saving.current += 1
+      let saved: Observing
+      try {
+        saved = await settings.updateObserving((current, now) => {
+          listed = current.repositories.find(
+            ({ repository }) => repository === added.repository,
+          )
+          return listed === undefined ? addRepository(current, added, now) : current
+        })
+      } finally {
+        saving.current -= 1
+      }
       if (changes.current === started) setObserving(saved)
       if (listed !== undefined) {
         says.say(`Already added as ${repositoryName(listed.repository)}.`, 'observing-repositories')
@@ -155,6 +215,72 @@ export default function ObservingSettings({
       console.error('could not add a repository', error)
       says.failure('Could not add that repository.', 'observing-repositories')
     }
+  }
+
+  // What the pause controls say, from the same rule the Tray Menu's are
+  // given — read against the clock when the state changes, and again the
+  // moment a timed pause runs out, so the row says "Paused" only while one
+  // is in force. And read again whenever the clock has moved while the timer
+  // could not: a Mac that slept through a pause's end stops it part-way, and
+  // a section that sat off screen keeps its row the while — so waking and
+  // coming back on screen are both a moment to read the clock again.
+  const onScreen = useOnScreen()
+  // Ticked by the wake below, and nothing else: waking is one more reason to
+  // read the clock again. One listener for the whole section — the pause row
+  // here and every repository's Last line both hear it through this.
+  const [woke, setWoke] = useState(0)
+  const [pause, setPause] = useState<PauseState>({ state: 'nothing' })
+  useEffect(() => {
+    const active = pauseState(observing, Date.now())
+    // Sampled here rather than in the render: the clock is not a render's to
+    // read — the same reason the coordinated initial read sets its state from
+    // an effect.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setPause(active)
+    if (active.state !== 'paused' || active.until === null) return
+    const timer = setTimeout(() => {
+      setPause(pauseState(observing, Date.now()))
+    }, Math.max(0, active.until - Date.now()))
+    return () => clearTimeout(timer)
+  }, [observing, onScreen, woke])
+
+  // What the pause row and the Last lines read is the clock, and a sleeping
+  // Mac runs no timer: the wake is what says the clock moved on its own.
+  useEffect(() => {
+    let listening = true
+    let stop: (() => void) | null = null
+    void desktop
+      .onSystemWoke(() => {
+        if (listening) setWoke((count) => count + 1)
+      })
+      .then((unlisten) => {
+        if (listening) stop = unlisten
+        else unlisten()
+      })
+    return () => {
+      listening = false
+      stop?.()
+    }
+  }, [desktop])
+
+  function pauseFor(length: PauseLength) {
+    update((current, now) => pauseObserving(current, length, now), {
+      id: 'observing-pause',
+      saved: {
+        'an-hour': 'Nothing done in the next hour will be added to the journal.',
+        'until-tomorrow': 'Nothing done before tomorrow will be added to the journal.',
+        'until-resumed': 'Nothing done before you resume will be added to the journal.',
+      }[length],
+      couldNot: 'Could not pause observing.',
+    })
+  }
+
+  function resume() {
+    update((current, now) => resumeObserving(current, now), {
+      id: 'observing-pause',
+      saved: 'Your commits will be added to the journal again.',
+      couldNot: 'Could not resume observing.',
+    })
   }
 
   return (
@@ -181,6 +307,7 @@ export default function ObservingSettings({
               desktop={desktop}
               journal={journal}
               listed={listed}
+              woke={woke}
               onIdentities={(identities) =>
                 update((current) => setIdentities(current, listed.repository, identities), {
                   id: `observing-identities-${listed.repository}`,
@@ -213,6 +340,37 @@ export default function ObservingSettings({
         </>
       )}
 
+      {pause.state === 'running' && (
+        <SettingsRow
+          label="Pause observing"
+          explanation="Work done during a pause never enters the journal — for a screen share, or a client's confidential work. A pause for an hour or until tomorrow ends by itself."
+        >
+          <Menu>
+            <MenuTrigger
+              render={<Button variant="outline" size="sm" />}
+            >
+              Pause observing
+            </MenuTrigger>
+            <MenuContent align="end">
+              <MenuItem onClick={() => pauseFor('an-hour')}>For an hour</MenuItem>
+              <MenuItem onClick={() => pauseFor('until-tomorrow')}>Until tomorrow</MenuItem>
+              <MenuItem onClick={() => pauseFor('until-resumed')}>Until resumed</MenuItem>
+            </MenuContent>
+          </Menu>
+        </SettingsRow>
+      )}
+
+      {pause.state === 'paused' && (
+        <SettingsRow
+          label={pause.label}
+          explanation="Observing is paused. Nothing done during the pause enters the journal — the pause is kept as when the work happened, so a commit from inside it never arrives, however late a sweep meets it."
+        >
+          <Button variant="outline" size="sm" onClick={resume}>
+            Resume
+          </Button>
+        </SettingsRow>
+      )}
+
       <SettingsAside>
         Each commit becomes an ordinary Note: reword it, file it under a
         Project, or delete it. Deleting one refuses that commit for good, and
@@ -228,6 +386,7 @@ function RepositoryEntry({
   desktop,
   journal,
   listed,
+  woke,
   onIdentities,
   onIgnoredPrefixes,
   onRemove,
@@ -235,6 +394,7 @@ function RepositoryEntry({
   desktop: Desktop
   journal: Promise<Journal>
   listed: ObservedRepository
+  woke: number
   onIdentities: (identities: string[]) => void
   onIgnoredPrefixes: (prefixes: string[]) => void
   onRemove: () => void
@@ -252,7 +412,25 @@ function RepositoryEntry({
   // blanks, and reading that back into the field would eat the line being
   // started.
   const [prefixes, setPrefixes] = useState(() => listed.ignoredPrefixes.join('\n'))
+  // The last Note this repository produced, and when it arrived — read from
+  // the Notes' own source columns, so one the user deleted does not count —
+  // or null once it is known there is none. Nothing is said until the journal
+  // has answered.
+  const [last, setLast] = useState<{ body: string; arrivedAt: string } | null>(
+    null,
+  )
+  const [asked, setAsked] = useState(false)
 
+  // Read again when something says this repository moved. The journal is not
+  // that signal: a folder that goes away, or a first commit that becomes no
+  // Note, changes nothing in it — only the sweep sees either happen, and it
+  // says so when what a repository reads as changes. Nothing is read while
+  // the section is off screen, because it is not being looked at: coming back
+  // on screen reads it then. And only the newest read is ever applied — two
+  // of them overlap, and an older one landing late would put a reason back
+  // that a newer one cleared.
+  const onScreen = useOnScreen()
+  const reads = useRef(0)
   useEffect(() => {
     void (async () => {
       try {
@@ -294,20 +472,86 @@ function RepositoryEntry({
   }
 
   useEffect(() => {
-    void desktop.repositoryIdentities(listed.path).then(
-      (read) => {
-        if (read.state === 'read') {
-          setSuggested(read.identities)
-          setUnreadable(null)
-        } else {
-          setUnreadable(read.reason)
-        }
-      },
-      (error: unknown) => {
-        console.error('could not suggest identities', error)
-      },
-    )
-  }, [desktop, listed.path])
+    if (!onScreen) return
+    let listening = true
+    let stop: (() => void) | null = null
+    async function readIdentities(): Promise<void> {
+      const mine = (reads.current += 1)
+      const read = await desktop.repositoryIdentities(listed.path)
+      if (!listening || mine !== reads.current) return
+      if (read.state === 'read') setSuggested(read.identities)
+      // Both answers say why nothing can be read from this repository, when
+      // that is so: the unreadable one has nothing else to say, and one with
+      // suggestions carries the same reason beside them — a repository with
+      // nothing on its branches yet is still worth asking who the user is.
+      setUnreadable(read.reason)
+    }
+    const failed = (error: unknown) =>
+      console.error('could not suggest identities', error)
+    void readIdentities().catch(failed)
+    void desktop
+      .onRepositoryStateChanged(() => {
+        void readIdentities().catch(failed)
+      })
+      .then((unlisten) => {
+        if (listening) stop = unlisten
+        else unlisten()
+      })
+    return () => {
+      listening = false
+      stop?.()
+    }
+  }, [desktop, listed.path, onScreen])
+
+  // A sweep lands while this is open, and "is this on?" is exactly the
+  // question the line answers — so it is read again when the journal changes.
+  useEffect(() => {
+    let listening = true
+    let stop: (() => void) | null = null
+    async function readLast(): Promise<void> {
+      const core = await journal
+      const note = await core.lastCommitNote(listed.repository)
+      if (listening) {
+        setLast(note)
+        setAsked(true)
+      }
+    }
+    const failed = (error: unknown) =>
+      console.error('could not read the last Note of a repository', error)
+    void readLast().catch(failed)
+    void desktop
+      .onJournalChanged(() => {
+        void readLast().catch(failed)
+      })
+      .then((unlisten) => {
+        if (listening) stop = unlisten
+        else unlisten()
+      })
+    return () => {
+      listening = false
+      stop?.()
+    }
+  }, [desktop, journal, listed.repository])
+
+  // The clock the Last line reads its "ago" against: fixed at render, it
+  // would say "just now" all afternoon while the section sits open. It moves
+  // about once a minute — the words go no finer than "5 min ago" — and only
+  // while the section is on screen. Coming back on screen and waking are both
+  // read at once rather than left to the next tick: a line looked at after
+  // either would otherwise keep the time it was left with, saying "5 min ago"
+  // of a Note hours old. The wake is the parent's to hear — one listener for
+  // the whole section — and arrives here as `woke`.
+  const [now, setNow] = useState(() => new Date())
+  useEffect(() => {
+    // Sampled here rather than in the render: the clock is not a render's to
+    // read — the same reason the pause row above sets its own state from an
+    // effect.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setNow(new Date())
+    if (!onScreen) return
+    const timer = setInterval(() => setNow(new Date()), 60_000)
+    return () => clearInterval(timer)
+  }, [onScreen, woke])
 
   // What is ticked, then what is suggested, one address in any case.
   const offered = [...listed.identities]
@@ -338,6 +582,18 @@ function RepositoryEntry({
           Remove
         </Button>
       </div>
+
+      {last !== null ? (
+        <span className="type-micro text-muted-foreground">
+          Last: {last.body} · {formatAgo(new Date(last.arrivedAt), now)}
+        </span>
+      ) : (
+        asked && (
+          <span className="type-micro text-muted-foreground">
+            Nothing yet since you turned this on
+          </span>
+        )
+      )}
 
       {unreadable !== null && (
         <SettingsProblem>
@@ -591,7 +847,7 @@ function describeUnreadable(reason: RepositoryUnreadable): string {
     case 'not-a-repository':
       return 'That folder is not a git repository.'
     case 'no-head':
-      return 'That repository has no commits yet.'
+      return 'The default branch of that repository cannot be resolved.'
     case 'denied':
       return 'macOS is not letting Work Journal read that folder.'
     case 'git-unavailable':

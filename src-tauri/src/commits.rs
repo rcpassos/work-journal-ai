@@ -30,7 +30,10 @@
 //! **Authorship is a set** of addresses, matched on the address alone and
 //! regardless of case. **Dates are author dates**, filtered here rather than
 //! by `--since`, which prunes by committer date — a rebase moves that, and the
-//! work did not move with it.
+//! work did not move with it — and which cannot even narrow the walk: git
+//! stops at the first commit older than its date and reads nothing behind
+//! that one, so a tip committed before the lookback would hide the work under
+//! it, on every walk that ever met the tip.
 //!
 //! **A repository is its common directory**, which every worktree of it
 //! shares: one project reached through three directories is one repository.
@@ -107,6 +110,12 @@ pub enum IdentitiesRead {
         /// authors, most recent first, each address once. Suggestions only:
         /// nothing counts as the user until the user says so.
         identities: Vec<String>,
+        /// Why nothing can be read from this repository yet, beside the
+        /// suggestions above: `NoHead`, the one reason that leaves them worth
+        /// offering, and the very reason the commit read gives. None when its
+        /// commits can be read. This is how Settings hears it — the sweep's
+        /// own answer never reaches the section.
+        reason: Option<RepositoryUnreadable>,
     },
     Unreadable {
         reason: RepositoryUnreadable,
@@ -153,9 +162,10 @@ impl Git {
 
     fn identities(&self, path: &Path, since: f64) -> IdentitiesRead {
         match self.candidates(path, since) {
-            Ok((repository, identities)) => IdentitiesRead::Read {
+            Ok((repository, identities, reason)) => IdentitiesRead::Read {
                 repository,
                 identities,
+                reason,
             },
             Err(reason) => IdentitiesRead::Unreadable { reason },
         }
@@ -219,7 +229,7 @@ impl Git {
         &self,
         path: &Path,
         since: f64,
-    ) -> Result<(String, Vec<String>), RepositoryUnreadable> {
+    ) -> Result<(String, Vec<String>, Option<RepositoryUnreadable>), RepositoryUnreadable> {
         let repository = self.repository(path)?;
 
         // Unset is an answer too: exit 1 and nothing said.
@@ -230,8 +240,10 @@ impl Git {
             .collect();
 
         // A repository with nothing committed yet still has a configured
-        // address worth offering.
-        if let Some(tip) = self.tip(path)? {
+        // address worth offering — and says so beside them, as the reason the
+        // commit read gives for there being nothing to read.
+        let tip = self.tip(path)?;
+        if let Some(tip) = tip.as_deref() {
             let log = self.succeed(
                 path,
                 &[
@@ -241,7 +253,7 @@ impl Git {
                     "--no-show-signature",
                     "-z",
                     "--format=%at%x00%ae",
-                    &tip,
+                    tip,
                     "--",
                 ],
             )?;
@@ -263,7 +275,11 @@ impl Git {
         // it; the first spelling met is the one offered.
         let mut seen = HashSet::new();
         identities.retain(|identity| !identity.is_empty() && seen.insert(identity.to_lowercase()));
-        Ok((repository, identities))
+        Ok((
+            repository,
+            identities,
+            tip.is_none().then_some(RepositoryUnreadable::NoHead),
+        ))
     }
 
     /// The repository's identity: its common directory, which every worktree
@@ -899,6 +915,44 @@ mod tests {
         assert_eq!(identities, [ME, "Maintainer@Example.com", ME_ON_GITHUB]);
     }
 
+    /// The commit at the top can be dated behind the one under it — a clock
+    /// that was behind on the machine that made it, or a rebuild that kept
+    /// committer dates. Nothing may be narrowed by `--since` here: git stops
+    /// the walk at the first commit older than its date and reads nothing
+    /// behind that one, so the tip alone would hide the work under it, and
+    /// hide it again on every later walk.
+    #[test]
+    fn a_tip_committed_before_the_lookback_hides_nothing_behind_it() {
+        let root = TempDir::new("backwards");
+        init(&root.path);
+        git(&root.path, &["config", "user.email", ME]);
+        // The work, inside the lookback, by nobody configured: it reaches the
+        // suggestions only through the log.
+        commit(&root.path, ME_ON_GITHUB, -24 * 2, "Two days ago");
+        // And on top of it, dated behind — which the lookback still refuses.
+        commit_at(
+            &root.path,
+            "long.gone@example.com",
+            -24 * 10,
+            -24 * 10,
+            "Dated back",
+        );
+
+        assert_eq!(
+            subjects(&read_by(
+                &root.path,
+                &[ME_ON_GITHUB, "long.gone@example.com"],
+                at(-24 * 7)
+            )),
+            ["Two days ago"]
+        );
+        let IdentitiesRead::Read { identities, .. } = identities_since(&root.path, at(-24 * 7))
+        else {
+            panic!("unreadable")
+        };
+        assert_eq!(identities, [ME, ME_ON_GITHUB]);
+    }
+
     #[test]
     fn candidates_are_most_recent_by_author_date_not_by_walk_order() {
         let root = TempDir::new("candidate-order");
@@ -924,11 +978,20 @@ mod tests {
         init(&root.path);
         git(&root.path, &["config", "user.email", ME]);
 
-        let IdentitiesRead::Read { identities, .. } = identities_since(&root.path, at(0)) else {
+        let IdentitiesRead::Read {
+            identities,
+            reason,
+            ..
+        } = identities_since(&root.path, at(0))
+        else {
             panic!("unreadable")
         };
 
+        // The suggestions are worth offering even with nothing to read — and
+        // the reason nothing can be read sits beside them, because Settings
+        // reads this answer and the sweep's never reaches it.
         assert_eq!(identities, [ME]);
+        assert_eq!(reason, Some(RepositoryUnreadable::NoHead));
     }
 
     #[test]
@@ -1019,6 +1082,12 @@ mod tests {
             reason(&read_by(&root.path, &[ME], at(0))),
             RepositoryUnreadable::NoHead
         );
+        // And beside the suggestions, as `Read`'s own reason: this is the
+        // read Settings makes, and it must say the same as the commit read.
+        let IdentitiesRead::Read { reason, .. } = identities_since(&root.path, at(0)) else {
+            panic!("a repository with nothing to read is still readable")
+        };
+        assert_eq!(reason, Some(RepositoryUnreadable::NoHead));
     }
 
     #[test]
@@ -1116,9 +1185,23 @@ mod tests {
             serde_json::to_string(&IdentitiesRead::Read {
                 repository: "/r/.git".into(),
                 identities: vec![ME.into()],
+                reason: None,
             })
             .unwrap(),
-            format!(r#"{{"state":"read","repository":"/r/.git","identities":["{ME}"]}}"#),
+            format!(
+                r#"{{"state":"read","repository":"/r/.git","identities":["{ME}"],"reason":null}}"#
+            ),
+        );
+        assert_eq!(
+            serde_json::to_string(&IdentitiesRead::Read {
+                repository: "/r/.git".into(),
+                identities: vec![ME.into()],
+                reason: Some(RepositoryUnreadable::NoHead),
+            })
+            .unwrap(),
+            format!(
+                r#"{{"state":"read","repository":"/r/.git","identities":["{ME}"],"reason":"no-head"}}"#
+            ),
         );
     }
 }

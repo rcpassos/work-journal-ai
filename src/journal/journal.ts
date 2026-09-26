@@ -730,6 +730,18 @@ export interface Journal {
    * away here, and never will count.
    */
   capturedNoteCount(journalDay: string): Promise<number>
+  /**
+   * The last Note to arrive from one repository's commits, and the instant it
+   * arrived — a Note a sweep met just now is the last one, however long ago
+   * its work was done. What the Observing section reads back beside each
+   * repository, to answer "is this on?" right after enabling and "why isn't my
+   * merge here?" before a fetch. The Note is read from its own source columns,
+   * so one the user deleted does not count: deleting it refuses its commit for
+   * good, and the repository is no longer seen to have produced it.
+   */
+  lastCommitNote(
+    repository: string,
+  ): Promise<{ body: string; arrivedAt: string } | null>
 }
 
 interface NoteRow {
@@ -1239,6 +1251,39 @@ const COUNT_CAPTURED_NOTES_ON_DAY = `
   FROM notes
   WHERE journal_day = ?
     AND origin = 'capture'
+`
+
+/**
+ * The last commit Note to arrive from one repository, with the instant it
+ * arrived beside it. The repository is everything after the first `@` of the
+ * source key — a hash never holds one, which is how `commitEventKey` writes
+ * it — so the Note is read from its own provenance and nothing else: no
+ * handled event outlives a deletion here. The arrival is the handled event's
+ * own instant, joined on the very pair the Note carries: what the Note is
+ * comes from the Note, when it came comes from the handling — and a row with
+ * no handled event beside it, which no write can produce, reads as arriving
+ * when its work happened.
+ *
+ * Which Note is last is which arrived last: a commit met by a sweep just now
+ * is the last one, however long ago its work was done — which is what answers
+ * "why isn't my merge here?" before a fetch. What arrives together, arrives
+ * together: a sweep writes what it brought oldest first, so one sweep's
+ * Notes fall back to the work's own order and the newest produced of them is
+ * the one shown.
+ */
+const SELECT_LAST_COMMIT_NOTE = `
+  SELECT
+    id, body, project, captured_at, journal_day, edited_at, origin, source, source_key,
+    COALESCE(
+      (SELECT handled_at FROM handled_events
+        WHERE source = 'commit' AND event_key = notes.source_key),
+      captured_at
+    ) AS arrived_at
+  FROM notes
+  WHERE source = 'commit'
+    AND substr(source_key, instr(source_key, '@') + 1) = ?
+  ORDER BY arrived_at DESC, captured_at DESC, id DESC
+  LIMIT 1
 `
 
 /**
@@ -2061,6 +2106,16 @@ export function createJournal({
       )
       return row?.count ?? 0
     },
+
+    async lastCommitNote(repository) {
+      const [row] = await driver.select<NoteRow & { arrived_at: string }>(
+        SELECT_LAST_COMMIT_NOTE,
+        [repository],
+      )
+      return row === undefined
+        ? null
+        : { body: row.body, arrivedAt: row.arrived_at }
+    },
   }
 }
 
@@ -2453,6 +2508,26 @@ function fromCommitEventKey(key: string): { hash: string; repository: string } {
   return at === -1
     ? { hash: key, repository: '' }
     : { hash: key.slice(0, at), repository: key.slice(at + 1) }
+}
+
+/**
+ * How long ago an instant was, as the small span a glance reads: "just now",
+ * "5 min ago", "2 h ago", "3 days ago". What the Observing section says
+ * beside a repository's last Note — and the instant it is given is that
+ * Note's arrival, the "when it arrived" the section promises, not the instant
+ * its work was done.
+ *
+ * Said here rather than through `Intl.RelativeTimeFormat`, which renders "2
+ * hours ago" in one place and "2 hr. ago" in another: this is copy, and the
+ * ladder above is the shape it is written in.
+ */
+export function formatAgo(when: Date, now: Date): string {
+  const minutes = Math.floor((now.getTime() - when.getTime()) / 60000)
+  if (minutes < 1) return 'just now'
+  if (minutes < 60) return `${minutes} min ago`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `${hours} h ago`
+  return `${plural(Math.floor(hours / 24), 'day')} ago`
 }
 
 /**
