@@ -203,7 +203,8 @@ export default function ObservingSettings({
   // coming back on screen are both a moment to read the clock again.
   const onScreen = useOnScreen()
   // Ticked by the wake below, and nothing else: waking is one more reason to
-  // sample and re-arm, which the effect does from one place.
+  // read the clock again. One listener for the whole section — the pause row
+  // here and every repository's Last line both hear it through this.
   const [woke, setWoke] = useState(0)
   const [pause, setPause] = useState<PauseState>({ state: 'nothing' })
   useEffect(() => {
@@ -220,8 +221,8 @@ export default function ObservingSettings({
     return () => clearTimeout(timer)
   }, [observing, onScreen, woke])
 
-  // What the row above reads is the clock, and a sleeping Mac runs no timer:
-  // the wake is what says the clock moved on its own.
+  // What the pause row and the Last lines read is the clock, and a sleeping
+  // Mac runs no timer: the wake is what says the clock moved on its own.
   useEffect(() => {
     let listening = true
     let stop: (() => void) | null = null
@@ -283,6 +284,7 @@ export default function ObservingSettings({
               desktop={desktop}
               journal={journal}
               listed={listed}
+              woke={woke}
               onIdentities={(identities) =>
                 update((current) => setIdentities(current, listed.repository, identities), {
                   id: `observing-identities-${listed.repository}`,
@@ -360,6 +362,7 @@ function RepositoryEntry({
   desktop,
   journal,
   listed,
+  woke,
   onIdentities,
   onIgnoredPrefixes,
   onRemove,
@@ -367,6 +370,7 @@ function RepositoryEntry({
   desktop: Desktop
   journal: Promise<Journal>
   listed: ObservedRepository
+  woke: number
   onIdentities: (identities: string[]) => void
   onIgnoredPrefixes: (prefixes: string[]) => void
   onRemove: () => void
@@ -467,11 +471,9 @@ function RepositoryEntry({
   // while the section is on screen. Coming back on screen and waking are both
   // read at once rather than left to the next tick: a line looked at after
   // either would otherwise keep the time it was left with, saying "5 min ago"
-  // of a Note hours old.
+  // of a Note hours old. The wake is the parent's to hear — one listener for
+  // the whole section — and arrives here as `woke`.
   const [now, setNow] = useState(() => new Date())
-  // Ticked by the wake below, and nothing else: waking is one more reason to
-  // sample and re-arm, which the effect does from one place.
-  const [woke, setWoke] = useState(0)
   useEffect(() => {
     // Sampled here rather than in the render: the clock is not a render's to
     // read — the same reason the pause row above sets its own state from an
@@ -482,24 +484,6 @@ function RepositoryEntry({
     const timer = setInterval(() => setNow(new Date()), 60_000)
     return () => clearInterval(timer)
   }, [onScreen, woke])
-  // A sleeping Mac runs no timer: the wake is what says the clock moved on
-  // its own.
-  useEffect(() => {
-    let listening = true
-    let stop: (() => void) | null = null
-    void desktop
-      .onSystemWoke(() => {
-        if (listening) setWoke((count) => count + 1)
-      })
-      .then((unlisten) => {
-        if (listening) stop = unlisten
-        else unlisten()
-      })
-    return () => {
-      listening = false
-      stop?.()
-    }
-  }, [desktop])
 
   // What is ticked, then what is suggested, one address in any case.
   const offered = [...listed.identities]
