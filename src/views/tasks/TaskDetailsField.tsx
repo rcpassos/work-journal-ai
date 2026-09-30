@@ -5,9 +5,11 @@ import { Textarea } from '@/components/ui/textarea'
 export default function TaskDetailsField({
   value,
   onChange,
+  disabled = false,
 }: {
   value: string
   onChange: (value: string) => void
+  disabled?: boolean
 }) {
   const id = useId()
   return (
@@ -16,6 +18,7 @@ export default function TaskDetailsField({
       <Textarea
         id={id}
         value={value}
+        disabled={disabled}
         onChange={(event) => onChange(event.target.value)}
         style={{ fieldSizing: 'fixed', height: 96, minHeight: 48 }}
         autoComplete="off"

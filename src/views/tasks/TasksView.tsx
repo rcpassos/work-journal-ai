@@ -839,6 +839,7 @@ function TaskEditor({
         autoFocus
         type="text"
         value={description}
+        disabled={saving}
         onChange={(event) => setDescription(event.target.value)}
         onKeyDown={onKeyDown}
         aria-label="Task Description"
@@ -847,7 +848,7 @@ function TaskEditor({
         className="w-full rounded-md border border-border bg-transparent px-2 py-1.5 type-body text-foreground outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30"
       />
 
-      <TaskDetailsField value={details} onChange={setDetails} />
+      <TaskDetailsField value={details} onChange={setDetails} disabled={saving} />
 
       {completed ? (
         <p className="type-meta text-muted-foreground">
@@ -859,6 +860,7 @@ function TaskEditor({
           schedule={schedule}
           recurrence={recurrence}
           onChange={changeSchedule}
+          disabled={saving}
         />
       )}
 

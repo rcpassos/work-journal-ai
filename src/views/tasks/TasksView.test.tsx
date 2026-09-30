@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 
 import { afterEach, describe, expect, it } from 'vitest'
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { fakeDesktop } from '@/platform/testing/desktop'
 import { createJournal, type Task } from '@/journal/journal'
 import { fixedClock, openTestDatabase } from '@/journal/testing/database'
@@ -1089,4 +1090,44 @@ it('retains both edited fields after a failed save for correction and retry', as
   fireEvent.click(screen.getByRole('button', { name: 'Save' }))
   await expect.poll(() => screen.queryByRole('dialog')).toBeNull()
   expect((await core.openTasks())[0]).toMatchObject({ description: 'corrected', details: 'retained\ncontext' })
+})
+
+it.each([false, true])('locks editor fields during a pending save (failure: %s)', async (fails) => {
+  const user = userEvent.setup()
+  const { core } = await showTasks(['proposal'])
+  fireEvent.click(await screen.findByText('proposal'))
+  const description = screen.getByLabelText('Task Description') as HTMLInputElement
+  const details = screen.getByLabelText('Task Details (optional)') as HTMLTextAreaElement
+  await user.clear(description)
+  await user.type(description, 'submitted proposal')
+  await user.type(details, 'submitted context')
+  const editTask = core.editTask
+  let release!: () => void
+  const pending = new Promise<void>((resolve) => { release = resolve })
+  core.editTask = async (...args) => {
+    await pending
+    if (fails) throw new Error('disk unavailable')
+    return editTask(...args)
+  }
+  await user.click(screen.getByRole('button', { name: 'Save' }))
+  expect(description.disabled).toBe(true)
+  expect(details.disabled).toBe(true)
+  expect((screen.getByRole('button', { name: 'Add a date' }) as HTMLButtonElement).disabled).toBe(true)
+  await user.type(description, ' discarded text')
+  await user.type(details, ' discarded context')
+  expect(description.value).toBe('submitted proposal')
+  expect(details.value).toBe('submitted context')
+  await act(async () => release())
+  if (fails) {
+    await screen.findByText('That Task could not be saved.')
+    expect(description.disabled).toBe(false)
+    expect(details.disabled).toBe(false)
+    expect((screen.getByRole('button', { name: 'Add a date' }) as HTMLButtonElement).disabled).toBe(false)
+    await user.type(details, ' corrected')
+    expect(details.value).toBe('submitted context corrected')
+    expect((await core.openTasks())[0].details).toBeNull()
+  } else {
+    await expect.poll(() => screen.queryByRole('dialog')).toBeNull()
+    expect((await core.openTasks())[0]).toMatchObject({ description: 'submitted proposal', details: 'submitted context' })
+  }
 })
