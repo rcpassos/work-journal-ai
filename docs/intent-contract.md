@@ -1,5 +1,7 @@
 # The intent contract, measured
 
+> **Finished.** The week ran from 23 to 30 September 2026 and was read on [#264](https://github.com/rcpassos/work-journal-ai/issues/264#issuecomment-5914369914). The intent command is not built (ADR 0044, amended). The snippets below are the record of what was measured, not something to install.
+
 Observing will one day take what the user asked their AI tools for and put it
 in the journal. How many Notes a day of that should become is not decided yet
 (#264). This page is the week of measurement that decides it (#263): each
