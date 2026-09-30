@@ -4,19 +4,20 @@ What changed in each released version, newest first. Every `vX.Y.Z` section here
 
 ## Unreleased
 
-- Tasks can hold optional multiline details, editable before or after completion and included in search, journal exports, and Work Summary and Review Material.
+## 0.16.0 — 2026-09-30
 
-- Each repository in Settings now carries the Project its commits are filed under: its own name is offered first, and nothing is filed under anything unless you pick or type it.
-- Renaming a Project renames what the repositories mapped to it are filed under too, and a Project one of them holds stays around — discoverable and renameable — until nothing names it.
-- Hovering a meeting in History says it came from your calendar, for meetings imported from now on.
 - Settings can add your commits to the journal: choose repositories and the addresses that are you, and each commit you make becomes a Note on the day you authored it.
 - Commits from before you turn it on, or from while it or a repository was off, are never added.
 - Each repository can skip commits whose subject begins with a prefix you write, such as release commits.
 - Hovering a commit's Note in History names the commit and its repository.
+- Each repository in Settings now carries the Project its commits are filed under: its own name is offered first, and nothing is filed under anything unless you pick or type it.
+- Renaming a Project renames what the repositories mapped to it are filed under too, and a Project one of them holds stays around — discoverable and renameable — until nothing names it.
 - Observing can be paused from the Tray Menu or Settings, for an hour, until tomorrow, or until resumed: work done during a pause never enters the journal, however late a sweep meets it.
 - While a pause is in force the Tray Menu and Settings both say so and say until when, and a pause with an end runs out on its own.
 - Each repository in Settings shows the last Note it produced and when it arrived, or that nothing has arrived since you turned this on.
 - A repository that cannot be read says why beside it, such as a folder that is gone or a default branch that cannot be resolved, and the other repositories keep producing Notes.
+- Hovering a meeting in History says it came from your calendar, for meetings imported from now on.
+- Tasks can hold optional multiline details, editable before or after completion and included in search, journal exports, and Work Summary and Review Material.
 
 ## 0.15.1 — 2026-09-21
 
