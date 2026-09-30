@@ -3,6 +3,7 @@ import {
   CheckCircle2Icon,
   ChevronRightIcon,
   ListTodoIcon,
+  FileTextIcon,
   PlusIcon,
   RepeatIcon,
   RotateCcwIcon,
@@ -56,6 +57,7 @@ import {
 } from '@/journal/journal'
 import type { Desktop } from '@/platform/desktop'
 import { keysOfHotkey, type HotkeyStatuses } from '@/settings/hotkey'
+import TaskDetailsField from './TaskDetailsField'
 import ScheduleFields from './ScheduleFields'
 
 /**
@@ -256,16 +258,23 @@ export default function TasksView({
     void desktop.closeWindow()
   }
 
-  function commitEdit(
+  async function commitEdit(
     task: Task,
     description: string,
     schedule: TaskSchedule | null,
     recurrence: Recurrence | null,
+    details: string,
   ) {
-    setEditing(null)
+    const saved = await session.save(task.id, {
+      description,
+      details,
+      schedule,
+      recurrence,
+    })
+    if (!saved) return
+    setEditing((current) => current === task ? null : current)
     // The Task has been dealt with: singling it out has served its purpose.
     setFocused(null)
-    void session.save(task.id, { description, schedule, recurrence })
   }
 
   /** The one irreversible operation, and the only one that is confirmed. */
@@ -368,7 +377,7 @@ export default function TasksView({
         </Button>
       </header>
 
-      {problem !== null && (
+      {problem !== null && editing === null && (
         <p role="alert" className="shrink-0 px-6 pb-3 type-meta text-destructive">
           {problem}
         </p>
@@ -449,8 +458,9 @@ export default function TasksView({
       {editing !== null && (
         <TaskEditor
           task={editing}
-          onSave={(description, schedule, recurrence) =>
-            commitEdit(editing, description, schedule, recurrence)
+          problem={problem}
+          onSave={(description, schedule, recurrence, details) =>
+            commitEdit(editing, description, schedule, recurrence, details)
           }
           onCancel={() => setEditing(null)}
         />
@@ -510,6 +520,7 @@ function TaskResultLine({ task, onShow }: { task: Task; onShow: () => void }) {
         className="flex w-full gap-3 rounded-md px-2 py-1 text-left type-body outline-none hover:bg-muted/40 focus-visible:bg-muted/40 focus-visible:ring-2 focus-visible:ring-ring/30"
       >
         <span className="flex-1">{task.description}</span>
+        <TaskDetailsIndicator task={task} />
         <span className="shrink-0 pt-px type-meta text-muted-foreground">
           {isOpen(task) ? 'Open' : 'Completed'}
         </span>
@@ -597,6 +608,7 @@ function TaskLine({
             }`}
           >
             {task.description}
+            <TaskDetailsIndicator task={task} />
           </button>
 
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1 pt-1 type-meta text-muted-foreground">
@@ -745,18 +757,23 @@ function OccurrenceHistory({
  */
 function TaskEditor({
   task,
+  problem,
   onSave,
   onCancel,
 }: {
   task: Task
+  problem: string | null
   onSave: (
     description: string,
     schedule: TaskSchedule | null,
     recurrence: Recurrence | null,
-  ) => void
+    details: string,
+  ) => Promise<void>
   onCancel: () => void
 }) {
   const [description, setDescription] = useState(task.description)
+  const [details, setDetails] = useState(task.details ?? '')
+  const [saving, setSaving] = useState(false)
   const [schedule, setSchedule] = useState(scheduleOf(task))
   const headingId = useId()
   const [recurrence, setRecurrence] = useState(task.recurrence)
@@ -768,13 +785,19 @@ function TaskEditor({
   // nothing until it is given. What was typed here is untouched.
   useOffScreen(() => setStopping(null))
   const said = description.trim()
-  // Only the Task Description is editable while a Task is Completed: reopening
+  // Task Description and Details stay editable while Completed: reopening
   // is what makes a schedule changeable again, and it is a decision the user
   // makes rather than one a save makes quietly on their behalf.
   const completed = task.completedAt !== null
 
-  function save() {
-    onSave(description, schedule, recurrence)
+  async function save() {
+    if (saving) return
+    setSaving(true)
+    try {
+      await onSave(description, schedule, recurrence, details)
+    } finally {
+      setSaving(false)
+    }
   }
 
   /**
@@ -798,7 +821,7 @@ function TaskEditor({
   function onKeyDown(event: React.KeyboardEvent<HTMLInputElement>) {
     if (event.key === 'Enter' && said !== '') {
       event.preventDefault()
-      save()
+      void save()
     }
   }
 
@@ -807,7 +830,7 @@ function TaskEditor({
       role="dialog"
       aria-modal="true"
       aria-labelledby={headingId}
-      className="absolute inset-x-0 bottom-0 z-20 flex flex-col gap-3 border-t border-border bg-popover px-6 py-4 shadow-[0_-8px_24px_-12px_rgb(0_0_0/0.4)]"
+      className="absolute inset-x-0 bottom-0 z-20 flex max-h-full flex-col gap-3 overflow-y-auto border-t border-border bg-popover px-6 py-4 shadow-[0_-8px_24px_-12px_rgb(0_0_0/0.4)]"
     >
       <h2 id={headingId} className="type-section">
         Edit Task
@@ -816,6 +839,7 @@ function TaskEditor({
         autoFocus
         type="text"
         value={description}
+        disabled={saving}
         onChange={(event) => setDescription(event.target.value)}
         onKeyDown={onKeyDown}
         aria-label="Task Description"
@@ -823,6 +847,8 @@ function TaskEditor({
         spellCheck={false}
         className="w-full rounded-md border border-border bg-transparent px-2 py-1.5 type-body text-foreground outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30"
       />
+
+      <TaskDetailsField value={details} onChange={setDetails} disabled={saving} />
 
       {completed ? (
         <p className="type-meta text-muted-foreground">
@@ -834,14 +860,19 @@ function TaskEditor({
           schedule={schedule}
           recurrence={recurrence}
           onChange={changeSchedule}
+          disabled={saving}
         />
       )}
 
-      <div className="flex justify-end gap-2">
+      {problem !== null && (
+        <p role="alert" className="type-meta text-destructive">{problem}</p>
+      )}
+
+      <div className="flex shrink-0 justify-end gap-2">
         <Button variant="outline" size="sm" onClick={onCancel}>
           Cancel
         </Button>
-        <Button size="sm" disabled={said === ''} onClick={save}>
+        <Button size="sm" disabled={said === '' || saving} onClick={() => void save()}>
           Save
         </Button>
       </div>
@@ -1021,5 +1052,16 @@ function EmptyState({
         <p className="max-w-sm text-muted-foreground">{children}</p>
       )}
     </section>
+  )
+}
+
+function TaskDetailsIndicator({ task }: { task: Task }) {
+  if (task.details === null) return null
+  return (
+    <FileTextIcon
+      role="img"
+      aria-label="Has Task Details"
+      className="ml-2 inline size-3 text-muted-foreground"
+    />
   )
 }

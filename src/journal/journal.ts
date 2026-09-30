@@ -1,3 +1,4 @@
+import { renderTaskDetails } from './task-details'
 /**
  * The journal core: every domain operation and every SQL statement in the app.
  * It depends on exactly two injected collaborators — a clock and a SQL driver —
@@ -129,6 +130,8 @@ export interface Task {
    * words that look like a schedule, which nothing here interprets.
    */
   description: string
+  /** Optional literal multiline supporting text; LF endings, otherwise verbatim. */
+  details: string | null
   /** UTC ISO-8601. The instant it came into existence, and never changes. */
   createdAt: string
   /**
@@ -550,12 +553,14 @@ export interface Journal {
    * kept verbatim; an empty one is refused rather than stored, because a Task
    * that says nothing is not a commitment. Duplicates are ordinary — two days
    * can owe the same thing — so nothing is checked against what is already
-   * there.
+   * there. Optional details normalize line endings to LF and otherwise keep
+   * nonblank text verbatim; whitespace-only text is absent.
    */
   createTask(
     description: string,
     schedule?: TaskSchedule | null,
     recurrence?: Recurrence | null,
+    details?: string | null,
   ): Promise<Task>
   /**
    * The commitments that remain: the scheduled ones earliest Scheduled For
@@ -567,15 +572,15 @@ export interface Journal {
   /** The commitments that were kept, most recently completed first. */
   completedTasks(): Promise<Task[]>
   /**
-   * A Search: the Tasks anywhere in the journal whose Task Description
-   * contains the term, newest created first. It spans the Open and Completed
+   * A Search: the Tasks anywhere in the journal whose Task Description or
+   * Task Details contains the term, newest created first. It spans Open and
+   * Completed
    * lists at once, because not knowing whether a Task is still open is most
    * of the reason for looking — see
    * docs/adr/0036-search-is-one-term-and-its-destination-is-what-changes.md.
    *
-   * Matching is a case-insensitive substring of the Task Description and
-   * nothing more: the whole term is one substring, and no other column is
-   * looked at. The same escaped `LIKE` as `notesMatching`, and the same known
+   * Matching is a case-insensitive literal substring of either text field.
+   * Each Task appears once even when both fields match. The same escaped `LIKE` as `notesMatching`, and the same known
    * limit on non-ASCII case folding — `MIGRAÇÃO` does not match `migração`.
    */
   tasksMatching(term: string): Promise<Task[]>
@@ -599,7 +604,7 @@ export interface Journal {
    * commitment that was missed, and it becomes Overdue rather than being
    * refused or quietly moved.
    *
-   * While a Task is Completed only its Task Description may change: a schedule
+   * While Completed, only Task Description and Task Details may change: a schedule
    * that differs from the one it was completed with is refused rather than
    * written, because reopening is what makes a schedule changeable again — and
    * reopening preserves the former one, which may make the Task Overdue the
@@ -609,6 +614,8 @@ export interface Journal {
     id: string,
     change: {
       description: string
+      /** Omitted preserves existing details; null or blank text clears them. */
+      details?: string | null
       schedule: TaskSchedule | null
       /**
        * The cadence the Task is left following. Omitted leaves whatever it
@@ -770,6 +777,7 @@ export interface CompletedOccurrence {
 
 interface TaskRow {
   id: string
+  details: string | null
   description: string
   created_at: string
   completed_at: string | null
@@ -805,16 +813,16 @@ const RECURRENCE_COLUMNS_ALIASED = [
 
 const INSERT_TASK = `
   INSERT INTO tasks (
-    id, description, created_at, completed_at, scheduled_date, scheduled_time,
+    id, description, details, created_at, completed_at, scheduled_date, scheduled_time,
     ${RECURRENCE_COLUMNS}
   )
-  VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?, ?)
+  VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?)
 `
 
 /** Every read returns a whole Task; only the predicate and the order differ. */
 const SELECT_TASKS = `
   SELECT
-    id, description, created_at, completed_at, scheduled_date, scheduled_time,
+    id, description, details, created_at, completed_at, scheduled_date, scheduled_time,
     ${RECURRENCE_COLUMNS}
   FROM tasks
 `
@@ -855,12 +863,12 @@ const SELECT_COMPLETED_TASKS = `
 /**
  * Both states together, newest created first: a Search spans the Open and
  * Completed lists, which have an order each, so neither survives it. The
- * Task Description is the only column looked at, with the same escaped `LIKE`
+ * Task Description and Task Details use the same escaped `LIKE`
  * as `SELECT_NOTES_MATCHING` — see `escapeForLike`.
  */
 const SELECT_TASKS_MATCHING = `
   ${SELECT_TASKS}
-  WHERE description LIKE ? ESCAPE '\\'
+  WHERE description LIKE ? ESCAPE '\\' OR details LIKE ? ESCAPE '\\'
   ORDER BY created_at DESC, id DESC
 `
 
@@ -882,7 +890,7 @@ const SELECT_ALL_TASKS_FOR_EXPORT = `
  */
 const UPDATE_TASK = `
   UPDATE tasks
-  SET description = ?, scheduled_date = ?, scheduled_time = ?
+  SET description = ?, details = ?, scheduled_date = ?, scheduled_time = ?
   WHERE id = ?
 `
 
@@ -896,6 +904,7 @@ const UPDATE_TASK_WITH_RECURRENCE = `
   UPDATE tasks
   SET
     description = ?,
+    details = ?,
     scheduled_date = ?,
     scheduled_time = ?,
     recurrence_unit = ?,
@@ -1003,6 +1012,7 @@ const SELECT_COMPLETED_OCCURRENCES_IN_RANGE = `
     o.advanced_from,
     t.id AS t_id,
     t.description AS t_description,
+    t.details AS t_details,
     t.created_at AS t_created_at,
     t.completed_at AS t_completed_at,
     t.scheduled_date AS t_scheduled_date,
@@ -1023,6 +1033,7 @@ const SELECT_COMPLETED_OCCURRENCES_IN_RANGE = `
  */
 interface CompletedOccurrenceRow extends TaskOccurrenceRow {
   t_id: string
+  t_details: string | null
   t_description: string
   t_created_at: string
   t_completed_at: string | null
@@ -1676,7 +1687,7 @@ export function createJournal({
       )
     },
 
-    async createTask(description, schedule = null, recurrence = null) {
+    async createTask(description, schedule = null, recurrence = null, details = null) {
       const said = taskDescription(description)
       const scheduled = taskSchedule(schedule)
       const cadence = taskRecurrence(recurrence, scheduled)
@@ -1693,6 +1704,7 @@ export function createJournal({
       const task: Task = {
         id: crypto.randomUUID(),
         description: said,
+        details: taskDetails(details),
         createdAt: now.toISOString(),
         completedAt: null,
         scheduledDate: opening,
@@ -1706,6 +1718,7 @@ export function createJournal({
         params: [
           task.id,
           task.description,
+          task.details,
           task.createdAt,
           task.scheduledDate,
           task.scheduledTime,
@@ -1739,6 +1752,7 @@ export function createJournal({
     async tasksMatching(term) {
       const rows = await driver.select<TaskRow>(SELECT_TASKS_MATCHING, [
         `%${escapeForLike(term)}%`,
+        `%${escapeForLike(term)}%`,
       ])
       return rows.map(toTask)
     },
@@ -1769,6 +1783,7 @@ export function createJournal({
         task: toTask({
           id: row.t_id,
           description: row.t_description,
+          details: row.t_details,
           created_at: row.t_created_at,
           completed_at: row.t_completed_at,
           scheduled_date: row.t_scheduled_date,
@@ -1782,10 +1797,11 @@ export function createJournal({
       }))
     },
 
-    async editTask(id, { description, schedule, recurrence }) {
+    async editTask(id, { description, details, schedule, recurrence }) {
       const said = taskDescription(description)
       const scheduled = taskSchedule(schedule)
       const task = await readTask(driver, id)
+      const supporting = details === undefined ? task.details : taskDetails(details)
 
       const date = scheduled?.date ?? null
       const time = scheduled?.time ?? null
@@ -1817,10 +1833,11 @@ export function createJournal({
       if (cadence === null) {
         // Nothing to stop, so this is the ordinary edit it has always been.
         if (task.recurrence === null) {
-          await driver.execute(UPDATE_TASK, [said, date, time, id])
+          await driver.execute(UPDATE_TASK, [said, supporting, date, time, id])
           return {
             ...task,
             description: said,
+            details: supporting,
             scheduledDate: date,
             scheduledTime: time,
           }
@@ -1828,6 +1845,7 @@ export function createJournal({
 
         return stopRecurring(driver, task, {
           description: said,
+          details: supporting,
           date,
           time,
         })
@@ -1844,8 +1862,8 @@ export function createJournal({
       // Rewording alone leaves the series exactly where it stands, because
       // what a Task says is not part of when it repeats.
       if (!ruleChanged && !dateChanged && !timeChanged) {
-        await driver.execute(UPDATE_TASK, [said, date, time, id])
-        return { ...task, description: said }
+        await driver.execute(UPDATE_TASK, [said, supporting, date, time, id])
+        return { ...task, description: said, details: supporting }
       }
 
       const now = clock.now()
@@ -1894,6 +1912,7 @@ export function createJournal({
       const reanchored: Task = {
         ...task,
         description: said,
+        details: supporting,
         scheduledDate: opening,
         scheduledTime: time,
         recurrence: cadence,
@@ -1908,6 +1927,7 @@ export function createJournal({
           sql: UPDATE_TASK_WITH_RECURRENCE,
           params: [
             said,
+            supporting,
             opening,
             time,
             ...recurrenceParams(cadence, anchor),
@@ -2026,6 +2046,7 @@ export function createJournal({
 
       return stopRecurring(driver, task, {
         description: task.description,
+        details: task.details,
         date: task.scheduledDate,
         time: task.scheduledTime,
       })
@@ -2223,7 +2244,7 @@ function taskBullet(task: Task, history: TaskOccurrence[]): string {
   }
 
   const said = metadata.length > 0 ? ` (${metadata.join('; ')})` : ''
-  const bullet = `- [${task.completedAt === null ? ' ' : 'x'}] ${task.description}${said}`
+  const bullet = `- [${task.completedAt === null ? ' ' : 'x'}] ${task.description}${said}${renderTaskDetails(task.details)}`
 
   if (history.length === 0) return bullet
 
@@ -3577,13 +3598,14 @@ function opensOccurrence(
 async function stopRecurring(
   driver: SqlDriver,
   task: Task,
-  left: { description: string; date: string | null; time: string | null },
+  left: { description: string; details: string | null; date: string | null; time: string | null },
 ): Promise<Task> {
   await driver.transaction([
     {
       sql: UPDATE_TASK_WITH_RECURRENCE,
       params: [
         left.description,
+        left.details,
         left.date,
         left.time,
         ...recurrenceParams(null, null),
@@ -3596,6 +3618,7 @@ async function stopRecurring(
   return {
     ...task,
     description: left.description,
+    details: left.details,
     scheduledDate: left.date,
     scheduledTime: left.time,
     recurrence: null,
@@ -3609,6 +3632,11 @@ async function stopRecurring(
  * Unicode survive verbatim, and nothing in it is read for meaning. There is no
  * length limit; the only rule is that it says something, on one line.
  */
+function taskDetails(details: string | null): string | null {
+  if (details === null || details.trim() === '') return null
+  return details.replace(/\r\n?/g, '\n')
+}
+
 function taskDescription(description: string): string {
   if (/[\n\r]/.test(description)) {
     throw new Error(
@@ -3686,6 +3714,7 @@ function toTask(row: TaskRow): Task {
   return {
     id: row.id,
     description: row.description,
+    details: row.details,
     createdAt: row.created_at,
     completedAt: row.completed_at,
     scheduledDate: row.scheduled_date,

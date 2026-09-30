@@ -13,6 +13,7 @@ import {
   type Desktop,
 } from '@/platform/desktop'
 import ScheduleFields from './ScheduleFields'
+import TaskDetailsField from './TaskDetailsField'
 
 /**
  * One line, one keystroke — a Task rather than a Note — and, if the user wants
@@ -45,6 +46,7 @@ export default function TaskCreationView({
   journal: Promise<Journal>
 }) {
   const [description, setDescription] = useState('')
+  const [details, setDetails] = useState('')
   // Scheduled For as the row under the field has it. Null is Unscheduled,
   // which is where every Task Creation starts: a Task without a date is a
   // complete Task, not a draft waiting for one.
@@ -65,6 +67,7 @@ export default function TaskCreationView({
     // and empty means Unscheduled too, not the last date that happened to be
     // chosen.
     setDescription('')
+    setDetails('')
     setSchedule(null)
     setRecurrence(null)
     setRefusals(0)
@@ -82,7 +85,7 @@ export default function TaskCreationView({
       if (said.trim() === '') return
 
       try {
-        await (await journal).createTask(said, scheduledFor, repeats)
+        await (await journal).createTask(said, scheduledFor, repeats, details)
       } catch (error) {
         // A Task that could not be stored must not vanish: leave the window
         // open with the description still in it, and say so, since a window
@@ -123,7 +126,7 @@ export default function TaskCreationView({
         })
       }
     },
-    [desktop, journal, dismiss],
+    [desktop, journal, dismiss, details],
   )
 
   useEffect(() => {
@@ -167,10 +170,6 @@ export default function TaskCreationView({
   }, [desktop, refusals])
 
   function onKeyDown(event: React.KeyboardEvent<HTMLInputElement>) {
-    if (event.key === 'Escape') {
-      void dismiss()
-      return
-    }
     if (event.key === 'Enter') {
       void commit(description, schedule, recurrence)
     }
@@ -180,6 +179,9 @@ export default function TaskCreationView({
     <div
       className="flex h-screen flex-col"
       style={{ padding: CAPTURE_SHADOW_GUTTER }}
+      onKeyDown={(event) => {
+        if (event.key === 'Escape') void dismiss()
+      }}
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) void dismiss()
       }}
@@ -218,6 +220,9 @@ export default function TaskCreationView({
             />
             <KeyHint glyph="esc" reading="Escape abandons." what="abandons" />
           </div>
+        </div>
+        <div className="shrink-0 px-5 pb-3">
+          <TaskDetailsField value={details} onChange={setDetails} />
         </div>
         {/* Under the field rather than beside it: the description is what a
             Task is, and the day it is meant to be done on is a second thought

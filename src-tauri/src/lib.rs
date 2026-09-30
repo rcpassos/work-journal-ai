@@ -188,7 +188,7 @@ const TASK_ALERT_COMPLETED_EVENT: &str = "task-alert://completed";
 /// rows under its field. Must match `CAPTURE_HEIGHT` and
 /// `TASK_CREATION_HEIGHT` in `src/platform/desktop.ts`.
 const CAPTURE_HEIGHT: f64 = 130.0;
-const TASK_CREATION_HEIGHT: f64 = 219.0;
+const TASK_CREATION_HEIGHT: f64 = 347.0;
 
 /// Both resident windows are this wide. Must match `CAPTURE_WIDTH` in
 /// `src/platform/desktop.ts`.
@@ -704,6 +704,12 @@ fn migrations() -> Vec<Migration> {
             version: 9,
             description: "project mappings",
             sql: include_str!("../migrations/0009_project_mappings.sql"),
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 10,
+            description: "task details",
+            sql: include_str!("../migrations/0010_task_details.sql"),
             kind: MigrationKind::Up,
         },
     ]

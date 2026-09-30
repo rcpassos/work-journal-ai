@@ -57,3 +57,11 @@ was a fact about what had been built.
   point the Tasks View entry loses "or Search" and keeps "no arbitrary filters",
   and Search's definition sheds the Filter from its opening clause. Until then
   the glossary describes History's Search, because that is the only one there is.
+
+## Extension for Task Details (#276)
+
+Task Details extends the matching rule above beyond a Task's single-line
+Description: Search matches a case-insensitive literal substring in either Task
+Description or Task Details, returning each Task once. Notes still match only
+Body. This supersedes the single-line restriction for Tasks while retaining the
+existing matching semantics, case-folding limit, ordering and destinations.

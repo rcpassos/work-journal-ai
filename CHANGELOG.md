@@ -4,6 +4,8 @@ What changed in each released version, newest first. Every `vX.Y.Z` section here
 
 ## Unreleased
 
+- Tasks can hold optional multiline details, editable before or after completion and included in search, journal exports, and Work Summary and Review Material.
+
 - Each repository in Settings now carries the Project its commits are filed under: its own name is offered first, and nothing is filed under anything unless you pick or type it.
 - Renaming a Project renames what the repositories mapped to it are filed under too, and a Project one of them holds stays around — discoverable and renameable — until nothing names it.
 - Hovering a meeting in History says it came from your calendar, for meetings imported from now on.

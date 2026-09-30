@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import userEvent from '@testing-library/user-event'
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { fakeDesktop, type FakeDesktop } from '@/platform/testing/desktop'
 import { createJournal, type Journal } from '@/journal/journal'
@@ -556,4 +557,40 @@ describe('repeating a Task as it is created', () => {
     await expect.poll(() => cadenceField().value).toBe('none')
     expect(isUnscheduled()).toBe(true)
   })
+})
+
+describe('Task Details', () => {
+  it('keeps multiline details on Enter in the textarea and commits them from the description', async () => {
+    const journal = await openJournal()
+    const desktop = fakeDesktop()
+    showTaskCreation(desktop, journal)
+    expect(document.activeElement).toBe(field())
+    type('proposal')
+    const details = screen.getByLabelText('Task Details (optional)')
+    const user = userEvent.setup()
+    await user.click(details)
+    await user.keyboard('  Olá{Enter}{Enter}  instructions  ')
+    expect((details as HTMLTextAreaElement).value).toBe('  Olá\n\n  instructions  ')
+    expect(await journal.openTasks()).toEqual([])
+    await act(async () => pressEnter())
+    expect((await journal.openTasks())[0].details).toBe('  Olá\n\n  instructions  ')
+    expect((details as HTMLTextAreaElement).value).toBe('')
+  })
+})
+
+it('discards details on Escape and retains them after a refused create or resident re-show', async () => {
+  const journal = await openJournal()
+  const desktop = fakeDesktop()
+  showTaskCreation(desktop, refusingJournal(journal))
+  type('proposal')
+  const details = screen.getByLabelText('Task Details (optional)') as HTMLTextAreaElement
+  fireEvent.change(details, { target: { value: 'unfinished\ncontext' } })
+  await act(async () => pressEnter())
+  expect(details.value).toBe('unfinished\ncontext')
+  await act(async () => desktop.showTaskCreation())
+  expect(details.value).toBe('unfinished\ncontext')
+  await act(async () => fireEvent.keyDown(details, { key: 'Escape' }))
+  expect(details.value).toBe('')
+  expect(field().value).toBe('')
+  expect(await journal.openTasks()).toEqual([])
 })
