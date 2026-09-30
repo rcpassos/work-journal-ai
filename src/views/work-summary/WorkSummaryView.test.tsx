@@ -2,6 +2,7 @@
 
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -1907,6 +1908,32 @@ describe('Work Summary snapshot provenance', () => {
       expect(desktop.clipboard).toBe(expected)
     })
     expect(desktop.clipboard).toContain('last week’s note')
+    expect(desktop.workSummaryRequests).toHaveLength(1)
+  })
+})
+
+describe('Task Details and summary freshness', () => {
+  it('marks selected details changes outdated while unchanged and unselected changes stay current', async () => {
+    const user = userEvent.setup()
+    const { journal, clock, desktop, settings } = await workSummaryAt()
+    clock.set(new Date('2026-03-02T09:00:00'))
+    const old = await journal.createTask('outside selected period', null, null, 'old context')
+    await journal.completeTask(old.id)
+    clock.set(new Date('2026-03-12T09:00:00'))
+    const selected = await journal.createTask('current commitment', null, null, 'current context')
+    renderWorkSummary({ journal, clock, desktop, settings })
+    await user.click(await screen.findByRole('button', { name: 'Generate' }))
+    await screen.findByText('The work summary the model wrote.')
+    expect(screen.queryByText(/Outdated/)).toBeNull()
+    await journal.editTask(old.id, { description: old.description, details: 'outside edit', schedule: null })
+    await act(async () => { await desktop.announceTasksChanged() })
+    expect(screen.queryByText(/Outdated/)).toBeNull()
+    await journal.editTask(selected.id, { description: selected.description, details: selected.details, schedule: null })
+    await act(async () => { await desktop.announceTasksChanged() })
+    expect(screen.queryByText(/Outdated/)).toBeNull()
+    await journal.editTask(selected.id, { description: selected.description, details: 'new current context', schedule: null })
+    await desktop.announceTasksChanged()
+    await waitFor(() => expect(screen.getByText(/Outdated/)).toBeTruthy())
     expect(desktop.workSummaryRequests).toHaveLength(1)
   })
 })

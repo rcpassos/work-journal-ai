@@ -169,10 +169,11 @@ export interface TasksSession {
     id: string,
     change: {
       description: string
+      details?: string | null
       schedule: TaskSchedule | null
       recurrence?: Recurrence | null
     },
-  ): Promise<void>
+  ): Promise<boolean>
   complete(id: string): Promise<void>
   reopen(id: string): Promise<void>
   /**
@@ -413,7 +414,7 @@ export function createTasksSession({
       })
     },
 
-    async save(id, { description, schedule, recurrence }) {
+    async save(id, { description, details, schedule, recurrence }) {
       let timed = false
 
       const saved = await change(
@@ -421,6 +422,7 @@ export function createTasksSession({
         async (core) => {
           const task = await core.editTask(id, {
             description,
+            details,
             schedule,
             recurrence,
           })
@@ -432,6 +434,7 @@ export function createTasksSession({
       )
 
       if (saved && timed) await askAboutAlerts()
+      return saved
     },
 
     async complete(id) {

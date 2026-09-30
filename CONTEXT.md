@@ -16,8 +16,12 @@ _Avoid_: Todo, action item, reminder, Note
 The required single line of free text that says what a Task is. Leading and trailing whitespace is removed, while internal whitespace and all Unicode are preserved verbatim whether precise or vague; schedule words in it are never interpreted or removed automatically. Two Tasks may have the same Task Description, and there is no arbitrary domain length limit.
 _Avoid_: Body, title, AI prompt
 
+**Task Details**:
+Optional multiline plain text belonging to a Task: context, instructions, links, or other supporting information. Whitespace-only text means absent; nonblank text preserves Unicode, spaces, indentation, blank lines and leading/trailing whitespace, with line endings normalized to LF. Editable on Open and Completed Tasks. A Recurring Task shares its current details across occurrences, with no historical text snapshots. Search includes details and material renders them as literal supporting text beneath the Task. Details never replace the required Task Description or affect scheduling, completion or safe Undo Completion.
+_Avoid_: Body, attachment, subtask, Markdown
+
 **Task Creation**:
-The explicit act of writing a Task Description and optionally choosing Scheduled For and recurrence in its own always-ready window. `Enter` from the description or the Create action commits one Task; an empty description fails, while Escape or closing hides the window, commits nothing, and the next Task Creation starts empty. Date is the prerequisite for time and recurrence; clearing it also clears time, and asks before stopping an existing recurrence.
+The explicit act of writing a Task Description, optionally adding Task Details, and choosing Scheduled For and recurrence in its own always-ready window. `Enter` from the description or the Create action commits one Task; an empty description fails, while Escape or closing hides the window, commits nothing, and the next Task Creation starts empty. Date is the prerequisite for time and recurrence; clearing it also clears time, and asks before stopping an existing recurrence.
 _Avoid_: Capture, task inference, draft
 
 **Open Task**:
@@ -25,7 +29,7 @@ A Task whose commitment has not been completed. It may be Unscheduled or have a 
 _Avoid_: Active todo, pending item
 
 **Completed Task**:
-A Task whose commitment was completed. It remains a Task and does not become or automatically create a Note; its Task Description remains editable, while Scheduled For and recurrence may change only after it is reopened. Reopening preserves its former schedule, which may make it immediately overdue.
+A Task whose commitment was completed. It remains a Task and does not become or automatically create a Note; its Task Description and Task Details remain editable, while Scheduled For and recurrence may change only after it is reopened. Reopening preserves its former schedule, which may make it immediately overdue.
 _Avoid_: Done Note, archived task
 
 **Task Created At**:
@@ -206,7 +210,7 @@ A named civil-time range that sets the day axis of the Filter once and is forgot
 _Avoid_: Quick range, date chip, relative filter, rolling window
 
 **Search**:
-A way of finding a record anywhere in the journal by what its own text says, and taking the reader to where that record already lives — never of narrowing what is on screen: the Notes anywhere in the journal whose Body contains what the reader typed, each labelled with the day it is filed under, and the Tasks anywhere in the journal whose Task Description contains what was typed, each labelled with the state it is in. Body and Task Description only — not Project names. Answering a Note takes History to that day in full, leaving the Project constraint as it was; answering a Task focuses it in its list, switching to Completed Tasks if that is where it lives. What is on screen is always one thing and nothing else: a Filter in History, a list in Tasks View.
+A way of finding a record anywhere in the journal by what its own text says, and taking the reader to where that record already lives — never of narrowing what is on screen: the Notes anywhere in the journal whose Body contains what the reader typed, each labelled with the day it is filed under, and the Tasks anywhere in the journal whose Task Description or Task Details contains what was typed, each labelled with the state it is in. Body for Notes, Task Description and Task Details for Tasks — not Project names. A Task matching both text fields appears once. Answering a Note takes History to that day in full, leaving the Project constraint as it was; answering a Task focuses it in its list, switching to Completed Tasks if that is where it lives. What is on screen is always one thing and nothing else: a Filter in History, a list in Tasks View.
 _Avoid_: Query, find, filter by text
 
 **Nudge**:

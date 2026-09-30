@@ -1041,3 +1041,52 @@ describe('a Recurring Task in the list', () => {
     await expect.poll(() => rowsUnder('Upcoming')).toEqual(['water the plants'])
   })
 })
+
+it('edits, cancels and clears Task Details on Open and Completed Tasks', async () => {
+  const { core, created } = await showTasks(['proposal'])
+  fireEvent.click(await screen.findByText('proposal'))
+  const details = () => screen.getByLabelText('Task Details (optional)') as HTMLTextAreaElement
+  fireEvent.change(details(), { target: { value: '  context\n\n  instructions  ' } })
+  fireEvent.keyDown(details(), { key: 'Enter' })
+  expect((await core.openTasks())[0].details).toBeNull()
+  fireEvent.keyDown(screen.getByLabelText('Task Description'), { key: 'Enter' })
+  await expect.poll(() => screen.queryByRole('dialog')).toBeNull()
+  expect((await core.openTasks())[0].details).toBe('  context\n\n  instructions  ')
+  expect(screen.getByRole('img', { name: 'Has Task Details' })).toBeTruthy()
+  fireEvent.click(screen.getByText('proposal'))
+  fireEvent.change(details(), { target: { value: 'discarded' } })
+  fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+  fireEvent.click(screen.getByText('proposal'))
+  expect(details().value).toBe('  context\n\n  instructions  ')
+  fireEvent.keyDown(details(), { key: 'Escape' })
+  fireEvent.click(screen.getByLabelText('Complete “proposal”'))
+  await expect.poll(async () => (await core.completedTasks()).length).toBe(1)
+  fireEvent.click(tab('Completed'))
+  fireEvent.click(await screen.findByText('proposal'))
+  fireEvent.change(details(), { target: { value: '' } })
+  fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+  await expect.poll(() => screen.queryByRole('dialog')).toBeNull()
+  expect(screen.queryByRole('img', { name: 'Has Task Details' })).toBeNull()
+  const completed = (await core.completedTasks())[0]
+  expect(completed.details).toBeNull()
+  expect(completed.createdAt).toBe(created[0].createdAt)
+})
+
+it('retains both edited fields after a failed save for correction and retry', async () => {
+  const { core } = await showTasks(['proposal'])
+  fireEvent.click(await screen.findByText('proposal'))
+  const save = core.editTask
+  core.editTask = async () => { throw new Error('disk unavailable') }
+  fireEvent.change(screen.getByLabelText('Task Description'), { target: { value: 'edited' } })
+  fireEvent.change(screen.getByLabelText('Task Details (optional)'), { target: { value: 'retained\ncontext' } })
+  fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+  await screen.findByText('That Task could not be saved.')
+  expect(screen.getByRole('dialog', { name: 'Edit Task' })).toBeTruthy()
+  expect((screen.getByLabelText('Task Details (optional)') as HTMLTextAreaElement).value).toBe('retained\ncontext')
+  expect((await core.openTasks())[0].details).toBeNull()
+  core.editTask = save
+  fireEvent.change(screen.getByLabelText('Task Description'), { target: { value: 'corrected' } })
+  fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+  await expect.poll(() => screen.queryByRole('dialog')).toBeNull()
+  expect((await core.openTasks())[0]).toMatchObject({ description: 'corrected', details: 'retained\ncontext' })
+})

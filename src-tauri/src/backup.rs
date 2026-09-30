@@ -46,7 +46,7 @@ pub const DATABASE_FILE_NAME: &str = "work-journal.db";
 /// snapshot is accepted and migrated forward by the immutable list; a newer
 /// one is refused before anything is touched. Every future migration raises
 /// this.
-pub const SUPPORTED_MIGRATION_VERSION: i64 = 9;
+pub const SUPPORTED_MIGRATION_VERSION: i64 = 10;
 
 /// The staged file a validated candidate is copied to, beside the live
 /// journal. Not a snapshot name, so pruning never touches it, and never
@@ -649,6 +649,52 @@ fn expected_schema(version: i64) -> &'static [(&'static str, &'static [&'static 
                 "recurrence_interval",
                 "recurrence_weekdays",
                 "recurrence_anchor_date",
+                "details",
+            ],
+        ),
+        (
+            "task_occurrences",
+            &[
+                "id",
+                "task_id",
+                "scheduled_date",
+                "scheduled_time",
+                "completed_at",
+                "created_at",
+                "advanced_from",
+            ],
+        ),
+        ("project_mappings", &["repository", "project"]),
+    ];
+    const V9: &[(&str, &[&str])] = &[
+        (
+            "notes",
+            &[
+                "id",
+                "body",
+                "captured_at",
+                "journal_day",
+                "edited_at",
+                "project",
+                "origin",
+                "source",
+                "source_key",
+            ],
+        ),
+        ("handled_events", &["source", "event_key", "handled_at"]),
+        (
+            "tasks",
+            &[
+                "id",
+                "description",
+                "created_at",
+                "completed_at",
+                "scheduled_date",
+                "scheduled_time",
+                "recurrence_unit",
+                "recurrence_interval",
+                "recurrence_weekdays",
+                "recurrence_anchor_date",
             ],
         ),
         (
@@ -805,6 +851,7 @@ fn expected_schema(version: i64) -> &'static [(&'static str, &'static [&'static 
         ],
         6 | 7 => V7,
         8 => V8,
+        9 => V9,
         _ => LATEST,
     }
 }
@@ -1431,9 +1478,9 @@ mod tests {
         std::fs::read(path).expect("could not read the candidate")
     }
 
-    /// The nine migration files, in version order — the very files
+    /// The migration files, in version order — the very files
     /// `migrations()` in `lib.rs` serves plugin-sql.
-    const REAL_MIGRATIONS: [&str; 9] = [
+    const REAL_MIGRATIONS: [&str; 10] = [
         include_str!("../migrations/0001_create_notes.sql"),
         include_str!("../migrations/0002_notes_project.sql"),
         include_str!("../migrations/0003_note_origin_and_imported_meetings.sql"),
@@ -1443,6 +1490,7 @@ mod tests {
         include_str!("../migrations/0007_task_occurrences_one_kept_per_slot.sql"),
         include_str!("../migrations/0008_note_origin_observe_and_handled_events.sql"),
         include_str!("../migrations/0009_project_mappings.sql"),
+        include_str!("../migrations/0010_task_details.sql"),
     ];
 
     /// Seeds `pool` with the real schema up to `up_to`, recording each
@@ -2016,7 +2064,7 @@ mod tests {
 
         let elsewhere = TempDir::new("restore-migrate-candidate");
         let candidate = elsewhere.path.join("candidate.db");
-        write_journal_file(&candidate, SUPPORTED_MIGRATION_VERSION - 1, "the old journal").await;
+        write_journal_file(&candidate, 8, "the old journal").await;
         stage_restore(&candidate, &config.path)
             .await
             .expect("an older snapshot must stage");
@@ -2030,7 +2078,7 @@ mod tests {
         let pool = SqlitePool::connect(&url).await.expect("could not open");
         for ddl in REAL_MIGRATIONS
             .iter()
-            .skip((SUPPORTED_MIGRATION_VERSION - 1) as usize)
+            .skip(8)
         {
             sqlx::query(ddl)
                 .execute(&pool)
@@ -2061,6 +2109,30 @@ mod tests {
         assert_eq!(body, "the old journal");
         assert!(source.is_none() && source_key.is_none());
         pool.close().await;
+    });
+
+
+    async_test!(a_pre_details_task_survives_restore_and_migrates_with_absent_details, {
+        let source = TempDir::new("restore-v9-details");
+        let candidate = source.path.join("candidate.db");
+        write_journal_file(&candidate, 9, "old note").await;
+        let url = format!("sqlite:{}?mode=rwc", candidate.display());
+        let pool = SqlitePool::connect(&url).await.unwrap();
+        sqlx::query("INSERT INTO tasks (id, description, created_at, completed_at, scheduled_date) VALUES ('t1', 'proposal', '2026-09-03T08:00:00Z', '2026-09-03T09:00:00Z', '2026-09-03')")
+            .execute(&pool).await.unwrap();
+        pool.close().await;
+        assert_eq!(validate_restore_candidate(&candidate).await.unwrap(), 9);
+        let config = TempDir::new("restore-v9-config");
+        stage_restore(&candidate, &config.path).await.unwrap();
+        apply_staged_restore(&config.path, SystemTime::now()).unwrap();
+        let live = live_database_path(&config.path);
+        let url = format!("sqlite:{}?mode=rwc", live.display());
+        let restored = SqlitePool::connect(&url).await.unwrap();
+        sqlx::query(REAL_MIGRATIONS[9]).execute(&restored).await.unwrap();
+        let row: (String, String, String, String, Option<String>) = sqlx::query_as("SELECT description, created_at, completed_at, scheduled_date, details FROM tasks WHERE id = 't1'")
+            .fetch_one(&restored).await.unwrap();
+        assert_eq!(row, ("proposal".into(), "2026-09-03T08:00:00Z".into(), "2026-09-03T09:00:00Z".into(), "2026-09-03".into(), None));
+        restored.close().await;
     });
 
     async_test!(a_candidate_equal_to_the_staged_path_is_refused_without_truncating_it, {
@@ -2234,6 +2306,12 @@ mod tests {
             .await
             .expect("could not create the source journal");
         seed_real_schema(&pool, SUPPORTED_MIGRATION_VERSION, "the snapshot note").await;
+        let details = "  Olá 🌍\n\n  instructions  ";
+        sqlx::query("INSERT INTO tasks (id, description, created_at, details) VALUES ('t1', 'proposal', '2026-09-03T08:45:00Z', ?)")
+            .bind(details)
+            .execute(&pool)
+            .await
+            .expect("could not seed Task Details");
 
         let elsewhere = TempDir::new("round-trip-snapshot");
         let snapshot = elsewhere.path.join("work-journal-20260903T084500.db");
@@ -2274,6 +2352,11 @@ mod tests {
             .await
             .expect("the snapshot Note did not read back");
         assert_eq!(body, "the snapshot note");
+        let (restored_details,): (String,) = sqlx::query_as("SELECT details FROM tasks WHERE id = 't1'")
+            .fetch_one(&restored)
+            .await
+            .expect("Task Details must survive backup and restore");
+        assert_eq!(restored_details, details);
 
         // And the handled event the snapshot carried — the row that outlives
         // a deleted Note, so losing it would let a refusal be forgotten.

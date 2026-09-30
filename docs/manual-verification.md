@@ -454,3 +454,14 @@ One line per end-to-end walk: the date, the build, and what it turned up. "Nothi
 | Date | Build | Findings |
 | ---- | ----- | -------- |
 | 2026-07-27 | `pnpm tauri build --bundles app`, 0.1.0 | Partial — only the items checkable without a person at the keyboard were run: the bundle builds, launches, and a second launch leaves exactly one process. The release build logs nothing, so the log item moved to a development build. The rest of the list is unwalked. |
+
+## Task Details (#276)
+
+- [ ] Open Task Creation from each entry point. Task Description has initial focus. The always-visible “Task Details (optional)” textarea, schedule controls and Create action fit within the resident panel, including after a save refusal. Paste hundreds of lines: the textarea scrolls and the actions remain reachable.
+- [ ] Enter in details adds a newline without creating a Task. Enter from the description or Create saves both fields. Details alone with a blank description never creates a Task.
+- [ ] Switch to Capture or the Main Window while Task Creation contains an unfinished description and details, then show Task Creation again: both fields survive. Editing an existing Task does not alter either field. Escape from details and clicking away abandon both fields; the next creation is empty.
+- [ ] Create details containing Unicode, indentation, blank lines, leading/trailing spaces and pasted Windows line endings. Quit and restart the app, search for text only in details, and open the Task Editor: the full text survives with LF line endings.
+- [ ] Edit and clear details in both Open and Completed Tasks. Cancel, Escape and closing the editor discard unsaved text. Long details scroll, and Save/Cancel remain reachable at the smallest supported Main Window size. Keyboard navigation announces the details field and the “Has Task Details” indicator; clearing details removes it.
+- [ ] Complete a recurring Task, edit only its details, then Undo Completion: the undo remains safe and details survive. Reopening and stopping recurrence also preserve details. Timed Task Alerts continue to show only the short Task Description.
+- [ ] Export and copy Work Summary/Review Material with Markdown-looking details (headings, checkboxes and code fences): text stays literal beneath the correct Task/occurrence. Edit selected details and refresh a generated summary: it becomes outdated without generating again. Editing a completion outside the period leaves it current.
+- [ ] Back up a journal with multiline details and restore it: details survive. Restore a supported pre-details backup: records survive and initially have no details.

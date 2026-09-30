@@ -1,3 +1,4 @@
+import { renderTaskDetails } from './task-details'
 /**
  * The work kept as Markdown bullets, shared by the lossless renderings that
  * name it — Work Summary Material and Review Material. One shared reading of
@@ -46,7 +47,7 @@ export function taskBullet(task: Task): string {
   const schedule = scheduleOf(task)
   const said = schedule !== null ? ` (scheduled ${formatSlot(schedule)})` : ''
   const box = task.completedAt === null ? ' ' : 'x'
-  return `- [${box}] ${task.description}${said}`
+  return `- [${box}] ${task.description}${said}${renderTaskDetails(task.details)}`
 }
 
 /**
@@ -60,7 +61,7 @@ export function taskBullet(task: Task): string {
 export function occurrenceBullet(completed: CompletedOccurrence): string {
   return `- [x] ${completed.task.description} (occurrence ${formatSlot(
     slotOf(completed.occurrence),
-  )})`
+  )})${renderTaskDetails(completed.task.details)}`
 }
 
 /**

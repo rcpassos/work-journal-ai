@@ -222,6 +222,9 @@ export const TASK_CREATION_SCHEDULE_ROW = 44
  */
 export const TASK_CREATION_RECURRENCE_ROW = 44
 
+/** Fixed label and scrollable details field, including its bottom padding. */
+export const TASK_CREATION_DETAILS_ROW = 128
+
 /**
  * The Task Creation panel is the Capture panel's shape — the same width and
  * the same gutter — because they are the same gesture over a different record.
@@ -239,6 +242,7 @@ export function taskCreationWindowHeight(refused: boolean): number {
     CAPTURE_HAIRLINE +
     TASK_CREATION_SCHEDULE_ROW +
     TASK_CREATION_RECURRENCE_ROW +
+    TASK_CREATION_DETAILS_ROW +
     (refused ? CAPTURE_REFUSAL_HEIGHT : 0)
   )
 }
