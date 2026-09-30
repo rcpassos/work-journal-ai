@@ -325,6 +325,8 @@ pub async fn validate_restore_candidate(candidate: &Path) -> Result<i64, String>
         return Err(format!("the backup carries an unknown migration version: {version}"));
     }
 
+    check_applied_migrations(&mut connection, version).await?;
+
     let expected = expected_schema(version);
 
     // A journal this app makes holds nothing but tables and indexes: none of
@@ -390,6 +392,77 @@ pub async fn validate_restore_candidate(candidate: &Path) -> Result<i64, String>
     }
 
     Ok(version)
+}
+
+/// Every migration this build ships, as `(version, checksum)` — the checksum
+/// computed the way sqlx does when tauri-plugin-sql hands it `migrations()`.
+fn expected_migrations() -> Vec<(i64, Vec<u8>)> {
+    let mut shipped: Vec<(i64, Vec<u8>)> = crate::migrations()
+        .into_iter()
+        .map(|migration| {
+            let checksum = sqlx::migrate::Migration::new(
+                migration.version,
+                migration.description.into(),
+                sqlx::migrate::MigrationType::ReversibleUp,
+                migration.sql.into(),
+                false,
+            )
+            .checksum
+            .into_owned();
+            (migration.version, checksum)
+        })
+        .collect();
+    shipped.sort_by_key(|(version, _)| *version);
+    shipped
+}
+
+/// The next launch runs sqlx's migrator over `_sqlx_migrations`, which panics
+/// the app on a row with `success = 0` or a checksum that differs from the
+/// shipped migration. A genuine snapshot holds exactly the shipped migrations
+/// up to its version, each succeeded, so anything else is refused here.
+async fn check_applied_migrations(
+    connection: &mut sqlx::sqlite::SqliteConnection,
+    version: i64,
+) -> Result<(), String> {
+    use sqlx::Row;
+    let applied: Vec<(i64, bool, Vec<u8>)> =
+        sqlx::query("SELECT version, success, checksum FROM _sqlx_migrations ORDER BY version")
+            .try_map(|row: sqlx::sqlite::SqliteRow| {
+                Ok((row.try_get(0)?, row.try_get(1)?, row.try_get(2)?))
+            })
+            .fetch_all(&mut *connection)
+            .await
+            .map_err(|error| format!("the backup's migrations could not be read: {error}"))?;
+
+    let expected: Vec<(i64, Vec<u8>)> = expected_migrations()
+        .into_iter()
+        .filter(|(shipped, _)| *shipped <= version)
+        .collect();
+    if applied.len() != expected.len() {
+        return Err(format!(
+            "the backup's migrations do not match this build's up to version {version} (migration check)"
+        ));
+    }
+    for ((applied_version, success, checksum), (shipped_version, shipped_checksum)) in
+        applied.iter().zip(&expected)
+    {
+        if applied_version != shipped_version {
+            return Err(format!(
+                "the backup's migrations do not match this build's: found {applied_version} where {shipped_version} belongs (migration check)"
+            ));
+        }
+        if !success {
+            return Err(format!(
+                "the backup's migration {applied_version} did not succeed (migration check)"
+            ));
+        }
+        if checksum != shipped_checksum {
+            return Err(format!(
+                "the backup's migration {applied_version} has a checksum this build does not ship (migration check)"
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// Reads the columns a table actually holds, by name. Through
@@ -1515,6 +1588,7 @@ mod tests {
         .execute(pool)
         .await
         .expect("could not create the migrations table");
+        let shipped = expected_migrations();
         for (index, ddl) in REAL_MIGRATIONS.iter().enumerate().take(up_to as usize) {
             let version = index as i64 + 1;
             sqlx::query(ddl)
@@ -1523,10 +1597,11 @@ mod tests {
                 .unwrap_or_else(|_| panic!("real migration {version} failed"));
             sqlx::query(
                 "INSERT INTO _sqlx_migrations (version, description, success, checksum, execution_time)
-                 VALUES (?, ?, 1, X'00', 0)",
+                 VALUES (?, ?, 1, ?, 0)",
             )
             .bind(version)
             .bind(format!("migration {version}"))
+            .bind(shipped[index].1.clone())
             .execute(pool)
             .await
             .expect("could not record the migration");
@@ -1802,6 +1877,76 @@ mod tests {
 
         assert!(
             refusal.contains("newer"),
+            "a refusal names which check failed, got: {refusal}"
+        );
+        assert_eq!(candidate_bytes(&candidate), before);
+    });
+
+    async_test!(a_mismatched_migration_checksum_is_refused_before_anything_is_touched, {
+        let directory = TempDir::new("restore-bad-checksum");
+        let candidate = healthy_candidate(&directory, "candidate.db", "the journal").await;
+        let url = format!("sqlite:{}?mode=rwc", candidate.display());
+        let pool = SqlitePool::connect(&url).await.expect("could not open");
+        sqlx::query("UPDATE _sqlx_migrations SET checksum = X'00' WHERE version = 3")
+            .execute(&pool)
+            .await
+            .expect("could not corrupt the checksum");
+        pool.close().await;
+        let before = candidate_bytes(&candidate);
+
+        let refusal = validate_restore_candidate(&candidate)
+            .await
+            .expect_err("a checksum the app does not ship must not validate");
+
+        assert!(
+            refusal.contains("migration check") && refusal.contains("checksum"),
+            "a refusal names which check failed, got: {refusal}"
+        );
+        assert_eq!(candidate_bytes(&candidate), before);
+    });
+
+    async_test!(a_failed_migration_row_is_refused_before_anything_is_touched, {
+        let directory = TempDir::new("restore-failed-migration");
+        let candidate = healthy_candidate(&directory, "candidate.db", "the journal").await;
+        let url = format!("sqlite:{}?mode=rwc", candidate.display());
+        let pool = SqlitePool::connect(&url).await.expect("could not open");
+        sqlx::query("UPDATE _sqlx_migrations SET success = 0 WHERE version = ?")
+            .bind(SUPPORTED_MIGRATION_VERSION)
+            .execute(&pool)
+            .await
+            .expect("could not mark the migration failed");
+        pool.close().await;
+        let before = candidate_bytes(&candidate);
+
+        let refusal = validate_restore_candidate(&candidate)
+            .await
+            .expect_err("a migration that did not succeed must not validate");
+
+        assert!(
+            refusal.contains("migration check") && refusal.contains("did not succeed"),
+            "a refusal names which check failed, got: {refusal}"
+        );
+        assert_eq!(candidate_bytes(&candidate), before);
+    });
+
+    async_test!(a_gap_in_the_applied_migrations_is_refused, {
+        let directory = TempDir::new("restore-migration-gap");
+        let candidate = healthy_candidate(&directory, "candidate.db", "the journal").await;
+        let url = format!("sqlite:{}?mode=rwc", candidate.display());
+        let pool = SqlitePool::connect(&url).await.expect("could not open");
+        sqlx::query("DELETE FROM _sqlx_migrations WHERE version = 2")
+            .execute(&pool)
+            .await
+            .expect("could not remove the row");
+        pool.close().await;
+        let before = candidate_bytes(&candidate);
+
+        let refusal = validate_restore_candidate(&candidate)
+            .await
+            .expect_err("a missing migration row must not validate");
+
+        assert!(
+            refusal.contains("migration check"),
             "a refusal names which check failed, got: {refusal}"
         );
         assert_eq!(candidate_bytes(&candidate), before);
