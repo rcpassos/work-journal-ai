@@ -28,7 +28,11 @@ tauri-plugin-log = "2"
 tauri-plugin-sql = { version = "2", features = ["sqlite"] }
 # The same sqlx the plugin uses, so `journal_transaction` runs its statements on
 # the plugin's own pool — see docs/adr/0020-recurring-task-transitions-are-transactional.md.
-sqlx = { version = "0.8", default-features = false, features = ["sqlite", "runtime-tokio"] }
+# `migrate` for `Migration::new`, which computes the checksum of a migration the
+# way plugin-sql does when it resolves the list — restore validation compares a
+# candidate's recorded checksums against it, so it is asked for directly here
+# rather than relied on to arrive through the plugin's own default features.
+sqlx = { version = "0.8", default-features = false, features = ["sqlite", "runtime-tokio", "migrate"] }
 tauri-plugin-store = "2"
 tauri-plugin-clipboard-manager = "2.3.2"
 # The API Key, in the OS keychain rather than in the plaintext settings file —

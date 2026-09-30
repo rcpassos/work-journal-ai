@@ -14,7 +14,7 @@
 use serde::Serialize;
 use sqlx::{Connection, SqlitePool};
 use crate::export::free_path;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -258,8 +258,10 @@ pub enum ApplyOutcome {
 
 /// Opens a candidate read-only and validates it: `quick_check`, the schema
 /// the version it claims must carry — every expected table, every column of
-/// each, and nothing a journal never makes — and the `_sqlx_migrations`
-/// boundary. Never opens it with the app's own pool, never writes to the
+/// each, and nothing a journal never makes — and that the
+/// `_sqlx_migrations` rows are this build's own: every one a version it has,
+/// marked applied, carrying its own checksum, not merely a highest version it
+/// understands. Never opens it with the app's own pool, never writes to the
 /// file, and never mutates anything on a refusal. A refusal names which check
 /// failed. Answers with the migration version the candidate carries, so the
 /// caller can log what it staged.
@@ -324,6 +326,17 @@ pub async fn validate_restore_candidate(candidate: &Path) -> Result<i64, String>
     if version < 1 {
         return Err(format!("the backup carries an unknown migration version: {version}"));
     }
+
+    // The boundary above is the highest version only, and it cannot see inside
+    // a row. The next launch reads every one of them: sqlx's migrator stops
+    // dead on a row marked unapplied and refuses the file on a checksum that
+    // is not its own, inside plugin-sql's setup, so the error reaches
+    // `.expect("error while running tauri application")` in `lib.rs` and the
+    // app panics on every launch — with the rollback file on disk and nothing
+    // pointing the user at it. A row like that can hold a version this build
+    // understands perfectly well, so the rows are checked here, while
+    // refusing is still an option.
+    migrations_are_this_builds_own(&mut connection).await?;
 
     let expected = expected_schema(version);
 
@@ -407,6 +420,78 @@ async fn columns_of(
         .await
         .map_err(|error| format!("the backup's {table} columns could not be read: {error}"))
         .map(|columns| columns.into_iter().collect())
+}
+
+/// Every migration this build ships, as the version and checksum sqlx holds it
+/// under. Built through sqlx's own `Migration::new` — the very construction
+/// plugin-sql performs when it resolves the list — so these are the bytes it
+/// writes into `_sqlx_migrations.checksum` and compares against on every
+/// launch, not a checksum recomputed here by a second rule.
+fn this_builds_migrations() -> HashMap<i64, Vec<u8>> {
+    crate::migrations()
+        .into_iter()
+        .map(|migration| {
+            let resolved = sqlx::migrate::Migration::new(
+                migration.version,
+                migration.description.into(),
+                migration.kind.into(),
+                migration.sql.into(),
+                false,
+            );
+            (migration.version, resolved.checksum.into_owned())
+        })
+        .collect()
+}
+
+/// Whether every `_sqlx_migrations` row is one this build itself applied: a
+/// version `migrations()` has, marked applied, carrying that migration's own
+/// checksum. Each of those three is a way to fail the next launch, and all
+/// three are invisible to a check of the highest version alone — a foreign
+/// checksum at a supported version sails straight through it.
+///
+/// A genuine snapshot never fails this. Migrations are immutable (ADR 0009)
+/// and sqlx runs each one in a transaction, recording it only once it has
+/// been applied, so every row it wrote is a version it has, marked applied,
+/// with the checksum of the very SQL that ran. The input this refuses is a
+/// crafted or hand-edited file — which is what validation exists to refuse.
+async fn migrations_are_this_builds_own(
+    connection: &mut sqlx::sqlite::SqliteConnection,
+) -> Result<(), String> {
+    use sqlx::Row;
+    let rows: Vec<(i64, bool, Vec<u8>)> =
+        sqlx::query("SELECT version, success, checksum FROM _sqlx_migrations ORDER BY version")
+            .try_map(|row: sqlx::sqlite::SqliteRow| {
+                Ok((row.try_get(0)?, row.try_get(1)?, row.try_get(2)?))
+            })
+            .fetch_all(&mut *connection)
+            .await
+            .map_err(|error| format!("the backup's migration rows could not be read: {error}"))?;
+
+    let applied = this_builds_migrations();
+    for (version, success, checksum) in rows {
+        let Some(expected) = applied.get(&version) else {
+            return Err(refused_migration_row(format!(
+                "migration {version} is not one this build has"
+            )));
+        };
+        if !success {
+            return Err(refused_migration_row(format!(
+                "migration {version} is recorded as not applied"
+            )));
+        }
+        if checksum != *expected {
+            return Err(refused_migration_row(format!(
+                "migration {version} carries a checksum this build does not have"
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// How a migration row this build did not write is answered: the check, then
+/// the row that failed it.
+fn refused_migration_row(reason: String) -> String {
+    format!("the backup's migration rows are not this build's own: {reason}")
 }
 
 /// Whether two paths name the same file. Canonicalization covers `.`, `..`,
@@ -1445,14 +1530,27 @@ mod tests {
         include_str!("../migrations/0009_project_mappings.sql"),
     ];
 
+    /// The checksum sqlx itself records for `version`, read out of the
+    /// immutable list `lib.rs` serves plugin-sql — so a seeded journal
+    /// carries the very bytes a real one does. A placeholder would make every
+    /// "a healthy candidate validates" test here mean nothing, and now that
+    /// validation compares them, fail outright.
+    fn checksum_of(version: i64) -> Vec<u8> {
+        this_builds_migrations()
+            .get(&version)
+            .unwrap_or_else(|| panic!("the list holds no migration {version}"))
+            .clone()
+    }
+
     /// Seeds `pool` with the real schema up to `up_to`, recording each
     /// version in a `_sqlx_migrations` table shaped exactly like the one
-    /// sqlx itself keeps — so validation meets the production schema rather
-    /// than a hand-written approximation of it. `write_journal_file` and
-    /// `real_journal_file` both come through here. From version 8 the journal
-    /// also holds a handled event, so a round trip can prove the rows that
-    /// outlive a Note survive it — and from version 9 a Project Mapping, so
-    /// the filing a repository arrives with survives it too.
+    /// sqlx itself keeps — same columns, same checksum, same applied mark — so
+    /// validation meets the production schema rather than a hand-written
+    /// approximation of it. `write_journal_file` and `real_journal_file` both
+    /// come through here. From version 8 the journal also holds a handled
+    /// event, so a round trip can prove the rows that outlive a Note survive
+    /// it — and from version 9 a Project Mapping, so the filing a repository
+    /// arrives with survives it too.
     async fn seed_real_schema(pool: &SqlitePool, up_to: i64, marker: &str) {
         sqlx::query(
             "CREATE TABLE IF NOT EXISTS _sqlx_migrations (
@@ -1475,10 +1573,11 @@ mod tests {
                 .unwrap_or_else(|_| panic!("real migration {version} failed"));
             sqlx::query(
                 "INSERT INTO _sqlx_migrations (version, description, success, checksum, execution_time)
-                 VALUES (?, ?, 1, X'00', 0)",
+                 VALUES (?, ?, 1, ?, 0)",
             )
             .bind(version)
             .bind(format!("migration {version}"))
+            .bind(checksum_of(version))
             .execute(pool)
             .await
             .expect("could not record the migration");
@@ -1769,6 +1868,66 @@ mod tests {
             .expect("an older snapshot must validate");
 
         assert_eq!(version, SUPPORTED_MIGRATION_VERSION - 1);
+    });
+
+    async_test!(a_journal_whose_migration_row_carries_a_foreign_checksum_is_refused, {
+        // Everything else about this candidate is right: the version is one
+        // this build understands, so the boundary is satisfied, and the
+        // schema behind it is the real one. The next launch still dies on it —
+        // sqlx's migrator compares every applied checksum with its own and
+        // refuses the file on a mismatch, inside plugin-sql's setup, before
+        // the app is on screen to say anything. And migrations are immutable
+        // (ADR 0009), so no snapshot this app ever took carries a checksum
+        // like this one: only a crafted or hand-edited file does.
+        let directory = TempDir::new("restore-foreign-checksum");
+        let candidate = healthy_candidate(&directory, "candidate.db", "the journal").await;
+        let url = format!("sqlite:{}?mode=rwc", candidate.display());
+        let pool = SqlitePool::connect(&url).await.expect("could not open");
+        sqlx::query("UPDATE _sqlx_migrations SET checksum = X'00' WHERE version = 3;")
+            .execute(&pool)
+            .await
+            .expect("could not rewrite the checksum");
+        pool.close().await;
+        let before = candidate_bytes(&candidate);
+
+        let refusal = validate_restore_candidate(&candidate)
+            .await
+            .expect_err("a foreign checksum must not validate");
+
+        assert!(
+            refusal.contains("migration rows") && refusal.contains("migration 3"),
+            "a refusal names which check failed, got: {refusal}"
+        );
+        assert_eq!(candidate_bytes(&candidate), before);
+    });
+
+    async_test!(a_journal_whose_migration_row_failed_to_apply_is_refused, {
+        // `success = 0` is what sqlx's migrator calls dirty, and it stops
+        // there before reading a single checksum — so this candidate is
+        // refused on the next launch even with the version, the schema and
+        // every checksum exactly right. A real journal never holds such a row:
+        // sqlx runs each migration in a transaction and records it only once
+        // it has been applied.
+        let directory = TempDir::new("restore-dirty-migration");
+        let candidate = healthy_candidate(&directory, "candidate.db", "the journal").await;
+        let url = format!("sqlite:{}?mode=rwc", candidate.display());
+        let pool = SqlitePool::connect(&url).await.expect("could not open");
+        sqlx::query("UPDATE _sqlx_migrations SET success = 0 WHERE version = 4;")
+            .execute(&pool)
+            .await
+            .expect("could not mark the migration unapplied");
+        pool.close().await;
+        let before = candidate_bytes(&candidate);
+
+        let refusal = validate_restore_candidate(&candidate)
+            .await
+            .expect_err("an unapplied migration must not validate");
+
+        assert!(
+            refusal.contains("migration rows") && refusal.contains("migration 4"),
+            "a refusal names which check failed, got: {refusal}"
+        );
+        assert_eq!(candidate_bytes(&candidate), before);
     });
 
     async_test!(a_path_that_is_not_a_plain_file_is_refused, {

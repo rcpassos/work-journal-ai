@@ -4,6 +4,7 @@ What changed in each released version, newest first. Every `vX.Y.Z` section here
 
 ## Unreleased
 
+- A backup whose recorded migrations are not the ones this build applies is refused before it replaces the journal, instead of leaving the app unable to start.
 - Each repository in Settings now carries the Project its commits are filed under: its own name is offered first, and nothing is filed under anything unless you pick or type it.
 - Renaming a Project renames what the repositories mapped to it are filed under too, and a Project one of them holds stays around — discoverable and renameable — until nothing names it.
 - Hovering a meeting in History says it came from your calendar, for meetings imported from now on.
