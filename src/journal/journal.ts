@@ -2706,20 +2706,27 @@ export function formatDayRange(from: string, to: string): string {
  * A formatter in the machine's own timezone, built once and rebuilt when that
  * timezone moves. A formatter fixes the zone it was constructed in, and the app
  * outlives a flight; asking `localTimeZone` per call would cost as much as the
- * construction this avoids, so the zone's current offset stands in for it. The
- * locale is re-read at the same moment.
+ * construction this avoids, so the zone's offsets stand in for it: now, and the
+ * two solstices of this year, which tells apart zones that agree today but keep
+ * different rules. The locale is re-read at the same moment.
  */
 export function localFormatter(
   options: Intl.DateTimeFormatOptions,
 ): (date: Date) => string {
-  let offset = Number.NaN
+  let key = ''
   let formatter: Intl.DateTimeFormat
 
   return (date) => {
-    const now = new Date().getTimezoneOffset()
-    if (now !== offset) {
+    const year = new Date().getFullYear()
+    const now = [
+      new Date().getTimezoneOffset(),
+      new Date(year, 0, 1).getTimezoneOffset(),
+      new Date(year, 6, 1).getTimezoneOffset(),
+    ].join()
+
+    if (now !== key) {
       formatter = new Intl.DateTimeFormat(undefined, options)
-      offset = now
+      key = now
     }
     return formatter.format(date)
   }
@@ -2969,32 +2976,40 @@ function groupOf(
     : 'today'
 }
 
-const formatScheduledDay = localFormatter({
+const SCHEDULED_DAY = new Intl.DateTimeFormat(undefined, {
   day: 'numeric',
   month: 'short',
   year: 'numeric',
+  timeZone: 'UTC',
 })
 
-const formatScheduledTime = localFormatter({
+const SCHEDULED_TIME = new Intl.DateTimeFormat(undefined, {
   hour: '2-digit',
   minute: '2-digit',
+  timeZone: 'UTC',
 })
 
 /**
  * Scheduled For as Tasks View reads it: the day in the reader's own locale, and
  * the time of day after it when there is one. Nothing at all when the Task is
  * Unscheduled — a blank says it better than the word would.
+ *
+ * Formatted from the stored civil date and time as they were written, in UTC
+ * like `formatJournalDay`: no timezone is involved, so a Task at 14:00 reads
+ * 14:00 wherever the user is (ADR 0021).
  */
 export function formatScheduledFor(task: Task): string | null {
   const schedule = scheduleOf(task)
   if (schedule === null) return null
 
-  const at = scheduledInstant(schedule)
-  const day = formatScheduledDay(at)
+  const [year, month, day] = schedule.date.split('-').map(Number)
+  const [hour, minute] = (schedule.time ?? '00:00').split(':').map(Number)
+  const written = new Date(Date.UTC(year, month - 1, day, hour, minute))
+  const dayText = SCHEDULED_DAY.format(written)
 
-  if (schedule.time === null) return day
+  if (schedule.time === null) return dayText
 
-  return `${day}, ${formatScheduledTime(at)}`
+  return `${dayText}, ${SCHEDULED_TIME.format(written)}`
 }
 
 /**

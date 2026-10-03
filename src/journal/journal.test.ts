@@ -15,8 +15,10 @@ import {
   formatAgo,
   formatJournalDay,
   formatProject,
+  formatScheduledFor,
   formatTaskCompletedAt,
   formatTimeOfDay,
+  localFormatter,
   formatSlot,
   slotOf,
   isProjectName,
@@ -1151,6 +1153,37 @@ describe('row formatters', () => {
 
     formatTimeOfDay('2026-03-13T09:05:00.000Z')
     formatTimeOfDay('2026-03-13T09:05:00.000Z')
+
+    expect(construct).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('localFormatter', () => {
+  afterEach(() => vi.restoreAllMocks())
+
+  it('rebuilds for a zone that agrees today but not in the other season', () => {
+    const format = localFormatter({ hour: '2-digit', minute: '2-digit' })
+    const at = new Date('2026-12-01T17:00:00Z')
+    const offsets = vi.spyOn(Date.prototype, 'getTimezoneOffset')
+    // Los Angeles, then Phoenix: the same offset in October, not in December.
+    const zone = (now: number, jan: number, jul: number) =>
+      offsets.mockImplementation(function (this: Date) {
+        if (this.getMonth() === 0 && this.getDate() === 1) return jan
+        if (this.getMonth() === 6 && this.getDate() === 1) return jul
+        return now
+      })
+
+    zone(420, 480, 420)
+    format(at)
+
+    const Real = Intl.DateTimeFormat
+    const construct = vi
+      .spyOn(Intl, 'DateTimeFormat')
+      .mockImplementation(function (...args) {
+        return new Real(...args)
+      })
+    zone(420, 420, 420)
+    format(at)
 
     expect(construct).toHaveBeenCalledTimes(1)
   })
@@ -3898,6 +3931,29 @@ describe('openTasks in Scheduled For order', () => {
       'second written',
       'first written',
     ])
+  })
+})
+
+describe('formatScheduledFor', () => {
+  const scheduled = (scheduledDate: string | null, scheduledTime: string | null) =>
+    ({ scheduledDate, scheduledTime }) as Task
+
+  it('reads the time as written, in whatever zone the machine is in', () => {
+    const offset = vi.spyOn(Date.prototype, 'getTimezoneOffset')
+
+    for (const minutes of [0, 420, -540]) {
+      offset.mockReturnValue(minutes)
+      expect(formatScheduledFor(scheduled('2026-12-01', '09:00'))).toMatch(
+        /\b1\b.*\b09.00\b/,
+      )
+      expect(formatScheduledFor(scheduled('2026-12-01', null))).toMatch(/\b1\b/)
+    }
+
+    vi.restoreAllMocks()
+  })
+
+  it('is blank for an Unscheduled Task', () => {
+    expect(formatScheduledFor(scheduled(null, null))).toBeNull()
   })
 })
 
