@@ -3938,18 +3938,26 @@ describe('formatScheduledFor', () => {
   const scheduled = (scheduledDate: string | null, scheduledTime: string | null) =>
     ({ scheduledDate, scheduledTime }) as Task
 
-  it('reads the time as written, in whatever zone the machine is in', () => {
-    const offset = vi.spyOn(Date.prototype, 'getTimezoneOffset')
+  it('reads the time as written after the machine changes timezone', () => {
+    // Los Angeles and Phoenix keep the same offset in October and part ways in
+    // December, so a formatter left over from one zone is wrong in the other.
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date('2026-10-03T12:00:00Z'))
+    const pinned = process.env.TZ
 
-    for (const minutes of [0, 420, -540]) {
-      offset.mockReturnValue(minutes)
+    try {
+      process.env.TZ = 'America/Los_Angeles'
+      formatScheduledFor(scheduled('2026-12-01', '09:00'))
+
+      process.env.TZ = 'America/Phoenix'
       expect(formatScheduledFor(scheduled('2026-12-01', '09:00'))).toMatch(
         /\b1\b.*\b09.00\b/,
       )
       expect(formatScheduledFor(scheduled('2026-12-01', null))).toMatch(/\b1\b/)
+    } finally {
+      process.env.TZ = pinned
+      vi.useRealTimers()
     }
-
-    vi.restoreAllMocks()
   })
 
   it('is blank for an Unscheduled Task', () => {
