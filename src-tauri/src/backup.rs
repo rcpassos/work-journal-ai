@@ -478,7 +478,7 @@ fn known_migration_checksums() -> Vec<(i64, Vec<u8>)> {
 
 /// What a journal's schema holds that the app made: each table with its
 /// columns, and the named indexes. Leaves out sqlx's own `_sqlx_migrations`,
-/// SQLite's `sqlite_*` bookkeeping, and the `sqlite_autoindex_*` entries
+/// SQLite's `sqlite_*` bookkeeping (matched by `substr`, since `_` in a `LIKE` pattern matches any character), and the `sqlite_autoindex_*` entries
 /// (`sql IS NOT NULL`) it keeps for primary keys and unique constraints.
 struct Schema {
     tables: BTreeMap<String, BTreeSet<String>>,
@@ -494,7 +494,7 @@ async fn schema_of(connection: &mut sqlx::sqlite::SqliteConnection) -> Result<Sc
     let names: Vec<(String, String)> = sqlx::query(
         "SELECT type, name FROM sqlite_master
          WHERE type IN ('table', 'index') AND sql IS NOT NULL
-           AND name NOT LIKE 'sqlite_%' AND name != '_sqlx_migrations'",
+           AND substr(name, 1, 7) != 'sqlite_' AND name != '_sqlx_migrations'",
     )
     .try_map(|row: sqlx::sqlite::SqliteRow| Ok((row.try_get(0)?, row.try_get(1)?)))
     .fetch_all(&mut *connection)
@@ -1741,10 +1741,17 @@ mod tests {
     });
 
     async_test!(a_healthy_journal_carrying_an_extra_table_column_or_index_is_refused, {
-        let cases: [(&str, &str, &str); 4] = [
+        let cases: [(&str, &str, &str); 5] = [
             ("CREATE TABLE stowaway (id TEXT PRIMARY KEY);", "unexpected tables", "stowaway"),
             ("ALTER TABLE notes ADD COLUMN stowaway TEXT;", "unexpected columns", "stowaway"),
             ("CREATE INDEX stowaway ON notes (body);", "unexpected indexes", "stowaway"),
+            // `_` in a LIKE pattern matches any character, so a `LIKE 'sqlite_%'`
+            // filter would let this one through.
+            (
+                "CREATE TABLE sqliteXstowaway (id TEXT PRIMARY KEY);",
+                "unexpected tables",
+                "sqliteXstowaway",
+            ),
             // A generated column hides from `table_info`.
             (
                 "ALTER TABLE notes ADD COLUMN stowaway TEXT GENERATED ALWAYS AS (NULL) VIRTUAL;",
