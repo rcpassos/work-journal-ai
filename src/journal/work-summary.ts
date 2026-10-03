@@ -10,6 +10,7 @@
 
 import {
   formatDayRange,
+  localFormatter,
   type CompletedOccurrence,
   type DayRange,
   type Digest,
@@ -88,7 +89,7 @@ export async function selectWorkSummary({
   }
 }
 
-const GENERATED_AT = new Intl.DateTimeFormat(undefined, {
+const formatGeneratedAt = localFormatter({
   dateStyle: 'medium',
   timeStyle: 'short',
 })
@@ -100,7 +101,7 @@ const GENERATED_AT = new Intl.DateTimeFormat(undefined, {
  * than matching prose across locales.
  */
 export function formatWorkSummaryGeneratedAt(at: Date): string {
-  return GENERATED_AT.format(at)
+  return formatGeneratedAt(at)
 }
 
 /**

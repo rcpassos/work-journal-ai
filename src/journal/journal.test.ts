@@ -1136,6 +1136,24 @@ describe('row formatters', () => {
 
     expect(construct).not.toHaveBeenCalled()
   })
+
+  it('rebuild a local-zone formatter when the machine changes timezone', () => {
+    // A formatter fixes the zone it was built in, and the app outlives a trip.
+    formatTimeOfDay('2026-03-13T09:05:00.000Z')
+    const offset = new Date().getTimezoneOffset()
+    vi.spyOn(Date.prototype, 'getTimezoneOffset').mockReturnValue(offset + 60)
+    const Real = Intl.DateTimeFormat
+    const construct = vi
+      .spyOn(Intl, 'DateTimeFormat')
+      .mockImplementation(function (...args) {
+        return new Real(...args)
+      })
+
+    formatTimeOfDay('2026-03-13T09:05:00.000Z')
+    formatTimeOfDay('2026-03-13T09:05:00.000Z')
+
+    expect(construct).toHaveBeenCalledTimes(1)
+  })
 })
 
 describe('formatProject', () => {
