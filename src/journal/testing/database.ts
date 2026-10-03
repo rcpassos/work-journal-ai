@@ -42,7 +42,7 @@ export async function openTestDatabase(): Promise<{
       database.exec('BEGIN')
       try {
         for (const { sql, params } of statements) {
-          database.prepare(sql).run(...(params as never[]))
+          database.prepare(sql).run(...params.map(bindable))
         }
         database.exec('COMMIT')
       } catch (error) {
@@ -53,6 +53,26 @@ export async function openTestDatabase(): Promise<{
   }
 
   return { driver, close: () => database.close() }
+}
+
+const I64_LIMIT = 2 ** 63
+
+/**
+ * What Rust's `journal_transaction` binds, and nothing more: null, a string, or
+ * a whole number that fits an i64. node:sqlite would take a fraction, a bigint
+ * or bytes, and a statement bound that way would pass the suite and be refused
+ * in the app. NaN is refused too, though over IPC it would arrive as null:
+ * a NaN bound is a bug in the statement, and the harness should say so.
+ */
+function bindable(value: unknown): null | string | number {
+  if (value === null || typeof value === 'string') return value
+  if (typeof value === 'number') {
+    if (!Number.isInteger(value) || value < -I64_LIMIT || value >= I64_LIMIT) {
+      throw new Error(`not a whole number: ${value}`)
+    }
+    return value
+  }
+  throw new Error(`the journal does not store ${String(value)}`)
 }
 
 export function migrationSql(): string[] {

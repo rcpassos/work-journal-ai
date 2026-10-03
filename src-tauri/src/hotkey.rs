@@ -85,7 +85,9 @@ pub fn settle(
 }
 
 /// Whether a Hotkey is available, and if not, why. Recorded at startup and
-/// readable from anywhere afterwards — Settings reports on it later.
+/// readable from anywhere afterwards — Settings reports on it later. Must match
+/// `HotkeyStatus` in `src/settings/hotkey.ts`, as
+/// `src/platform/desktop-rust.test.ts` checks.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(tag = "state", rename_all = "camelCase")]
 pub enum HotkeyStatus {
@@ -120,7 +122,9 @@ impl HotkeyStatus {
 }
 
 /// Both Hotkeys as they stand. Held as one value because the rule that keeps
-/// them apart is about the pair rather than about either one.
+/// them apart is about the pair rather than about either one. Must match
+/// `HotkeyStatuses` in `src/settings/hotkey.ts`, as
+/// `src/platform/desktop-rust.test.ts` checks.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Hotkeys {

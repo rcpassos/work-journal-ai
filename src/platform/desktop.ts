@@ -437,7 +437,11 @@ export interface BackupResult {
   fileName: string
 }
 
-/** What the automatic backups look like right now, as the Rust side counts it. */
+/**
+ * What the automatic backups look like right now, as the Rust side counts it.
+ * Must match `AutomaticBackups` in `src-tauri/src/backup.rs`, as
+ * `src/platform/desktop-rust.test.ts` checks.
+ */
 export interface AutomaticBackups {
   count: number
   /** Epoch seconds of the newest snapshot, or null when there is none. */

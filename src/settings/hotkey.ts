@@ -8,7 +8,8 @@
 
 /**
  * Whether the Hotkey is available, and if not, why — the Rust side's
- * `HotkeyStatus`, as it arrives over the command boundary.
+ * `HotkeyStatus`, as it arrives over the command boundary. Must match it in
+ * `src-tauri/src/hotkey.rs`, as `src/platform/desktop-rust.test.ts` checks.
  */
 export type HotkeyStatus =
   | { state: 'registered'; hotkey: string }
@@ -22,7 +23,11 @@ export type HotkeyStatus =
  */
 export type HotkeyAction = 'note' | 'task'
 
-/** Both Hotkeys as they stand, which is how the Rust side reports them. */
+/**
+ * Both Hotkeys as they stand, which is how the Rust side reports them. Must
+ * match `Hotkeys` in `src-tauri/src/hotkey.rs`, as
+ * `src/platform/desktop-rust.test.ts` checks.
+ */
 export interface HotkeyStatuses {
   note: HotkeyStatus
   task: HotkeyStatus
