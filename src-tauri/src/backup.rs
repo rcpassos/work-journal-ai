@@ -334,7 +334,7 @@ pub async fn validate_restore_candidate(candidate: &Path) -> Result<i64, String>
     let unexpected: Vec<String> =
         sqlx::query(
             "SELECT name FROM sqlite_master
-             WHERE type IN ('view', 'trigger') AND substr(name, 1, 7) <> 'sqlite_'
+             WHERE type IN ('view', 'trigger')
              ORDER BY name",
         )
         .try_map(|row: sqlx::sqlite::SqliteRow| row.try_get(0))
@@ -1778,29 +1778,44 @@ mod tests {
         assert_eq!(candidate_bytes(&candidate), before);
     });
 
-    async_test!(a_trigger_named_like_the_reserved_prefix_is_refused, {
-        // SQLite reserves only the literal `sqlite_` prefix; `sqlitexwipe` is
-        // a legal name. A LIKE pattern reads `_` as a wildcard and would skip it.
-        let directory = TempDir::new("restore-lookalike-trigger");
+    async_test!(a_trigger_named_with_the_reserved_prefix_is_refused, {
+        // SQLite refuses the `sqlite_` prefix only when an object is created.
+        // A crafted file can rename a trigger with `writable_schema`, and
+        // SQLite loads and runs it all the same, so no name is exempt.
+        let directory = TempDir::new("restore-reserved-prefix-trigger");
         let candidate = healthy_candidate(&directory, "candidate.db", "the journal").await;
         let url = format!("sqlite:{}?mode=rwc", candidate.display());
         let pool = SqlitePool::connect(&url).await.expect("could not open");
+        let mut connection = pool.acquire().await.expect("could not acquire");
         sqlx::query(
-            "CREATE TRIGGER sqlitexwipe AFTER INSERT ON notes
+            "CREATE TRIGGER planted AFTER INSERT ON notes
              BEGIN DELETE FROM notes; END;",
         )
-        .execute(&pool)
+        .execute(&mut *connection)
         .await
         .expect("could not create the trigger");
+        sqlx::query("PRAGMA writable_schema = ON")
+            .execute(&mut *connection)
+            .await
+            .expect("could not open the schema for writing");
+        sqlx::query(
+            "UPDATE sqlite_master
+             SET name = 'sqlite_wipe', sql = replace(sql, 'planted', 'sqlite_wipe')
+             WHERE type = 'trigger' AND name = 'planted'",
+        )
+        .execute(&mut *connection)
+        .await
+        .expect("could not rename the trigger");
+        drop(connection);
         pool.close().await;
         let before = candidate_bytes(&candidate);
 
         let refusal = validate_restore_candidate(&candidate)
             .await
-            .expect_err("a trigger named like the reserved prefix must not validate");
+            .expect_err("a trigger named with the reserved prefix must not validate");
 
         assert!(
-            refusal.contains("unexpected") && refusal.contains("sqlitexwipe"),
+            refusal.contains("unexpected") && refusal.contains("sqlite_wipe"),
             "a refusal names which check failed, got: {refusal}"
         );
         assert_eq!(candidate_bytes(&candidate), before);
