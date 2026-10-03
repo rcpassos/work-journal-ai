@@ -18,7 +18,7 @@ importers:
         specifier: ^4.3.3
         version: 4.3.3(vite@8.1.5(@types/node@24.13.3)(jiti@2.7.0))
       '@tauri-apps/api':
-        specifier: ~2.11.1
+        specifier: ^2.11.1
         version: 2.11.1
       '@tauri-apps/plugin-autostart':
         specifier: ~2.5.1
