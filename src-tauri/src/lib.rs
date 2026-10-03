@@ -431,9 +431,29 @@ pub fn run() {
         // stdout and a file in the app's log directory, which is where a
         // release build's failed snapshot, prune or restore leaves its line —
         // see docs/adr/0032-a-backup-is-a-sqlite-snapshot-taken-with-vacuum-into.md.
+        //
+        // Wired by hand rather than with `.build()`: that propagates a log
+        // directory it cannot create or a file it cannot open out of
+        // build(), which aborts the launch. A journal that cannot say what
+        // it did is better than one that does not start.
         .plugin(
-            tauri_plugin_log::Builder::default()
-                .level(log::LevelFilter::Info)
+            tauri::plugin::Builder::new("logger")
+                .setup(
+                    |app: &tauri::AppHandle<tauri::Wry>,
+                     _api: tauri::plugin::PluginApi<tauri::Wry, ()>| {
+                    let logger = tauri_plugin_log::Builder::default()
+                        .level(log::LevelFilter::Info)
+                        .split(app)
+                        .map_err(|error| error.to_string())
+                        .and_then(|(_, max_level, log)| {
+                            tauri_plugin_log::attach_logger(max_level, log)
+                                .map_err(|error| error.to_string())
+                        });
+                    if let Err(error) = logger {
+                        eprintln!("no log this launch: {error}");
+                    }
+                    Ok(())
+                })
                 .build(),
         )
         // The staged restore, before plugin-sql opens: the only moment
