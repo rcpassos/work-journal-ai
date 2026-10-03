@@ -852,7 +852,9 @@ fn raise_resident_window(
 /// dismissal on it — a practice ending returns focus to the Main Window and
 /// reports its outcome, an ordinary one hands focus back as before — so the
 /// return destination is carried by the showing itself rather than by any
-/// flag that could outlive it. The Task Creation view ignores the payload.
+/// flag that could outlive it. The Task Creation view ignores the payload. Must
+/// match `CaptureShown` in `src/platform/desktop.ts`, as
+/// `src/platform/desktop-rust.test.ts` checks.
 #[derive(Clone, serde::Serialize)]
 struct CaptureShown {
     practice: bool,
@@ -1042,8 +1044,9 @@ fn remember_requested_section(app: &tauri::AppHandle, section: Option<&str>) {
     }
 }
 
-/// Which section of the Main Window an Entry Point named. Must match the
-/// payload `onSectionRequested` reads in `src/platform/tauri-desktop.ts`.
+/// Which section of the Main Window an Entry Point named. Must match
+/// `SectionRequested` in `src/platform/desktop.ts`, as
+/// `src/platform/desktop-rust.test.ts` checks.
 #[derive(Clone, serde::Serialize)]
 struct SectionRequested {
     section: String,
@@ -2175,8 +2178,9 @@ fn completed_task_alert(
     }
 }
 
-/// Which Task an Alert the user clicked was about. Must match the payload
-/// `onTaskAlertOpened` reads in `src/platform/tauri-desktop.ts`.
+/// Which Task an Alert the user clicked was about. Must match
+/// `TaskAlertOpened` in `src/platform/desktop.ts`, as
+/// `src/platform/desktop-rust.test.ts` checks.
 #[derive(Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 struct TaskAlertOpened {

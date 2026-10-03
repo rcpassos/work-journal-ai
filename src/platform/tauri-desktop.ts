@@ -56,6 +56,7 @@ import {
   type BackupResult,
   type CalendarAccess,
   type CalendarInfo,
+  type CaptureShown,
   type CommitsRead,
   type Desktop,
   type ExportedFile,
@@ -64,9 +65,11 @@ import {
   type OnboardingState,
   type PauseLength,
   type PracticeEnded,
+  type SectionRequested,
   type WorkSummaryRequest,
   type WorkSummaryResponse,
   type TaskAlertCompletion,
+  type TaskAlertOpened,
   type TaskAlertPermission,
 } from './desktop'
 import { releaseNotes } from './release-notes'
@@ -187,7 +190,7 @@ export function createTauriDesktop(): Desktop {
       ),
 
     onCaptureShown: (handle) =>
-      listen<{ practice: boolean }>(CAPTURE_SHOWN_EVENT, ({ payload }) =>
+      listen<CaptureShown>(CAPTURE_SHOWN_EVENT, ({ payload }) =>
         handle(payload.practice),
       ),
 
@@ -210,7 +213,7 @@ export function createTauriDesktop(): Desktop {
     reconcileTaskAlerts: (alerts: TaskAlert[]) =>
       invoke('reconcile_task_alerts', { alerts }),
     onTaskAlertOpened: (handle) =>
-      listen<{ taskId: string }>(TASK_ALERT_OPENED_EVENT, ({ payload }) =>
+      listen<TaskAlertOpened>(TASK_ALERT_OPENED_EVENT, ({ payload }) =>
         handle(payload.taskId),
       ),
     onTaskAlertCompleted: (handle) =>
@@ -226,7 +229,7 @@ export function createTauriDesktop(): Desktop {
     requestedSection: async () =>
       (await invoke<MainSection | null>('requested_section')) ?? null,
     onSectionRequested: (handle) =>
-      listen<{ section: MainSection }>(SECTION_REQUESTED_EVENT, ({ payload }) =>
+      listen<SectionRequested>(SECTION_REQUESTED_EVENT, ({ payload }) =>
         handle(payload.section),
       ),
 

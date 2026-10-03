@@ -9,7 +9,8 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 /// Where an export ended up, so the app can say so rather than leaving the
-/// user to guess whether anything happened.
+/// user to guess whether anything happened. Must match `ExportedFile` in
+/// `src/platform/desktop.ts`, as `src/platform/desktop-rust.test.ts` checks.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExportedFile {

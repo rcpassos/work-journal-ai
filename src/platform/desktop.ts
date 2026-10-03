@@ -360,6 +360,33 @@ export const REPOSITORY_STATE_CHANGED_EVENT = 'repository://state'
 export const TASK_ALERT_OPENED_EVENT = 'task-alert://opened'
 
 /**
+ * What a resident window is told each time it is shown: whether the showing
+ * was raised for Onboarding practice. Must match `CaptureShown` in
+ * `src-tauri/src/lib.rs`, as `src/platform/desktop-rust.test.ts` checks.
+ */
+export interface CaptureShown {
+  practice: boolean
+}
+
+/**
+ * Which Task an Alert the user clicked was about. Must match
+ * `TaskAlertOpened` in `src-tauri/src/lib.rs`, as
+ * `src/platform/desktop-rust.test.ts` checks.
+ */
+export interface TaskAlertOpened {
+  taskId: string
+}
+
+/**
+ * Which section of the Main Window an Entry Point named. Must match
+ * `SectionRequested` in `src-tauri/src/lib.rs`, as
+ * `src/platform/desktop-rust.test.ts` checks.
+ */
+export interface SectionRequested {
+  section: MainSection
+}
+
+/**
  * What choosing Complete on a Task Alert carries: which Task, and the exact
  * Scheduled For the delivered banner represented. The slot is what makes a
  * stale banner harmless — completion proceeds only if the journal still holds
@@ -425,7 +452,10 @@ export interface UpdateProgress {
   total: number | null
 }
 
-/** Where an export ended up — the Rust side's `ExportedFile`. */
+/**
+ * Where an export ended up. Must match `ExportedFile` in
+ * `src-tauri/src/export.rs`, as `src/platform/desktop-rust.test.ts` checks.
+ */
 export interface ExportedFile {
   path: string
   fileName: string

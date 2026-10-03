@@ -11,7 +11,9 @@
 use serde::{Deserialize, Serialize};
 
 /// Which of the two things a global combination does. Every Hotkey in the app
-/// is qualified by this, because "the Hotkey" no longer names one thing.
+/// is qualified by this, because "the Hotkey" no longer names one thing. Must
+/// match `HotkeyAction` in `src/settings/hotkey.ts`, as
+/// `src/platform/desktop-rust.test.ts` checks.
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum HotkeyAction {

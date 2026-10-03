@@ -19,7 +19,9 @@ export type HotkeyStatus =
  * The two things a global combination can do, each with its own Hotkey. They
  * are independently remappable and independently registrable — see
  * docs/adr/0018-note-and-task-have-independent-accessible-hotkeys.md — so
- * every Hotkey in the app is qualified by which action it begins.
+ * every Hotkey in the app is qualified by which action it begins. Must match
+ * `HotkeyAction` in `src-tauri/src/hotkey.rs`, as
+ * `src/platform/desktop-rust.test.ts` checks.
  */
 export type HotkeyAction = 'note' | 'task'
 

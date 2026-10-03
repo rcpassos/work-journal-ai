@@ -1045,6 +1045,7 @@ describe('the data that crosses the command boundary', () => {
   const calendar = read('src-tauri/src/calendar.rs')
   const hotkey = read('src-tauri/src/hotkey.rs')
   const backup = read('src-tauri/src/backup.rs')
+  const exportRs = read('src-tauri/src/export.rs')
   const journalTs = read('src/journal/journal.ts')
   const hotkeyTs = read('src/settings/hotkey.ts')
 
@@ -1058,6 +1059,10 @@ describe('the data that crosses the command boundary', () => {
     { ts: 'BackupResult', tsSource: desktop, rust: 'BackupResult', rustSource, fields: ['path', 'fileName'] },
     { ts: 'AutomaticBackups', tsSource: desktop, rust: 'AutomaticBackups', rustSource: backup, fields: ['count', 'newestTakenAt'] },
     { ts: 'HotkeyStatuses', tsSource: hotkeyTs, rust: 'Hotkeys', rustSource: hotkey, fields: ['note', 'task'] },
+    { ts: 'ExportedFile', tsSource: desktop, rust: 'ExportedFile', rustSource: exportRs, fields: ['path', 'fileName'] },
+    { ts: 'CaptureShown', tsSource: desktop, rust: 'CaptureShown', rustSource, fields: ['practice'] },
+    { ts: 'TaskAlertOpened', tsSource: desktop, rust: 'TaskAlertOpened', rustSource, fields: ['taskId'] },
+    { ts: 'SectionRequested', tsSource: desktop, rust: 'SectionRequested', rustSource, fields: ['section'] },
   ]
 
   it.each(structs)('names $ts\'s fields the same on both sides', (record) => {
@@ -1078,6 +1083,7 @@ describe('the data that crosses the command boundary', () => {
   const unions = [
     { ts: 'TaskAlertPermission', tsSource: desktop, rust: 'Permission', rustSource: alerts, kinds: ['granted', 'denied', 'undetermined'], rename: 'lowercase' },
     { ts: 'CalendarAccess', tsSource: desktop, rust: 'Access', rustSource: calendar, kinds: ['granted', 'denied', 'undetermined'], rename: 'lowercase' },
+    { ts: 'HotkeyAction', tsSource: hotkeyTs, rust: 'HotkeyAction', rustSource: hotkey, kinds: ['note', 'task'], rename: 'camelCase' },
   ]
 
   it.each(unions)('spells $ts the same on both sides', (union) => {
