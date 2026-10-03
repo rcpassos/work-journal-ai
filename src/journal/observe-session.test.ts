@@ -822,7 +822,7 @@ describe('ignored prefixes', () => {
 })
 
 describe('a Note that has come into existence', () => {
-  it('stands after its commit is amended or dropped', async () => {
+  it('stands after its commit is dropped', async () => {
     const { journal, desktop, clock, settings, session } = await observeSessionAt(
       '2026-03-09T08:00:00',
       {
@@ -836,7 +836,7 @@ describe('a Note that has come into existence', () => {
     clock.set(new Date('2026-03-09T12:00:00'))
     await session.start()
 
-    // Amended: a new hash, the old one gone.
+    // Dropped: gone from the branch, nothing in its place.
     desktop.repositories['/code/work-journal-ai'] = repository('work-journal-ai', [])
     desktop.wake()
     await flushSweep()
