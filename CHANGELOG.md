@@ -4,6 +4,9 @@ What changed in each released version, newest first. Every `vX.Y.Z` section here
 
 ## Unreleased
 
+- Export names the year on every day heading and every completion time, so a journal that spans years no longer repeats the same date.
+- Copying a Digest, Review Material or Work Summary Material across a year boundary names the year on its day headings too.
+
 ## 0.16.0 — 2026-09-30
 
 - Settings can add your commits to the journal: choose repositories and the addresses that are you, and each commit you make becomes a Note on the day you authored it.

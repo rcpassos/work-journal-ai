@@ -1654,7 +1654,7 @@ export function createJournal({
       const query = selectNotesForFilter(filter, IN_DIGEST_ORDER)
       const rows = await driver.select<NoteRow>(query.sql, query.params)
       return renderDigest(rows.map(toNote), {
-        years: false,
+        years: crossesYears(filter),
         // A single day is the common case and pastes without ceremony; any
         // wider Filter says which day each bullet belongs to.
         headings: filter.from !== filter.to,
@@ -2160,11 +2160,10 @@ function renderDigest(
   {
     headings,
     projectPrefixes,
-    years,
-  }: { headings: boolean; projectPrefixes: boolean; years: boolean },
+    years = false,
+  }: { headings: boolean; projectPrefixes: boolean; years?: boolean },
 ): Digest {
   const days = groupByJournalDay(notes)
-  const withYear = years || spansYears(days.map((day) => day.journalDay))
 
   const markdown = days
     .map((day) => {
@@ -2172,7 +2171,7 @@ function renderDigest(
         .map((note) => `- ${bulletPrefix(note, projectPrefixes)}${note.body}`)
         .join('\n')
       return headings
-        ? `## ${formatDigestDay(day.journalDay, withYear)}\n${bullets}`
+        ? `## ${formatDigestDay(day.journalDay, years)}\n${bullets}`
         : bullets
     })
     .join('\n\n')
@@ -2290,9 +2289,9 @@ function byTask(
 
 /**
  * An instant as an export writes it: the day the way a Digest heading spells
- * one with its year, and the local time of day after it. Both, because Task Completed At is
- * an instant rather than a day — an export that kept only the date would be
- * lossier than the record it is a copy of. Pinned to `en-GB` and to 24 hours
+ * one with its year, and the local time of day after it. Both, because Task
+ * Completed At is an instant rather than a day — an export that kept only the
+ * date would be lossier than the record it is a copy of. Pinned to `en-GB` and to 24 hours
  * for the same reason `formatDigestDay` is: a file whose shape depends on the
  * machine that produced it is worse than one that is merely British.
  */
@@ -2355,6 +2354,16 @@ export function plural(count: number, thing: string): string {
 }
 
 /**
+ * Whether a day range runs across a year boundary, which is when a heading
+ * without a year stops saying which day it means. Decided from the range
+ * rather than from the days that hold something, so every heading a rendering
+ * writes for that range agrees.
+ */
+export function crossesYears({ from, to }: { from: string; to: string }): boolean {
+  return from.slice(0, 4) !== to.slice(0, 4)
+}
+
+/**
  * A Journal Day as a Digest heading: short enough to read as a date in a
  * standup thread. In UTC for the same reason as `formatJournalDay`.
  *
@@ -2373,15 +2382,6 @@ export function formatDigestDay(journalDay: string, withYear = false): string {
   // Appended rather than asked of Intl, which puts a comma after the weekday
   // once a year is present and so changes the heading's shape.
   return withYear ? `${day} ${journalDay.slice(0, 4)}` : day
-}
-
-/**
- * Whether Journal Days fall in more than one calendar year, which is when a
- * heading without a year stops saying which day it means. A Digest stays short
- * until then; an export never takes the shortcut.
- */
-export function spansYears(journalDays: string[]): boolean {
-  return new Set(journalDays.map((day) => day.slice(0, 4))).size > 1
 }
 
 /**

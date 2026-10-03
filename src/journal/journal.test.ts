@@ -1625,7 +1625,7 @@ describe('digest of a Filter narrowed by Project', () => {
     expect(digest.markdown).toBe('- read the postmortem')
   })
 
-  it('names the year in headings only once the Filter crosses one', async () => {
+  it('names the year in headings once the Filter crosses one', async () => {
     const { journal, clock } = await journalAt('2025-12-31T09:00:00')
     await journal.capture('last day of the year')
     clock.set(local('2026-01-02T09:00:00'))

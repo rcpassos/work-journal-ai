@@ -158,7 +158,7 @@ export function buildWorkSummaryMaterial(
   const parts: string[] = [`# ${formatDayRange(selection.from, selection.to)}`]
   if (selection.digest.markdown !== '') parts.push(selection.digest.markdown)
   if (completions.length > 0) {
-    parts.push(renderCompletedSection(completions, selection.from !== selection.to))
+    parts.push(renderCompletedSection(completions, selection))
   }
   if (selection.openTasks.length > 0) {
     parts.push(
