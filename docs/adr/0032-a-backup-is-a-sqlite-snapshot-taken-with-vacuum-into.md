@@ -87,6 +87,9 @@ snapshot is #161's problem; nothing here renames, replaces or deletes
   delay a window, or put an error in front of the user on launch because a
   backup could not be taken; pruning happens only after a successful snapshot,
   never before.
+  The line reaches a file: the logger is registered in every build, ahead of
+  the restore plugin, with a file target in the app's log directory — without
+  one the `log` crate drops every record and the line says nothing.
 - **Every future migration raises the newest schema version a backup can
   carry.** This issue only has to keep `_sqlx_migrations` inside the snapshot
   so that boundary is readable at all; #161 validates it on the way back in.
