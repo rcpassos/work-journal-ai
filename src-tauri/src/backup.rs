@@ -515,15 +515,17 @@ fn known_migration_checksums() -> Vec<(i64, Vec<u8>)> {
         .collect()
 }
 
-/// Reads the columns a table actually holds, by name. Through
-/// `pragma_table_info`'s table-valued form, so the table name is a bound
+/// Reads the columns a table actually holds, by name, generated ones
+/// included — `table_info` leaves those out, and a generated `details` would
+/// have migration 10 fail on a duplicate column. Through
+/// `pragma_table_xinfo`'s table-valued form, so the table name is a bound
 /// parameter — a name from this file is data, never interpolated into SQL.
 async fn columns_of(
     connection: &mut sqlx::sqlite::SqliteConnection,
     table: &str,
 ) -> Result<HashSet<String>, String> {
     use sqlx::Row;
-    sqlx::query("SELECT name FROM pragma_table_info(?)")
+    sqlx::query("SELECT name FROM pragma_table_xinfo(?)")
         .bind(table)
         .try_map(|row: sqlx::sqlite::SqliteRow| row.try_get(0))
         .fetch_all(&mut *connection)
@@ -2029,10 +2031,16 @@ mod tests {
     });
 
     async_test!(a_healthy_journal_carrying_an_extra_table_column_or_index_is_refused, {
-        let cases: [(&str, &str, &str); 3] = [
+        let cases: [(&str, &str, &str); 4] = [
             ("CREATE TABLE stowaway (id TEXT PRIMARY KEY);", "unexpected tables", "stowaway"),
             ("ALTER TABLE notes ADD COLUMN stowaway TEXT;", "unexpected columns", "stowaway"),
             ("CREATE INDEX stowaway ON notes (body);", "unexpected indexes", "stowaway"),
+            // A generated column hides from `table_info`.
+            (
+                "ALTER TABLE notes ADD COLUMN stowaway TEXT GENERATED ALWAYS AS (NULL) VIRTUAL;",
+                "unexpected columns",
+                "stowaway",
+            ),
         ];
         for (index, (statement, kind, name)) in cases.iter().enumerate() {
             let directory = TempDir::new(&format!("restore-extra-{index}"));
@@ -2663,7 +2671,7 @@ mod tests {
             // migrations made is left out of the check.
             for (table, required) in expected {
                 let held: HashSet<String> =
-                    sqlx::query("SELECT name FROM pragma_table_info(?)")
+                    sqlx::query("SELECT name FROM pragma_table_xinfo(?)")
                         .bind(table)
                         .try_map(|row: sqlx::sqlite::SqliteRow| row.try_get(0))
                         .fetch_all(&pool)
