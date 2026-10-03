@@ -27,7 +27,7 @@ describe('the test driver transaction', () => {
       { sql: 'INSERT INTO cell VALUES (?)', params: [null] },
       { sql: 'INSERT INTO cell VALUES (?)', params: ['text'] },
       { sql: 'INSERT INTO cell VALUES (?)', params: [42] },
-      { sql: 'INSERT INTO cell VALUES (?)', params: [-(2 ** 63)] },
+      { sql: 'INSERT INTO cell VALUES (?)', params: [Number.MIN_SAFE_INTEGER] },
     ])
 
     expect(await driver.select('SELECT count(*) AS n FROM cell', [])).toEqual([
@@ -38,7 +38,8 @@ describe('the test driver transaction', () => {
   it.each([
     ['a fraction', 1.5],
     ['NaN', Number.NaN],
-    ['a number past an i64', 2 ** 63],
+    ['a number past the i64 maximum', 2 ** 63],
+    ['a number at the i64 minimum, which JSON writes past it', -(2 ** 63)],
     ['a bigint', 1n],
     ['bytes', new Uint8Array([1])],
     ['a boolean', true],

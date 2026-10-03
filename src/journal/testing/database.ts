@@ -59,7 +59,8 @@ const I64_LIMIT = 2 ** 63
 
 /**
  * What Rust's `journal_transaction` binds, and nothing more: null, a string, or
- * a whole number that fits an i64. node:sqlite would take a fraction, a bigint
+ * a whole number that fits an i64 (as JSON writes -2^63 it is already past the
+ * minimum, and arrives as a float). node:sqlite would take a fraction, a bigint
  * or bytes, and a statement bound that way would pass the suite and be refused
  * in the app. NaN is refused too, though over IPC it would arrive as null:
  * a NaN bound is a bug in the statement, and the harness should say so.
@@ -67,7 +68,7 @@ const I64_LIMIT = 2 ** 63
 function bindable(value: unknown): null | string | number {
   if (value === null || typeof value === 'string') return value
   if (typeof value === 'number') {
-    if (!Number.isInteger(value) || value < -I64_LIMIT || value >= I64_LIMIT) {
+    if (!Number.isInteger(value) || value <= -I64_LIMIT || value >= I64_LIMIT) {
       throw new Error(`not a whole number: ${value}`)
     }
     return value

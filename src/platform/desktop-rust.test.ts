@@ -1000,6 +1000,20 @@ function rustSerde(source: string, name: string): string {
   return [...attributes.matchAll(/#\[serde\(([^\n]*)\)\]/g)].map(([, a]) => a).join(', ')
 }
 
+/**
+ * A variant's name as the enum's own `rename_all` spells it on the wire. An
+ * enum that declares no rule is spelled as written, so a rule dropped from the
+ * attribute reads as every variant changing.
+ */
+function wireVariant(variant: string, serde: string): string {
+  const rule = serde.match(/\brename_all = "([^"]*)"/)?.[1]
+  if (rule === 'lowercase') return variant.toLowerCase()
+  if (rule === 'camelCase') return variant[0].toLowerCase() + variant.slice(1)
+  if (rule === 'kebab-case') return kebab(variant)
+  if (rule === undefined) return variant
+  throw new Error(`${variant}: this test does not read rename_all = "${rule}"`)
+}
+
 /** The field names of one variant of a Rust enum, as written. */
 function rustVariantFields(source: string, name: string, variant: string): string[] {
   const body = source.match(new RegExp(`(?:pub )?enum ${name} \\{([\\s\\S]*?)\\n\\}`))?.[1] ?? ''
@@ -1067,7 +1081,13 @@ describe('the data that crosses the command boundary', () => {
   ]
 
   it.each(unions)('spells $ts the same on both sides', (union) => {
-    const rustKinds = rustVariants(union.rustSource, union.rust).map(kebab)
+    // Each enum is read by the rule it declares: `lowercase` writes
+    // `WriteOnly` as `writeonly`, where kebab-case would say `write-only` and
+    // send the next person to a spelling that never arrives.
+    const serde = rustSerde(union.rustSource, union.rust)
+    const rustKinds = rustVariants(union.rustSource, union.rust).map((variant) =>
+      wireVariant(variant, serde),
+    )
 
     expect(rustKinds).toEqual(union.kinds)
     expect(tsUnionKinds(union.tsSource, union.ts)).toEqual(rustKinds)
@@ -1077,7 +1097,10 @@ describe('the data that crosses the command boundary', () => {
   it('spells a Hotkey\'s status, and what each state carries, the same on both sides', () => {
     // A tagged enum: the tag is the field the webview switches on, and each
     // variant carries its own fields beside it.
-    const rustKinds = rustVariants(hotkey, 'HotkeyStatus').map(kebab)
+    const serde = rustSerde(hotkey, 'HotkeyStatus')
+    const rustKinds = rustVariants(hotkey, 'HotkeyStatus').map((variant) =>
+      wireVariant(variant, serde),
+    )
 
     expect(rustKinds).toEqual(['registered', 'unavailable'])
     expect(tsUnionKinds(hotkeyTs, 'HotkeyStatus')).toEqual(rustKinds)
@@ -1090,7 +1113,14 @@ describe('the data that crosses the command boundary', () => {
     }
     for (const [kind, fields] of Object.entries(carried)) {
       const variant = kind[0].toUpperCase() + kind.slice(1)
-      const rustFields = rustVariantFields(hotkey, 'HotkeyStatus', variant).map(camel)
+      const written = rustVariantFields(hotkey, 'HotkeyStatus', variant)
+      const rustFields = written.map(camel)
+
+      // `rename_all` spells the variants only; the fields inside them need
+      // `rename_all_fields`, or `retry_after` arrives as written.
+      if (written.some((field) => field.includes('_'))) {
+        expect(serde, kind).toContain('rename_all_fields = "camelCase"')
+      }
 
       expect(rustFields, kind).toEqual(fields)
       expect(
@@ -1104,22 +1134,18 @@ describe('the data that crosses the command boundary', () => {
     // The comment is the claim and this file is what holds it: a type that
     // says it matches the other side and is named nowhere above is a claim
     // nothing enforces, so it fails here rather than going unchecked.
-    const named = new Set([
-      ...structs.map(({ ts }) => ts),
-      ...unions.map(({ ts }) => ts),
-      'HotkeyStatus',
-      // Held by the describes above, which read them beside their own source.
-      'Commit',
-      'CommitsRead',
-      'RepositoryUnreadable',
-      'IdentitiesRead',
-      'PauseLength',
-      'PauseState',
-      'PracticeEnded',
-      'WorkSummaryRequest',
-      'WorkSummaryResponse',
-      'WorkSummaryFailure',
-    ])
+    // A type is held when this file names it as a string — the tables above,
+    // and the calls of the describes before them. Read off the file rather
+    // than listed, so that deleting a type's test is what makes its comment
+    // fail; the text of this test is left out, so it cannot vouch for itself.
+    const testSource = read(TEST_FILE)
+    const named = new Set(
+      [
+        ...testSource
+          .slice(0, testSource.indexOf("it('has a test for every type"))
+          .matchAll(/'([A-Z][A-Za-z0-9]*[a-z][A-Za-z0-9]*)'/g),
+      ].map(([, type]) => type),
+    )
 
     const claimed = new Set<string>()
     for (const file of readdirSync(new URL('../../src-tauri/src/', import.meta.url))) {
