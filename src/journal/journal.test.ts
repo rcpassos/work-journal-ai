@@ -15,7 +15,10 @@ import {
   formatAgo,
   formatJournalDay,
   formatProject,
+  formatScheduledFor,
+  formatTaskCompletedAt,
   formatTimeOfDay,
+  localFormatter,
   formatSlot,
   slotOf,
   isProjectName,
@@ -1113,6 +1116,76 @@ describe('formatTimeOfDay', () => {
     // 09:05 UTC is 09:05 in Europe/Lisbon on that date — see vite.config.ts.
     // Written 09:05 or 09:05 AM depending on the reader's locale.
     expect(formatTimeOfDay('2026-03-13T09:05:00.000Z')).toMatch(/\b09.05\b/)
+  })
+})
+
+describe('row formatters', () => {
+  afterEach(() => vi.restoreAllMocks())
+
+  it('build no formatter per call — a Search renders thousands of rows', () => {
+    // Warm any lazily-built formatter, then count constructions.
+    formatJournalDay('2026-03-13')
+    formatTimeOfDay('2026-03-13T09:05:00.000Z')
+    formatTaskCompletedAt('2026-03-13T09:05:00.000Z')
+
+    const construct = vi.spyOn(Intl, 'DateTimeFormat')
+
+    for (let i = 0; i < 100; i++) {
+      formatJournalDay('2026-03-13')
+      formatTimeOfDay('2026-03-13T09:05:00.000Z')
+      formatTaskCompletedAt('2026-03-13T09:05:00.000Z')
+    }
+
+    expect(construct).not.toHaveBeenCalled()
+  })
+
+  it('rebuild a local-zone formatter when the machine changes timezone', () => {
+    // A formatter fixes the zone it was built in, and the app outlives a trip.
+    formatTimeOfDay('2026-03-13T09:05:00.000Z')
+    const offset = new Date().getTimezoneOffset()
+    vi.spyOn(Date.prototype, 'getTimezoneOffset').mockReturnValue(offset + 60)
+    const Real = Intl.DateTimeFormat
+    const construct = vi
+      .spyOn(Intl, 'DateTimeFormat')
+      .mockImplementation(function (...args) {
+        return new Real(...args)
+      })
+
+    formatTimeOfDay('2026-03-13T09:05:00.000Z')
+    formatTimeOfDay('2026-03-13T09:05:00.000Z')
+
+    expect(construct).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('localFormatter', () => {
+  afterEach(() => vi.restoreAllMocks())
+
+  it('rebuilds for a zone that agrees today but not in the other season', () => {
+    const format = localFormatter({ hour: '2-digit', minute: '2-digit' })
+    const at = new Date('2026-12-01T17:00:00Z')
+    const offsets = vi.spyOn(Date.prototype, 'getTimezoneOffset')
+    // Los Angeles, then Phoenix: the same offset in October, not in December.
+    const zone = (now: number, jan: number, jul: number) =>
+      offsets.mockImplementation(function (this: Date) {
+        if (this.getMonth() === 0 && this.getDate() === 1) return jan
+        if (this.getMonth() === 6 && this.getDate() === 1) return jul
+        return now
+      })
+
+    zone(420, 480, 420)
+    format(at)
+
+    const Real = Intl.DateTimeFormat
+    const construct = vi
+      .spyOn(Intl, 'DateTimeFormat')
+      .mockImplementation(function (...args) {
+        return new Real(...args)
+      })
+    zone(420, 420, 420)
+    format(at)
+
+    expect(construct).toHaveBeenCalledTimes(1)
   })
 })
 
@@ -3858,6 +3931,37 @@ describe('openTasks in Scheduled For order', () => {
       'second written',
       'first written',
     ])
+  })
+})
+
+describe('formatScheduledFor', () => {
+  const scheduled = (scheduledDate: string | null, scheduledTime: string | null) =>
+    ({ scheduledDate, scheduledTime }) as Task
+
+  it('reads the time as written after the machine changes timezone', () => {
+    // Los Angeles and Phoenix keep the same offset in October and part ways in
+    // December, so a formatter left over from one zone is wrong in the other.
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date('2026-10-03T12:00:00Z'))
+    const pinned = process.env.TZ
+
+    try {
+      process.env.TZ = 'America/Los_Angeles'
+      formatScheduledFor(scheduled('2026-12-01', '09:00'))
+
+      process.env.TZ = 'America/Phoenix'
+      expect(formatScheduledFor(scheduled('2026-12-01', '09:00'))).toMatch(
+        /\b1\b.*\b09.00\b/,
+      )
+      expect(formatScheduledFor(scheduled('2026-12-01', null))).toMatch(/\b1\b/)
+    } finally {
+      process.env.TZ = pinned
+      vi.useRealTimers()
+    }
+  })
+
+  it('is blank for an Unscheduled Task', () => {
+    expect(formatScheduledFor(scheduled(null, null))).toBeNull()
   })
 })
 

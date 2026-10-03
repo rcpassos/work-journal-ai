@@ -2364,6 +2364,13 @@ export function crossesYears({ from, to }: { from: string; to: string }): boolea
   return from.slice(0, 4) !== to.slice(0, 4)
 }
 
+const DIGEST_DAY = new Intl.DateTimeFormat('en-GB', {
+  weekday: 'short',
+  day: 'numeric',
+  month: 'short',
+  timeZone: 'UTC',
+})
+
 /**
  * A Journal Day as a Digest heading: short enough to read as a date in a
  * standup thread. In UTC for the same reason as `formatJournalDay`.
@@ -2373,12 +2380,7 @@ export function crossesYears({ from, to }: { from: string; to: string }): boolea
  * on the machine that produced it is worse than one that is merely British.
  */
 export function formatDigestDay(journalDay: string, withYear = false): string {
-  const day = new Intl.DateTimeFormat('en-GB', {
-    weekday: 'short',
-    day: 'numeric',
-    month: 'short',
-    timeZone: 'UTC',
-  }).format(new Date(journalDay))
+  const day = DIGEST_DAY.format(new Date(journalDay))
 
   // Appended rather than asked of Intl, which puts a comma after the weekday
   // once a year is present and so changes the heading's shape.
@@ -2658,6 +2660,14 @@ export function groupByJournalDay(notes: Note[]): JournalDayGroup[] {
   return groups
 }
 
+const JOURNAL_DAY = new Intl.DateTimeFormat(undefined, {
+  weekday: 'long',
+  day: 'numeric',
+  month: 'long',
+  year: 'numeric',
+  timeZone: 'UTC',
+})
+
 /**
  * A Journal Day as a heading. In the reader's own locale, so the date reads the
  * way the rest of their machine does. Formatted in UTC because a Journal Day is
@@ -2665,13 +2675,7 @@ export function groupByJournalDay(notes: Note[]): JournalDayGroup[] {
  * the previous evening in a negative offset.
  */
 export function formatJournalDay(journalDay: string): string {
-  return new Intl.DateTimeFormat(undefined, {
-    weekday: 'long',
-    day: 'numeric',
-    month: 'long',
-    year: 'numeric',
-    timeZone: 'UTC',
-  }).format(new Date(journalDay))
+  return JOURNAL_DAY.format(new Date(journalDay))
 }
 
 /**
@@ -2699,15 +2703,54 @@ export function formatDayRange(from: string, to: string): string {
 }
 
 /**
+ * A formatter in the machine's own timezone, built once and rebuilt when that
+ * timezone moves. A formatter fixes the zone it was constructed in, and the app
+ * outlives a flight; asking `localTimeZone` per call would cost as much as the
+ * construction this avoids, so the zone's offsets stand in for it: now, and the
+ * two solstices of this year, which tells apart zones that agree today but keep
+ * different rules. The locale is re-read at the same moment.
+ */
+export function localFormatter(
+  options: Intl.DateTimeFormatOptions,
+): (date: Date) => string {
+  let key = ''
+  let formatter: Intl.DateTimeFormat
+
+  return (date) => {
+    const year = new Date().getFullYear()
+    const now = [
+      new Date().getTimezoneOffset(),
+      new Date(year, 0, 1).getTimezoneOffset(),
+      new Date(year, 6, 1).getTimezoneOffset(),
+    ].join()
+
+    if (now !== key) {
+      formatter = new Intl.DateTimeFormat(undefined, options)
+      key = now
+    }
+    return formatter.format(date)
+  }
+}
+
+const formatClock = localFormatter({
+  hour: '2-digit',
+  minute: '2-digit',
+})
+
+/**
  * Captured At as the local time of day it happened at, in the reader's own
  * locale — including whether that locale writes a 12- or 24-hour clock.
  */
 export function formatTimeOfDay(capturedAt: string): string {
-  return new Intl.DateTimeFormat(undefined, {
-    hour: '2-digit',
-    minute: '2-digit',
-  }).format(new Date(capturedAt))
+  return formatClock(new Date(capturedAt))
 }
+
+const formatCompletedAt = localFormatter({
+  day: 'numeric',
+  month: 'short',
+  hour: '2-digit',
+  minute: '2-digit',
+})
 
 /**
  * Task Completed At as Tasks View reads it: the day and the time of day, in the
@@ -2716,12 +2759,7 @@ export function formatTimeOfDay(capturedAt: string): string {
  * completed a month ago.
  */
 export function formatTaskCompletedAt(completedAt: string): string {
-  return new Intl.DateTimeFormat(undefined, {
-    day: 'numeric',
-    month: 'short',
-    hour: '2-digit',
-    minute: '2-digit',
-  }).format(new Date(completedAt))
+  return formatCompletedAt(new Date(completedAt))
 }
 
 /**
@@ -2736,22 +2774,37 @@ function localTimeZone(): string {
 const DAY_MS = 24 * 60 * 60 * 1000
 
 /**
+ * One formatter per timezone, built on first use: the zone is an argument
+ * rather than a constant, and a search over a transition makes many calls.
+ */
+const ZONE_FORMATTERS = new Map<string, Intl.DateTimeFormat>()
+
+function zoneFormatter(timeZone: string): Intl.DateTimeFormat {
+  let formatter = ZONE_FORMATTERS.get(timeZone)
+  if (formatter === undefined) {
+    formatter = new Intl.DateTimeFormat('en-US', {
+      timeZone,
+      hour12: false,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+    })
+    ZONE_FORMATTERS.set(timeZone, formatter)
+  }
+  return formatter
+}
+
+/**
  * How far ahead of UTC a timezone is at one instant, in minutes. Read from the
  * OS's own timezone database through `Intl` rather than from a table of rules
  * kept here: the rules change, and the machine's copy is the one macOS will
  * deliver a Task Alert by.
  */
 function zoneOffsetMinutes(instant: number, timeZone: string): number {
-  const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone,
-    hour12: false,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-  }).formatToParts(new Date(instant))
+  const parts = zoneFormatter(timeZone).formatToParts(new Date(instant))
 
   const read = (type: string) =>
     Number(parts.find((part) => part.type === type)?.value ?? '0')
@@ -2923,28 +2976,40 @@ function groupOf(
     : 'today'
 }
 
+const SCHEDULED_DAY = new Intl.DateTimeFormat(undefined, {
+  day: 'numeric',
+  month: 'short',
+  year: 'numeric',
+  timeZone: 'UTC',
+})
+
+const SCHEDULED_TIME = new Intl.DateTimeFormat(undefined, {
+  hour: '2-digit',
+  minute: '2-digit',
+  timeZone: 'UTC',
+})
+
 /**
  * Scheduled For as Tasks View reads it: the day in the reader's own locale, and
  * the time of day after it when there is one. Nothing at all when the Task is
  * Unscheduled — a blank says it better than the word would.
+ *
+ * Formatted from the stored civil date and time as they were written, in UTC
+ * like `formatJournalDay`: no timezone is involved, so a Task at 14:00 reads
+ * 14:00 wherever the user is (ADR 0021).
  */
 export function formatScheduledFor(task: Task): string | null {
   const schedule = scheduleOf(task)
   if (schedule === null) return null
 
-  const at = scheduledInstant(schedule)
-  const day = new Intl.DateTimeFormat(undefined, {
-    day: 'numeric',
-    month: 'short',
-    year: 'numeric',
-  }).format(at)
+  const [year, month, day] = schedule.date.split('-').map(Number)
+  const [hour, minute] = (schedule.time ?? '00:00').split(':').map(Number)
+  const written = new Date(Date.UTC(year, month - 1, day, hour, minute))
+  const dayText = SCHEDULED_DAY.format(written)
 
-  if (schedule.time === null) return day
+  if (schedule.time === null) return dayText
 
-  return `${day}, ${new Intl.DateTimeFormat(undefined, {
-    hour: '2-digit',
-    minute: '2-digit',
-  }).format(at)}`
+  return `${dayText}, ${SCHEDULED_TIME.format(written)}`
 }
 
 /**
