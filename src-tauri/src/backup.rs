@@ -325,6 +325,49 @@ pub async fn validate_restore_candidate(candidate: &Path) -> Result<i64, String>
         return Err(format!("the backup carries an unknown migration version: {version}"));
     }
 
+    // The next launch runs sqlx's migrator over this table and panics on a row
+    // it distrusts: one that never finished (`success = 0`), or whose checksum
+    // is not the embedded migration's. A genuine snapshot never carries either
+    // — migrations are immutable and run in transactions — so a candidate that
+    // does was crafted or hand-edited.
+    let applied: Vec<(i64, bool, Vec<u8>)> =
+        sqlx::query("SELECT version, success, checksum FROM _sqlx_migrations ORDER BY version")
+            .try_map(|row: sqlx::sqlite::SqliteRow| {
+                Ok((row.try_get(0)?, row.try_get(1)?, row.try_get(2)?))
+            })
+            .fetch_all(&mut connection)
+            .await
+            .map_err(|error| format!("the backup's migrations could not be read: {error}"))?;
+    let known = known_migration_checksums();
+    for (applied_version, success, checksum) in &applied {
+        if !success {
+            return Err(format!(
+                "the backup carries an unfinished migration (migration check): version {applied_version}"
+            ));
+        }
+        match known.iter().find(|(known_version, _)| known_version == applied_version) {
+            Some((_, expected)) if expected.as_slice() == checksum.as_slice() => {}
+            Some(_) => {
+                return Err(format!(
+                    "the backup's migration {applied_version} does not match this build's (migration check): checksum differs"
+                ));
+            }
+            None => {
+                return Err(format!(
+                    "the backup carries a migration this build does not ship (migration check): version {applied_version}"
+                ));
+            }
+        }
+    }
+    // A row deleted from the middle leaves the migrator to re-run that
+    // migration over tables that already exist, failing every launch. A
+    // genuine journal records every version from 1 to its newest.
+    if let Some(gap) = (1..=version).find(|wanted| !applied.iter().any(|(held, ..)| held == wanted)) {
+        return Err(format!(
+            "the backup is missing its record of migration {gap} (migration check)"
+        ));
+    }
+
     let expected = expected_schema(version);
 
     // A journal this app makes holds nothing but tables and indexes: none of
@@ -390,6 +433,24 @@ pub async fn validate_restore_candidate(candidate: &Path) -> Result<i64, String>
     }
 
     Ok(version)
+}
+
+/// Each shipped migration's version and the checksum sqlx records for it,
+/// computed the way tauri-plugin-sql hands them to sqlx's migrator at launch.
+fn known_migration_checksums() -> Vec<(i64, Vec<u8>)> {
+    crate::migrations()
+        .into_iter()
+        .map(|migration| {
+            let sqlx_migration = sqlx::migrate::Migration::new(
+                migration.version,
+                migration.description.into(),
+                sqlx::migrate::MigrationType::ReversibleUp,
+                migration.sql.into(),
+                false,
+            );
+            (migration.version, sqlx_migration.checksum.to_vec())
+        })
+        .collect()
 }
 
 /// Reads the columns a table actually holds, by name. Through
@@ -1493,6 +1554,16 @@ mod tests {
         include_str!("../migrations/0010_task_details.sql"),
     ];
 
+    /// The checksum sqlx records for a shipped migration — what a genuine
+    /// journal's `_sqlx_migrations` row carries.
+    fn checksum_of(version: i64) -> Vec<u8> {
+        known_migration_checksums()
+            .into_iter()
+            .find(|(known, _)| *known == version)
+            .expect("the version is shipped")
+            .1
+    }
+
     /// Seeds `pool` with the real schema up to `up_to`, recording each
     /// version in a `_sqlx_migrations` table shaped exactly like the one
     /// sqlx itself keeps — so validation meets the production schema rather
@@ -1523,10 +1594,11 @@ mod tests {
                 .unwrap_or_else(|_| panic!("real migration {version} failed"));
             sqlx::query(
                 "INSERT INTO _sqlx_migrations (version, description, success, checksum, execution_time)
-                 VALUES (?, ?, 1, X'00', 0)",
+                 VALUES (?, ?, 1, ?, 0)",
             )
             .bind(version)
             .bind(format!("migration {version}"))
+            .bind(checksum_of(version))
             .execute(pool)
             .await
             .expect("could not record the migration");
@@ -1773,6 +1845,104 @@ mod tests {
             refusal.contains("unexpected")
                 && refusal.contains("note_bodies")
                 && refusal.contains("refuse_deletes"),
+            "a refusal names which check failed, got: {refusal}"
+        );
+        assert_eq!(candidate_bytes(&candidate), before);
+    });
+
+    async_test!(a_migration_row_with_a_mismatched_checksum_is_refused, {
+        // sqlx's migrator returns `VersionMismatch` for an applied checksum
+        // that differs from the embedded migration, and the app panics on
+        // every launch after the restore.
+        let directory = TempDir::new("restore-bad-checksum");
+        let candidate = directory.path.join("candidate.db");
+        write_journal_file(&candidate, SUPPORTED_MIGRATION_VERSION, "the journal").await;
+        let url = format!("sqlite:{}?mode=rwc", candidate.display());
+        let pool = SqlitePool::connect(&url).await.expect("could not open");
+        sqlx::query("UPDATE _sqlx_migrations SET checksum = X'00' WHERE version = 3")
+            .execute(&pool)
+            .await
+            .expect("could not alter the checksum");
+        pool.close().await;
+        let before = candidate_bytes(&candidate);
+
+        let refusal = validate_restore_candidate(&candidate)
+            .await
+            .expect_err("a mismatched checksum must not validate");
+
+        assert!(
+            refusal.contains("migration check") && refusal.contains("migration 3 "),
+            "a refusal names which check failed, got: {refusal}"
+        );
+        assert_eq!(candidate_bytes(&candidate), before);
+    });
+
+    async_test!(a_migration_row_missing_from_the_middle_is_refused, {
+        // The migrator would re-run migration 4 over the tables it already
+        // made and fail every launch after the restore.
+        let directory = TempDir::new("restore-missing-migration-row");
+        let candidate = directory.path.join("candidate.db");
+        write_journal_file(&candidate, SUPPORTED_MIGRATION_VERSION, "the journal").await;
+        let url = format!("sqlite:{}?mode=rwc", candidate.display());
+        let pool = SqlitePool::connect(&url).await.expect("could not open");
+        sqlx::query("DELETE FROM _sqlx_migrations WHERE version = 4")
+            .execute(&pool)
+            .await
+            .expect("could not delete the row");
+        pool.close().await;
+        let before = candidate_bytes(&candidate);
+
+        let refusal = validate_restore_candidate(&candidate)
+            .await
+            .expect_err("a journal missing a migration row must not validate");
+
+        assert!(
+            refusal.contains("migration check") && refusal.contains("migration 4 "),
+            "a refusal names which check failed, got: {refusal}"
+        );
+        assert_eq!(candidate_bytes(&candidate), before);
+    });
+
+    #[test]
+    fn a_shipped_checksum_is_the_sha384_of_its_migration_file() {
+        // The seeds above take their "genuine" checksums from
+        // `known_migration_checksums`, so this pins one to a literal computed
+        // outside the code: `shasum -a 384 migrations/0001_create_notes.sql`.
+        let hex: String = known_migration_checksums()
+            .into_iter()
+            .find(|(version, _)| *version == 1)
+            .expect("migration 1 is shipped")
+            .1
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
+        assert_eq!(
+            hex,
+            "39ff405accdfa8a657472b7d0f391740069d640cec62c77afed766b556ec59aaf975813ac3a64df3ba753f5507d4d94e"
+        );
+    }
+
+    async_test!(a_migration_row_that_did_not_succeed_is_refused, {
+        // sqlx's migrator returns `Dirty` for a row with `success = 0`.
+        let directory = TempDir::new("restore-dirty-migration");
+        let candidate = directory.path.join("candidate.db");
+        write_journal_file(&candidate, SUPPORTED_MIGRATION_VERSION, "the journal").await;
+        let url = format!("sqlite:{}?mode=rwc", candidate.display());
+        let pool = SqlitePool::connect(&url).await.expect("could not open");
+        sqlx::query("UPDATE _sqlx_migrations SET success = 0 WHERE version = ?")
+            .bind(SUPPORTED_MIGRATION_VERSION)
+            .execute(&pool)
+            .await
+            .expect("could not mark the migration unfinished");
+        pool.close().await;
+        let before = candidate_bytes(&candidate);
+
+        let refusal = validate_restore_candidate(&candidate)
+            .await
+            .expect_err("an unfinished migration must not validate");
+
+        assert!(
+            refusal.contains("migration check"),
             "a refusal names which check failed, got: {refusal}"
         );
         assert_eq!(candidate_bytes(&candidate), before);
