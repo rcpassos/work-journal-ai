@@ -1225,7 +1225,7 @@ describe('exporting a Recurring Task', () => {
         '',
         '## Open',
         '- [ ] water the plants (scheduled 2026-03-17 09:00; repeats every day)',
-        '  - occurrence 2026-03-16 09:00 (completed Mon 16 Mar, 20:00)',
+        '  - occurrence 2026-03-16 09:00 (completed Mon 16 Mar 2026, 20:00)',
       ].join('\n'),
     )
     // One Task, however many occurrences are under it.

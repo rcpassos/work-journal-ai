@@ -13,6 +13,7 @@ import { renderTaskDetails } from './task-details'
 
 import {
   dayInRange,
+  crossesYears,
   formatDigestDay,
   formatSlot,
   journalDayFor,
@@ -115,22 +116,23 @@ export function mergeCompletions({
  * Review Material and Work Summary Material. Oldest-first bullets,
  * day-grouped when the range spans more than one day: single-day ranges read
  * plainly, while wider ones name each day under the same headings the Digest
- * uses. One function rather than two copies, so the two materials can never
+ * uses, years included once the range crosses one. One function rather than two copies, so the two materials can never
  * disagree about what completed work reads as.
  */
 export function renderCompletedSection(
   completions: CompletionBullet[],
-  dayGrouped: boolean,
+  range: { from: string; to: string },
 ): string {
-  if (!dayGrouped) {
+  if (range.from === range.to) {
     return `## Completed\n${completions.map((one) => one.bullet).join('\n')}`
   }
 
   const groups = groupCompletionsByDay(completions)
+  const years = crossesYears(range)
   const grouped = groups
     .map(
       (group) =>
-        `### ${formatDigestDay(group.journalDay)}\n${group.bullets.join('\n')}`,
+        `### ${formatDigestDay(group.journalDay, years)}\n${group.bullets.join('\n')}`,
     )
     .join('\n')
   return `## Completed\n${grouped}`

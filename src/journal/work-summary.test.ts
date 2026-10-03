@@ -321,6 +321,29 @@ describe('buildWorkSummaryMaterial', () => {
     )
   })
 
+  it('names the year of every heading when the range crosses a year', async () => {
+    const { journal, clock } = await journalAt('2025-12-31T09:00:00')
+    const last = await journal.createTask('closed last year')
+    await journal.completeTask(last.id)
+    clock.set(new Date('2026-01-02T09:00:00'))
+    await journal.capture('first note of the year')
+    const next = await journal.createTask('closed this year')
+    await journal.completeTask(next.id)
+
+    const selection = await selectWorkSummary({
+      journal,
+      range: { from: '2025-12-31', to: '2026-01-02' },
+    })
+    const userContent = buildWorkSummaryMaterial(selection)
+
+    // Notes sit in one year and completions in both, yet the two sections
+    // agree: the range decides, not what each section happens to hold.
+    expect(userContent).toContain('## Fri 2 Jan 2026\n- first note of the year')
+    expect(userContent).toContain(
+      '## Completed\n### Wed 31 Dec 2025\n- [x] closed last year\n### Fri 2 Jan 2026\n- [x] closed this year',
+    )
+  })
+
   it('builds commitments alone when the range holds no accomplishments', async () => {
     const { journal } = await journalAt('2026-03-12T09:00:00')
 
