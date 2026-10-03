@@ -15,6 +15,7 @@ import {
   formatAgo,
   formatJournalDay,
   formatProject,
+  formatTaskCompletedAt,
   formatTimeOfDay,
   formatSlot,
   slotOf,
@@ -1113,6 +1114,27 @@ describe('formatTimeOfDay', () => {
     // 09:05 UTC is 09:05 in Europe/Lisbon on that date — see vite.config.ts.
     // Written 09:05 or 09:05 AM depending on the reader's locale.
     expect(formatTimeOfDay('2026-03-13T09:05:00.000Z')).toMatch(/\b09.05\b/)
+  })
+})
+
+describe('row formatters', () => {
+  afterEach(() => vi.restoreAllMocks())
+
+  it('build no formatter per call — a Search renders thousands of rows', () => {
+    // Warm any lazily-built formatter, then count constructions.
+    formatJournalDay('2026-03-13')
+    formatTimeOfDay('2026-03-13T09:05:00.000Z')
+    formatTaskCompletedAt('2026-03-13T09:05:00.000Z')
+
+    const construct = vi.spyOn(Intl, 'DateTimeFormat')
+
+    for (let i = 0; i < 100; i++) {
+      formatJournalDay('2026-03-13')
+      formatTimeOfDay('2026-03-13T09:05:00.000Z')
+      formatTaskCompletedAt('2026-03-13T09:05:00.000Z')
+    }
+
+    expect(construct).not.toHaveBeenCalled()
   })
 })
 

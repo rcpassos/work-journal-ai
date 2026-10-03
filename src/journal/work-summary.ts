@@ -88,6 +88,11 @@ export async function selectWorkSummary({
   }
 }
 
+const GENERATED_AT = new Intl.DateTimeFormat(undefined, {
+  dateStyle: 'medium',
+  timeStyle: 'short',
+})
+
 /**
  * When a Work Summary was written, in the reader's own locale — the
  * generation time each snapshot carries beside its original range. A value,
@@ -95,10 +100,7 @@ export async function selectWorkSummary({
  * than matching prose across locales.
  */
 export function formatWorkSummaryGeneratedAt(at: Date): string {
-  return new Intl.DateTimeFormat(undefined, {
-    dateStyle: 'medium',
-    timeStyle: 'short',
-  }).format(at)
+  return GENERATED_AT.format(at)
 }
 
 /**
