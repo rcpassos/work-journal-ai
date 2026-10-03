@@ -23,14 +23,14 @@ tauri-build = { version = "2.6.3", features = [] }
 serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 log = "0.4"
-tauri = { version = "2.11.3", features = ["tray-icon", "image-png", "macos-private-api"] }
+tauri = { version = "~2.11.3", features = ["tray-icon", "image-png", "macos-private-api"] }
 tauri-plugin-log = "2"
-tauri-plugin-sql = { version = "2", features = ["sqlite"] }
+tauri-plugin-sql = { version = "~2.4.0", features = ["sqlite"] }
 # The same sqlx the plugin uses, so `journal_transaction` runs its statements on
 # the plugin's own pool — see docs/adr/0020-recurring-task-transitions-are-transactional.md.
 sqlx = { version = "0.8", default-features = false, features = ["sqlite", "runtime-tokio"] }
-tauri-plugin-store = "2"
-tauri-plugin-clipboard-manager = "2.3.2"
+tauri-plugin-store = "~2.4.4"
+tauri-plugin-clipboard-manager = "~2.3.2"
 # The API Key, in the OS keychain rather than in the plaintext settings file —
 # see docs/adr/0026-the-api-key-lives-in-the-keychain-and-rust-makes-the-call.md.
 keyring = "4.2.0"
@@ -43,7 +43,7 @@ keyring = "4.2.0"
 # already manages.
 reqwest = { version = "0.13", default-features = false, features = ["json", "native-tls"] }
 # The save dialog behind the manual backup — and #161's open dialog after it.
-tauri-plugin-dialog = { version = "2.7.3" }
+tauri-plugin-dialog = { version = "~2.7.3" }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
@@ -93,11 +93,11 @@ objc2-user-notifications = { version = "0.3", default-features = false, features
 ] }
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
-tauri-plugin-autostart = "2"
+tauri-plugin-autostart = "~2.5.1"
 tauri-plugin-global-shortcut = "2"
 tauri-plugin-single-instance = "2"
 # The newer release, fetched and installed by the app itself — see
 # docs/adr/0030-the-app-updates-itself-from-its-own-releases.md. `process` is
 # what puts the user back into the version they just installed.
-tauri-plugin-updater = "2"
-tauri-plugin-process = "2"
+tauri-plugin-updater = "~2.11.0"
+tauri-plugin-process = "~2.3.1"
