@@ -257,8 +257,8 @@ pub enum ApplyOutcome {
 }
 
 /// Opens a candidate read-only and validates it: `quick_check`, the schema
-/// the version it claims must carry — every expected table, every column of
-/// each, and nothing a journal never makes — and the `_sqlx_migrations`
+/// the version it claims makes — exactly its tables, their columns and its
+/// named indexes, nothing a journal never makes — and the `_sqlx_migrations`
 /// boundary. Never opens it with the app's own pool, never writes to the
 /// file, and never mutates anything on a refusal. A refusal names which check
 /// failed. Answers with the migration version the candidate carries, so the
@@ -391,38 +391,56 @@ pub async fn validate_restore_candidate(candidate: &Path) -> Result<i64, String>
         ));
     }
 
-    let missing: Vec<&&str> = expected
+    // A journal at `version` holds exactly the tables, columns and indexes
+    // its migrations made. A schema ahead of the version its rows claim has
+    // the launch migrator re-run a migration over what already exists, which
+    // fails and panics the app on every launch; a genuine snapshot never
+    // looks like this, so it was crafted or hand-edited.
+    let extra_tables: Vec<&str> = tables
         .iter()
-        .map(|(table, _)| table)
-        .filter(|table| !tables.contains(**table))
+        .map(String::as_str)
+        .filter(|table| !table.starts_with("sqlite_") && *table != "_sqlx_migrations")
+        .filter(|table| !expected.iter().any(|(name, _)| name == table))
+        .collect();
+    if !extra_tables.is_empty() {
+        return Err(format!(
+            "the backup carries unexpected tables for version {version}: {}",
+            sorted(extra_tables)
+        ));
+    }
+
+    let missing: Vec<&str> = expected
+        .iter()
+        .map(|(table, _)| *table)
+        .filter(|table| !tables.contains(*table))
         .collect();
     if !missing.is_empty() {
-        let missing = missing
-            .into_iter()
-            .map(|table| table.to_string())
-            .collect::<Vec<_>>()
-            .join(", ");
-        return Err(format!("the backup is missing tables: {missing}"));
+        return Err(format!("the backup is missing tables: {}", sorted(missing)));
     }
 
     // The tables named right are not enough: a `notes` table carrying only
     // `(id, body)` would pass a names check and fail the next launch's
     // `SELECT journal_day`. Each expected table must hold every column the
-    // version it claims leaves it with.
+    // version it claims leaves it with, and none a later migration added.
     let mut missing_columns: Vec<String> = Vec::new();
+    let mut extra_columns: Vec<String> = Vec::new();
     for (table, required) in expected.iter() {
         let held = columns_of(&mut connection, table).await?;
-        let absent: Vec<&&str> = required
+        let absent: Vec<&str> = required
             .iter()
-            .filter(|column| !held.contains(**column))
+            .copied()
+            .filter(|column| !held.contains(*column))
             .collect();
         if !absent.is_empty() {
-            let absent = absent
-                .into_iter()
-                .map(|column| column.to_string())
-                .collect::<Vec<_>>()
-                .join(", ");
-            missing_columns.push(format!("{table} ({absent})"));
+            missing_columns.push(format!("{table} ({})", sorted(absent)));
+        }
+        let extra: Vec<&str> = held
+            .iter()
+            .map(String::as_str)
+            .filter(|column| !required.contains(column))
+            .collect();
+        if !extra.is_empty() {
+            extra_columns.push(format!("{table} ({})", sorted(extra)));
         }
     }
     if !missing_columns.is_empty() {
@@ -431,8 +449,52 @@ pub async fn validate_restore_candidate(candidate: &Path) -> Result<i64, String>
             missing_columns.join("; ")
         ));
     }
+    if !extra_columns.is_empty() {
+        return Err(format!(
+            "the backup carries unexpected columns for version {version}: {}",
+            extra_columns.join("; ")
+        ));
+    }
+
+    // `sql IS NOT NULL` leaves out the `sqlite_autoindex_*` entries SQLite
+    // keeps for primary keys and unique constraints, which no migration names.
+    let held_indexes: HashSet<String> = sqlx::query(
+        "SELECT name FROM sqlite_master WHERE type = 'index' AND sql IS NOT NULL",
+    )
+    .try_map(|row: sqlx::sqlite::SqliteRow| row.try_get(0))
+    .fetch_all(&mut connection)
+    .await
+    .map_err(|error| format!("the backup's indexes could not be read: {error}"))?
+    .into_iter()
+    .collect();
+    let required_indexes = expected_indexes(version);
+    let extra_indexes: Vec<&str> = held_indexes
+        .iter()
+        .map(String::as_str)
+        .filter(|index| !required_indexes.contains(index))
+        .collect();
+    if !extra_indexes.is_empty() {
+        return Err(format!(
+            "the backup carries unexpected indexes for version {version}: {}",
+            sorted(extra_indexes)
+        ));
+    }
+    let missing_indexes: Vec<&str> = required_indexes
+        .iter()
+        .copied()
+        .filter(|index| !held_indexes.contains(*index))
+        .collect();
+    if !missing_indexes.is_empty() {
+        return Err(format!("the backup is missing indexes: {}", sorted(missing_indexes)));
+    }
 
     Ok(version)
+}
+
+/// Names in a stable order, joined for a refusal.
+fn sorted(mut names: Vec<&str>) -> String {
+    names.sort_unstable();
+    names.join(", ")
 }
 
 /// Each shipped migration's version and the checksum sqlx records for it,
@@ -663,12 +725,12 @@ fn sidecar_path(live: &Path, sidecar: &str) -> PathBuf {
     PathBuf::from(format!("{}-{sidecar}", live.display()))
 }
 
-/// The schema a journal at `version` must hold: every table the version must
-/// have, and every column of each. Version-aware because an older snapshot is
+/// The schema a journal at `version` holds: every table the version has, and
+/// every column of each, no more and no less. Version-aware because an older snapshot is
 /// accepted and migrated forward: a version 5 snapshot cannot be expected to
 /// hold the version 6 occurrence table, or nothing old would ever be
-/// migratable. What is checked is that the tables — and the columns — the
-/// claimed version must have are there.
+/// migratable. What is checked is that the tables — and the columns — are
+/// exactly the claimed version's.
 ///
 /// Columns read in the order the migrations left them; a version's list is
 /// always a prefix of a newer version's, because a migration adds columns to
@@ -914,6 +976,46 @@ fn expected_schema(version: i64) -> &'static [(&'static str, &'static [&'static 
         8 => V8,
         9 => V9,
         _ => LATEST,
+    }
+}
+
+/// The named indexes a journal at `version` holds, exactly: the migrations
+/// create them, and migration 8 recreates the two it loses when it rebuilds
+/// `notes`. Migrations 7 through the latest add no index after 7, so the last
+/// arm serves them all; `expected_schema_covers_the_real_schema_at_every_version`
+/// holds the list against the production schema both ways, and fails the
+/// moment a later migration adds an index this list lacks.
+fn expected_indexes(version: i64) -> &'static [&'static str] {
+    match version {
+        1 => &["notes_journal_day"],
+        2 | 3 => &["notes_journal_day", "notes_project"],
+        4 => &["notes_journal_day", "notes_project", "tasks_created_at", "tasks_completed_at"],
+        5 => &[
+            "notes_journal_day",
+            "notes_project",
+            "tasks_created_at",
+            "tasks_completed_at",
+            "tasks_scheduled_for",
+        ],
+        6 => &[
+            "notes_journal_day",
+            "notes_project",
+            "tasks_created_at",
+            "tasks_completed_at",
+            "tasks_scheduled_for",
+            "task_occurrences_one_open",
+            "task_occurrences_history",
+        ],
+        _ => &[
+            "notes_journal_day",
+            "notes_project",
+            "tasks_created_at",
+            "tasks_completed_at",
+            "tasks_scheduled_for",
+            "task_occurrences_one_open",
+            "task_occurrences_history",
+            "task_occurrences_one_kept_per_slot",
+        ],
     }
 }
 
@@ -1850,6 +1952,106 @@ mod tests {
         assert_eq!(candidate_bytes(&candidate), before);
     });
 
+    /// Runs `statements` against the candidate and closes it again.
+    async fn alter_candidate(candidate: &Path, statements: &[&str]) {
+        let url = format!("sqlite:{}?mode=rwc", candidate.display());
+        let pool = SqlitePool::connect(&url).await.expect("could not open");
+        for statement in statements {
+            sqlx::query(statement)
+                .execute(&pool)
+                .await
+                .unwrap_or_else(|error| panic!("could not run {statement}: {error}"));
+        }
+        pool.close().await;
+    }
+
+    async_test!(a_journal_whose_schema_is_ahead_of_its_migration_rows_is_refused, {
+        // The launch migrator re-runs every migration missing from
+        // `_sqlx_migrations`, and one whose effect is already in the file
+        // fails and panics the app. A genuine snapshot never looks like
+        // this, so the schema must equal what the claimed version makes.
+        // Version 7 adds only an index, which a tables-and-columns check
+        // cannot see.
+        for version in 2..=SUPPORTED_MIGRATION_VERSION {
+            let directory = TempDir::new(&format!("restore-ahead-{version}"));
+            let candidate = directory.path.join("candidate.db");
+            write_journal_file(&candidate, version, "the journal").await;
+            alter_candidate(
+                &candidate,
+                &[&format!("DELETE FROM _sqlx_migrations WHERE version = {version}")],
+            )
+            .await;
+            let before = candidate_bytes(&candidate);
+
+            let refusal = validate_restore_candidate(&candidate).await.expect_err(&format!(
+                "a version {version} schema claiming version {} must not validate",
+                version - 1
+            ));
+
+            assert!(
+                refusal.contains("unexpected"),
+                "a refusal names which check failed, got: {refusal}"
+            );
+            assert_eq!(candidate_bytes(&candidate), before);
+        }
+    });
+
+    async_test!(a_version_seven_journal_claiming_version_six_is_refused_by_its_index, {
+        let directory = TempDir::new("restore-ahead-index");
+        let candidate = directory.path.join("candidate.db");
+        write_journal_file(&candidate, 7, "the journal").await;
+        alter_candidate(&candidate, &["DELETE FROM _sqlx_migrations WHERE version = 7"]).await;
+
+        let refusal = validate_restore_candidate(&candidate)
+            .await
+            .expect_err("an index from a later migration must not validate");
+
+        assert!(
+            refusal.contains("unexpected indexes")
+                && refusal.contains("task_occurrences_one_kept_per_slot"),
+            "a refusal names which check failed, got: {refusal}"
+        );
+    });
+
+    async_test!(a_journal_missing_an_index_its_version_made_is_refused, {
+        let directory = TempDir::new("restore-missing-index");
+        let candidate = healthy_candidate(&directory, "candidate.db", "the journal").await;
+        alter_candidate(&candidate, &["DROP INDEX notes_project"]).await;
+
+        let refusal = validate_restore_candidate(&candidate)
+            .await
+            .expect_err("a journal missing an index must not validate");
+
+        assert!(
+            refusal.contains("missing indexes") && refusal.contains("notes_project"),
+            "a refusal names which check failed, got: {refusal}"
+        );
+    });
+
+    async_test!(a_healthy_journal_carrying_an_extra_table_column_or_index_is_refused, {
+        let cases: [(&str, &str, &str); 3] = [
+            ("CREATE TABLE stowaway (id TEXT PRIMARY KEY);", "unexpected tables", "stowaway"),
+            ("ALTER TABLE notes ADD COLUMN stowaway TEXT;", "unexpected columns", "stowaway"),
+            ("CREATE INDEX stowaway ON notes (body);", "unexpected indexes", "stowaway"),
+        ];
+        for (index, (statement, kind, name)) in cases.iter().enumerate() {
+            let directory = TempDir::new(&format!("restore-extra-{index}"));
+            let candidate = healthy_candidate(&directory, "candidate.db", "the journal").await;
+            alter_candidate(&candidate, &[statement]).await;
+            let before = candidate_bytes(&candidate);
+
+            let refusal = validate_restore_candidate(&candidate)
+                .await
+                .expect_err("a journal carrying more than its version makes must not validate");
+
+            assert!(
+                refusal.contains(kind) && refusal.contains(name),
+                "a refusal names which check failed, got: {refusal}"
+            );
+            assert_eq!(candidate_bytes(&candidate), before);
+        }
+    });
+
     async_test!(a_migration_row_with_a_mismatched_checksum_is_refused, {
         // sqlx's migrator returns `VersionMismatch` for an applied checksum
         // that differs from the embedded migration, and the app panics on
@@ -2483,6 +2685,31 @@ mod tests {
                         "at version {version} the real schema holds {table}.{column}, which the check does not expect"
                     );
                 }
+            }
+
+            // Indexes the same way: the real schema holds exactly the named
+            // ones the check expects for the version.
+            let indexes: HashSet<String> = sqlx::query(
+                "SELECT name FROM sqlite_master WHERE type = 'index' AND sql IS NOT NULL",
+            )
+            .try_map(|row: sqlx::sqlite::SqliteRow| row.try_get(0))
+            .fetch_all(&pool)
+            .await
+            .expect("the indexes could not be read")
+            .into_iter()
+            .collect();
+            let named = expected_indexes(version);
+            for index in &indexes {
+                assert!(
+                    named.contains(&index.as_str()),
+                    "at version {version} the real schema holds index {index}, which the check does not expect"
+                );
+            }
+            for index in named {
+                assert!(
+                    indexes.contains(*index),
+                    "at version {version} the check expects index {index}, which the real schema does not hold"
+                );
             }
             pool.close().await;
         }
