@@ -1863,7 +1863,7 @@ mod tests {
             .expect_err("a mismatched checksum must not validate");
 
         assert!(
-            refusal.contains("migration check") && refusal.contains("3"),
+            refusal.contains("migration check") && refusal.contains("migration 3 "),
             "a refusal names which check failed, got: {refusal}"
         );
         assert_eq!(candidate_bytes(&candidate), before);

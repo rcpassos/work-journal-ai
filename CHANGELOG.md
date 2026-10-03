@@ -4,6 +4,8 @@ What changed in each released version, newest first. Every `vX.Y.Z` section here
 
 ## Unreleased
 
+- Restoring a backup whose migration records were altered is now refused up front, instead of restoring it and then failing to open the app on every launch.
+
 ## 0.16.0 — 2026-09-30
 
 - Settings can add your commits to the journal: choose repositories and the addresses that are you, and each commit you make becomes a Note on the day you authored it.
