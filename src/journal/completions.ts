@@ -18,6 +18,7 @@ import {
   journalDayFor,
   scheduleOf,
   slotOf,
+  spansYears,
   type CompletedOccurrence,
   type Task,
 } from './journal'
@@ -127,10 +128,11 @@ export function renderCompletedSection(
   }
 
   const groups = groupCompletionsByDay(completions)
+  const withYear = spansYears(groups.map((group) => group.journalDay))
   const grouped = groups
     .map(
       (group) =>
-        `### ${formatDigestDay(group.journalDay)}\n${group.bullets.join('\n')}`,
+        `### ${formatDigestDay(group.journalDay, withYear)}\n${group.bullets.join('\n')}`,
     )
     .join('\n')
   return `## Completed\n${grouped}`
