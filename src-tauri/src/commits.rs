@@ -13,11 +13,17 @@
 //! config touched; the tests below snapshot every fixture before and after to
 //! hold that.
 //!
-//! **Which ref.** `origin/HEAD` as this machine has it, then the current
-//! branch's upstream, then `HEAD`. A fetch advances the remote-tracking branch
-//! without advancing the local one, so reading the local branch could miss for
-//! good work a fetch had already brought here. `origin/HEAD` is only set by a
-//! clone, which is why a remote added by hand falls through to the upstream.
+//! **Which ref.** The default branch, and only that: `origin/HEAD` as this
+//! machine has it, then `origin/main`, `origin/master`, `main`, `master`, and
+//! `HEAD` when there is none of them. A fetch advances the remote-tracking
+//! branch without advancing the local one, so reading the local branch could
+//! miss for good work a fetch had already brought here. `origin/HEAD` is set
+//! by a clone, and by a fetch from git 2.48 on, so a remote added by hand and
+//! only pushed to falls through to the branch names. Never the checked-out
+//! branch while a default one is here: an amend, a rebase or a force-push
+//! gives unmerged work a new hash, and a squash-merge gives it another, and
+//! each would be a Note of its own. A repository whose default branch has some
+//! other name is read on `HEAD`, and that is accepted.
 //!
 //! **First-parent.** On a squash-merge workflow that is one commit per merged
 //! pull request, and the branch commits behind it are never read. It follows
@@ -322,11 +328,18 @@ impl Git {
         Ok(common.display().to_string())
     }
 
-    /// The commit to walk back from: `origin/HEAD`, then the current branch's
-    /// upstream, then `HEAD` — the first this machine can resolve to a
-    /// commit, as a hash. None when not one of them can be.
+    /// The commit to walk back from: the default branch, remote-tracking
+    /// first, then `HEAD` — the first this machine can resolve to a commit,
+    /// as a hash. None when not one of them can be.
     fn tip(&self, path: &Path) -> Result<Option<String>, RepositoryUnreadable> {
-        for candidate in ["refs/remotes/origin/HEAD", "@{upstream}", "HEAD"] {
+        for candidate in [
+            "refs/remotes/origin/HEAD",
+            "refs/remotes/origin/main",
+            "refs/remotes/origin/master",
+            "refs/heads/main",
+            "refs/heads/master",
+            "HEAD",
+        ] {
             let target = format!("{candidate}^{{commit}}");
             let output = self.run(path, &["rev-parse", "--verify", "--quiet", &target])?;
             if output.status.success() {
@@ -774,7 +787,7 @@ mod tests {
     }
 
     #[test]
-    fn a_remote_added_by_hand_is_read_through_the_upstream() {
+    fn a_remote_added_by_hand_is_read_on_its_main() {
         let root = TempDir::new("upstream");
         let server = root.path.join("server");
         let local = root.path.join("local");
@@ -811,7 +824,7 @@ mod tests {
             ],
         );
         // A branch of the user's own, checked out and tracking main, is where
-        // they are — and the upstream is what is read from it.
+        // they are — and main is what is read from it.
         git(
             &local,
             &["switch", "--quiet", "-c", "wip", "--track", "origin/main"],
@@ -830,9 +843,51 @@ mod tests {
     }
 
     #[test]
-    fn a_repository_with_no_remote_is_read_on_its_head() {
+    fn a_pushed_branch_is_not_read_without_origin_head() {
+        let root = TempDir::new("pushed-branch");
+        let server = root.path.join("server");
+        let local = root.path.join("local");
+        init(&server);
+        // The server is pushed to, so nothing may be checked out on it.
+        git(&server, &["config", "receive.denyCurrentBranch", "ignore"]);
+        init(&local);
+        commit(&local, ME, 1, "Start");
+        git(
+            &local,
+            &["remote", "add", "origin", server.to_str().unwrap()],
+        );
+        git(&local, &["push", "--quiet", "-u", "origin", "main"]);
+        // A branch of the user's own, pushed, then rewritten and pushed again:
+        // each hash it has had is the same work.
+        git(&local, &["switch", "--quiet", "-c", "feature"]);
+        commit(&local, ME, 2, "Draft wording");
+        git(&local, &["push", "--quiet", "-u", "origin", "feature"]);
+        git(&local, &["commit", "--quiet", "--amend", "--no-edit"]);
+        git(&local, &["push", "--quiet", "--force", "origin", "feature"]);
+        assert!(
+            !local.join(".git/refs/remotes/origin/HEAD").exists(),
+            "the fixture has an origin/HEAD, so it tests nothing"
+        );
+
+        assert_eq!(subjects(&read_by(&local, &[ME], at(0))), ["Start"]);
+    }
+
+    #[test]
+    fn a_repository_with_no_remote_is_read_on_its_main() {
         let root = TempDir::new("local-only");
         init(&root.path);
+        commit(&root.path, ME, 1, "Start");
+        git(&root.path, &["switch", "--quiet", "-c", "feature"]);
+        commit(&root.path, ME, 2, "On the branch");
+
+        assert_eq!(subjects(&read_by(&root.path, &[ME], at(0))), ["Start"]);
+    }
+
+    #[test]
+    fn a_repository_with_no_main_is_read_on_its_head() {
+        let root = TempDir::new("trunk");
+        std::fs::create_dir_all(&root.path).unwrap();
+        git(&root.path, &["init", "--quiet", "--initial-branch=trunk"]);
         commit(&root.path, ME, 1, "Start");
         git(&root.path, &["switch", "--quiet", "-c", "feature"]);
         commit(&root.path, ME, 2, "On the branch");
