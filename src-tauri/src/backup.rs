@@ -61,7 +61,8 @@ const ROLLBACK_STEM: &str = "work-journal-rollback";
 
 /// What Settings says about the automatic backups: how many there are, and
 /// when the newest was taken. Null when there are none — a first run, or a
-/// directory the user emptied.
+/// directory the user emptied. Must match `AutomaticBackups` in
+/// `src/platform/desktop.ts`, as `src/platform/desktop-rust.test.ts` checks.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AutomaticBackups {

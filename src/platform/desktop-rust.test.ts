@@ -12,7 +12,7 @@
  * there costs one frame and then corrects itself.
  */
 
-import { readFileSync } from 'node:fs'
+import { readdirSync, readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import {
   CAPTURE_SHOWN_EVENT,
@@ -952,19 +952,19 @@ describe('the commit reader contract', () => {
 
 /** The variant names of one Rust enum, as written. */
 function rustVariants(source: string, name: string): string[] {
-  const body = source.match(new RegExp(`pub enum ${name} \\{([\\s\\S]*?)\\n\\}`))?.[1] ?? ''
+  const body = source.match(new RegExp(`(?:pub )?enum ${name} \\{([\\s\\S]*?)\\n\\}`))?.[1] ?? ''
   return [...body.matchAll(/^\s*([A-Z][A-Za-z0-9]*)(?=\s*[,{(])/gm)].map(([, variant]) => variant)
 }
 
 /** The field names of one Rust struct, as written. */
 function rustFieldNames(source: string, name: string): string[] {
-  const body = source.match(new RegExp(`pub struct ${name} \\{([\\s\\S]*?)\\n\\}`))?.[1] ?? ''
-  return [...body.matchAll(/^\s*pub ([a-z_]+):/gm)].map(([, field]) => field)
+  const body = source.match(new RegExp(`(?:pub )?struct ${name} \\{([\\s\\S]*?)\\n\\}`))?.[1] ?? ''
+  return [...body.matchAll(/^\s*(?:pub )?([a-z_]+):/gm)].map(([, field]) => field)
 }
 
 /** The quoted member names of one TypeScript union, as written. */
 function tsUnionKinds(source: string, name: string): string[] {
-  const body = source.match(new RegExp(`export type ${name} =\\n([\\s\\S]*?)\\n\\n`))?.[1] ?? ''
+  const body = source.match(new RegExp(`export type ${name} =\\s*([\\s\\S]*?)\\n\\n`))?.[1] ?? ''
   return [...body.matchAll(/'([a-z-]+)'/g)].map(([, kind]) => kind)
 }
 
@@ -985,3 +985,178 @@ function kebab(name: string): string {
 function camel(snake: string): string {
   return snake.replace(/_([a-z])/g, (_, letter: string) => letter.toUpperCase())
 }
+
+/**
+ * The `#[serde(...)]` attributes directly above a Rust struct or enum. What
+ * they rename is part of the wire contract as much as the names are: the field
+ * names above are compared in camelCase, which is only what travels if the
+ * attribute says so.
+ */
+function rustSerde(source: string, name: string): string {
+  const attributes =
+    source.match(
+      new RegExp(`((?:#\\[[^\\n]*\\]\\n)+)(?:pub )?(?:struct|enum) ${name} \\{`),
+    )?.[1] ?? ''
+  return [...attributes.matchAll(/#\[serde\(([^\n]*)\)\]/g)].map(([, a]) => a).join(', ')
+}
+
+/**
+ * A variant's name as the enum's own `rename_all` spells it on the wire. An
+ * enum that declares no rule is spelled as written, so a rule dropped from the
+ * attribute reads as every variant changing.
+ */
+function wireVariant(variant: string, serde: string): string {
+  const rule = serde.match(/\brename_all = "([^"]*)"/)?.[1]
+  if (rule === 'lowercase') return variant.toLowerCase()
+  if (rule === 'camelCase') return variant[0].toLowerCase() + variant.slice(1)
+  if (rule === 'kebab-case') return kebab(variant)
+  if (rule === undefined) return variant
+  throw new Error(`${variant}: this test does not read rename_all = "${rule}"`)
+}
+
+/** The field names of one variant of a Rust enum, as written. */
+function rustVariantFields(source: string, name: string, variant: string): string[] {
+  const body = source.match(new RegExp(`(?:pub )?enum ${name} \\{([\\s\\S]*?)\\n\\}`))?.[1] ?? ''
+  const fields = body.match(new RegExp(`\\b${variant}\\s*\\{([^}]*)\\}`))?.[1] ?? ''
+  return [...fields.matchAll(/^\s*([a-z_]+):/gm)].map(([, field]) => field)
+}
+
+/** The field names of the `{ ... }` member of a TypeScript union that holds `kind`. */
+function tsMemberFields(source: string, name: string, kind: string): string[] {
+  const body = source.match(new RegExp(`export type ${name} =\\s*([\\s\\S]*?)\\n\\n`))?.[1] ?? ''
+  const member =
+    [...body.matchAll(/\{([^{}]*)\}/g)]
+      .map(([, text]) => text)
+      .find((text) => text.includes(`'${kind}'`)) ?? ''
+  return [...member.matchAll(/([a-z][A-Za-z]*):/g)].map(([, field]) => field)
+}
+
+/**
+ * Everything else that crosses the command boundary as data, checked the way
+ * the Work Summary and commit reader contracts are: a field renamed on one side
+ * and not the other builds, passes every test that runs on the fake Desktop and
+ * the SQLite test driver, and is refused (or read as `undefined`) only in the
+ * app. `journal_transaction` refusing a renamed `SqlStatement` field fails every
+ * transactional write at once; a drifted `CalendarEvent.isDeclined` imports
+ * declined meetings without a word.
+ */
+describe('the data that crosses the command boundary', () => {
+  const alerts = read('src-tauri/src/alerts.rs')
+  const calendar = read('src-tauri/src/calendar.rs')
+  const hotkey = read('src-tauri/src/hotkey.rs')
+  const backup = read('src-tauri/src/backup.rs')
+  const journalTs = read('src/journal/journal.ts')
+  const hotkeyTs = read('src/settings/hotkey.ts')
+
+  /** A Rust record and the TypeScript interface it is read as. */
+  const structs = [
+    { ts: 'SqlStatement', tsSource: journalTs, rust: 'Statement', rustSource, fields: ['sql', 'params'] },
+    { ts: 'TaskAlert', tsSource: journalTs, rust: 'TaskAlert', rustSource: alerts, fields: ['id', 'description', 'year', 'month', 'day', 'hour', 'minute'] },
+    { ts: 'TaskAlertCompletion', tsSource: desktop, rust: 'TaskAlertCompletion', rustSource: alerts, fields: ['alertId', 'date', 'time'] },
+    { ts: 'CalendarInfo', tsSource: desktop, rust: 'CalendarInfo', rustSource: calendar, fields: ['id', 'title', 'source'] },
+    { ts: 'CalendarEvent', tsSource: journalTs, rust: 'CalendarEvent', rustSource: calendar, fields: ['id', 'calendarId', 'title', 'startsAt', 'endsAt', 'isAllDay', 'isDeclined'] },
+    { ts: 'BackupResult', tsSource: desktop, rust: 'BackupResult', rustSource, fields: ['path', 'fileName'] },
+    { ts: 'AutomaticBackups', tsSource: desktop, rust: 'AutomaticBackups', rustSource: backup, fields: ['count', 'newestTakenAt'] },
+    { ts: 'HotkeyStatuses', tsSource: hotkeyTs, rust: 'Hotkeys', rustSource: hotkey, fields: ['note', 'task'] },
+  ]
+
+  it.each(structs)('names $ts\'s fields the same on both sides', (record) => {
+    const rustFields = rustFieldNames(record.rustSource, record.rust).map(camel)
+
+    expect(rustFields).toEqual(record.fields)
+    expect(tsFieldNames(record.tsSource, record.ts)).toEqual(rustFields)
+
+    // The names above are compared in camelCase, so the attribute that makes
+    // that the spelling on the wire has to be there when any of them had to be
+    // changed to get there.
+    if (rustFieldNames(record.rustSource, record.rust).some((field) => field.includes('_'))) {
+      expect(rustSerde(record.rustSource, record.rust)).toContain('rename_all = "camelCase"')
+    }
+  })
+
+  /** A Rust enum of bare variants and the TypeScript union it is read as. */
+  const unions = [
+    { ts: 'TaskAlertPermission', tsSource: desktop, rust: 'Permission', rustSource: alerts, kinds: ['granted', 'denied', 'undetermined'], rename: 'lowercase' },
+    { ts: 'CalendarAccess', tsSource: desktop, rust: 'Access', rustSource: calendar, kinds: ['granted', 'denied', 'undetermined'], rename: 'lowercase' },
+  ]
+
+  it.each(unions)('spells $ts the same on both sides', (union) => {
+    // Each enum is read by the rule it declares: `lowercase` writes
+    // `WriteOnly` as `writeonly`, where kebab-case would say `write-only` and
+    // send the next person to a spelling that never arrives.
+    const serde = rustSerde(union.rustSource, union.rust)
+    const rustKinds = rustVariants(union.rustSource, union.rust).map((variant) =>
+      wireVariant(variant, serde),
+    )
+
+    expect(rustKinds).toEqual(union.kinds)
+    expect(tsUnionKinds(union.tsSource, union.ts)).toEqual(rustKinds)
+    expect(rustSerde(union.rustSource, union.rust)).toContain(`rename_all = "${union.rename}"`)
+  })
+
+  it('spells a Hotkey\'s status, and what each state carries, the same on both sides', () => {
+    // A tagged enum: the tag is the field the webview switches on, and each
+    // variant carries its own fields beside it.
+    const serde = rustSerde(hotkey, 'HotkeyStatus')
+    const rustKinds = rustVariants(hotkey, 'HotkeyStatus').map((variant) =>
+      wireVariant(variant, serde),
+    )
+
+    expect(rustKinds).toEqual(['registered', 'unavailable'])
+    expect(tsUnionKinds(hotkeyTs, 'HotkeyStatus')).toEqual(rustKinds)
+    expect(rustSerde(hotkey, 'HotkeyStatus')).toContain('tag = "state"')
+    expect(rustSerde(hotkey, 'HotkeyStatus')).toContain('rename_all = "camelCase"')
+
+    const carried = {
+      registered: ['hotkey'],
+      unavailable: ['hotkey', 'reason'],
+    }
+    for (const [kind, fields] of Object.entries(carried)) {
+      const variant = kind[0].toUpperCase() + kind.slice(1)
+      const written = rustVariantFields(hotkey, 'HotkeyStatus', variant)
+      const rustFields = written.map(camel)
+
+      // `rename_all` spells the variants only; the fields inside them need
+      // `rename_all_fields`, or `retry_after` arrives as written.
+      if (written.some((field) => field.includes('_'))) {
+        expect(serde, kind).toContain('rename_all_fields = "camelCase"')
+      }
+
+      expect(rustFields, kind).toEqual(fields)
+      expect(
+        tsMemberFields(hotkeyTs, 'HotkeyStatus', kind).filter((field) => field !== 'state'),
+        kind,
+      ).toEqual(rustFields)
+    }
+  })
+
+  it('has a test for every type a Rust "must match" comment names', () => {
+    // The comment is the claim and this file is what holds it: a type that
+    // says it matches the other side and is named nowhere above is a claim
+    // nothing enforces, so it fails here rather than going unchecked.
+    // A type is held when this file names it as a string — the tables above,
+    // and the calls of the describes before them. Read off the file rather
+    // than listed, so that deleting a type's test is what makes its comment
+    // fail; the text of this test is left out, so it cannot vouch for itself.
+    const testSource = read(TEST_FILE)
+    const named = new Set(
+      [
+        ...testSource
+          .slice(0, testSource.indexOf("it('has a test for every type"))
+          .matchAll(/'([A-Z][A-Za-z0-9]*[a-z][A-Za-z0-9]*)'/g),
+      ].map(([, type]) => type),
+    )
+
+    const claimed = new Set<string>()
+    for (const file of readdirSync(new URL('../../src-tauri/src/', import.meta.url))) {
+      if (!file.endsWith('.rs')) continue
+      const text = oneLine(read(`src-tauri/src/${file}`).replace(/^(?!\s*\/\/\/).*$/gm, '\n'))
+      for (const [, type] of text.matchAll(/[Mm]ust match `([A-Z][A-Za-z0-9]*[a-z][A-Za-z0-9]*)` in `/g)) {
+        claimed.add(type)
+      }
+    }
+
+    expect(claimed.size).toBeGreaterThan(0)
+    expect([...claimed].filter((type) => !named.has(type))).toEqual([])
+  })
+})
