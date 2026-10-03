@@ -71,6 +71,12 @@ import {
 } from './desktop'
 import { releaseNotes } from './release-notes'
 
+// Without a timeout the plugin waits forever, and Settings › Updates stays
+// disabled until the window is reopened. A check is one small request; an
+// install spans the whole download, so it is given far longer.
+const CHECK_TIMEOUT_MS = 30_000
+const INSTALL_TIMEOUT_MS = 10 * 60_000
+
 export function createTauriDesktop(): Desktop {
   // What the last check found, kept until it is installed or a later check
   // replaces it. The plugin answers with the update itself rather than with a
@@ -365,7 +371,7 @@ export function createTauriDesktop(): Desktop {
       invoke<WorkSummaryResponse>('generate_work_summary', { request }),
 
     async checkForUpdate(): Promise<AvailableUpdate | null> {
-      found = await check()
+      found = await check({ timeout: CHECK_TIMEOUT_MS })
 
       return found === null
         ? null
@@ -382,14 +388,17 @@ export function createTauriDesktop(): Desktop {
       let downloaded = 0
       let total: number | null = null
 
-      await found.downloadAndInstall((event) => {
-        if (event.event === 'Started') {
-          total = event.data.contentLength ?? null
-        } else if (event.event === 'Progress') {
-          downloaded += event.data.chunkLength
-        }
-        report({ downloaded, total })
-      })
+      await found.downloadAndInstall(
+        (event) => {
+          if (event.event === 'Started') {
+            total = event.data.contentLength ?? null
+          } else if (event.event === 'Progress') {
+            downloaded += event.data.chunkLength
+          }
+          report({ downloaded, total })
+        },
+        { timeout: INSTALL_TIMEOUT_MS },
+      )
     },
 
     // macOS leaves the old binary running: the installed version is only on
