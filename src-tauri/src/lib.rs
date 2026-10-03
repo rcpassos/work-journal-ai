@@ -425,6 +425,37 @@ pub fn run() {
         // The open dialog behind the restore needs no new dependency, only
         // `dialog:allow-open` beside `dialog:allow-save`.
         .plugin(tauri_plugin_dialog::init())
+        // The log, in every build and ahead of the restore: its setup runs
+        // during build(), before the app's own `.setup`, and a record logged
+        // with no logger installed is dropped. The default targets are
+        // stdout and a file in the app's log directory, which is where a
+        // release build's failed snapshot, prune or restore leaves its line —
+        // see docs/adr/0032-a-backup-is-a-sqlite-snapshot-taken-with-vacuum-into.md.
+        //
+        // Wired by hand rather than with `.build()`: that propagates a log
+        // directory it cannot create or a file it cannot open out of
+        // build(), which aborts the launch. A journal that cannot say what
+        // it did is better than one that does not start.
+        .plugin(
+            tauri::plugin::Builder::new("logger")
+                .setup(
+                    |app: &tauri::AppHandle<tauri::Wry>,
+                     _api: tauri::plugin::PluginApi<tauri::Wry, ()>| {
+                    let logger = tauri_plugin_log::Builder::default()
+                        .level(log::LevelFilter::Info)
+                        .split(app)
+                        .map_err(|error| error.to_string())
+                        .and_then(|(_, max_level, log)| {
+                            tauri_plugin_log::attach_logger(max_level, log)
+                                .map_err(|error| error.to_string())
+                        });
+                    if let Err(error) = logger {
+                        eprintln!("no log this launch: {error}");
+                    }
+                    Ok(())
+                })
+                .build(),
+        )
         // The staged restore, before plugin-sql opens: the only moment
         // nothing holds the live journal. Registered ahead of the sql plugin
         // so its setup runs first — see
@@ -542,14 +573,6 @@ pub fn run() {
             dismiss_onboarding
         ])
         .setup(|app| {
-            if cfg!(debug_assertions) {
-                app.handle().plugin(
-                    tauri_plugin_log::Builder::default()
-                        .level(log::LevelFilter::Info)
-                        .build(),
-                )?;
-            }
-
             // Menu bar only: no Dock icon and no Cmd+Tab entry. The Main
             // Window puts the app in the Dock for as long as it is open, and
             // nothing else does — see docs/adr/0023-the-app-enters-the-dock-only-while-the-main-window-is-open.md.

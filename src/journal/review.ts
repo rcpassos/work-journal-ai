@@ -184,7 +184,7 @@ export function buildReviewMaterial(
   const parts: string[] = [heading]
   if (digest.markdown !== '') parts.push(digest.markdown)
   if (completions.length > 0) {
-    parts.push(renderCompletedSection(completions, filter.from !== filter.to))
+    parts.push(renderCompletedSection(completions, filter))
   }
 
   return {

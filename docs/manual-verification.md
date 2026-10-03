@@ -26,7 +26,7 @@ rm -rf ~/Library/Application\ Support/com.pipecodes.work-journal
 
 Quit the app first, and only do this on a machine whose Notes you are willing to lose.
 
-**How to read the log.** A release build logs nothing — the log plugin is only in debug builds. The handful of items that ask what the app recorded need a development build instead, run from a terminal so its output lands there:
+**How to read the log.** Both the release build and a development build log, at `Info`, to a file in the app's log directory: `~/Library/Logs/com.pipecodes.work-journal/Work Journal.log` for the release build, `~/Library/Logs/com.pipecodes.work-journal.dev/Work Journal (Dev).log` for a development one. A development build run from a terminal also prints them there:
 
 ```bash
 pnpm tauri dev
@@ -396,7 +396,7 @@ Daylight saving is macOS's to resolve, not the app's: the app registers the civi
 
 The snapshot items are checked with `sqlite3` (ships with macOS). A first launch means no `backups` folder in the app's data directory yet.
 
-- [ ] On a first launch after installing this build — no `backups` folder yet — a development build logs where the snapshot went, and `~/Library/Application Support/com.pipecodes.work-journal/backups/` holds exactly one file named `work-journal-…T….db`. The snapshot must appear without opening any window: launch, wait, and look — if opening Settings or History is what makes the file appear, the preload is broken again.
+- [ ] On a first launch after installing this build — no `backups` folder yet — the log file names where the snapshot went, and `~/Library/Application Support/com.pipecodes.work-journal/backups/` holds exactly one file named `work-journal-…T….db`. The snapshot must appear without opening any window: launch, wait, and look — if opening Settings or History is what makes the file appear, the preload is broken again.
 - [ ] `sqlite3 "~/Library/Application Support/com.pipecodes.work-journal/backups/<that file>" "PRAGMA quick_check;"` says `ok`, and `.tables` lists `notes`, `tasks`, `task_occurrences`, `handled_events` and `_sqlx_migrations`.
 - [ ] The snapshot holds the journal: a Note captured before the launch reads back from the snapshot file, with its Project and Captured At.
 - [ ] Quitting and relaunching inside a minute creates no second snapshot — at most one per interval.
@@ -410,6 +410,7 @@ The snapshot items are checked with `sqlite3` (ships with macOS). A first launch
 - [ ] Copying a snapshot to a second machine (or restoring it in place, once #161 exists) is possible without the app: the file opens in `sqlite3` directly.
 - [ ] With 30 snapshots in `backups/` — made by hand, dated across days — the next launch takes one snapshot and prunes down to 30, removing only the oldest `work-journal-…db` files. A decoy file dropped in the folder (`keep-me.txt`, and one named `work-journal.db`) is still there afterwards, untouched.
 - [ ] With the app's Model Access configured, no file in `backups/` contains the API Key: `grep -c sk- <snapshot>` finds nothing, and the settings file is not among what any snapshot holds.
+- [ ] A release build writes `~/Library/Logs/com.pipecodes.work-journal/Work Journal.log` at launch, and the launch snapshot's outcome is a line in it.
 - [ ] The release build takes its launch snapshot with nothing on screen: no window, no dialog, no error, whether or not the snapshot succeeded.
 
 ## Restore
@@ -424,6 +425,7 @@ The destructive path. Run these against a release build with a journal holding N
 - [ ] Choosing a corrupt file (a snapshot truncated by hand, or random bytes renamed to `.db`) refuses with the check that failed, stages nothing, and leaves the journal untouched.
 - [ ] Choosing a newer snapshot (one whose `_sqlx_migrations` holds a version newer than this build) refuses with the version it needs, stages nothing, and leaves the journal untouched.
 - [ ] A snapshot whose `_sqlx_migrations` row was altered (`UPDATE _sqlx_migrations SET checksum = X'00' WHERE version = 1;` on a copy, or `SET success = 0`) refuses with a message naming the migration check, stages nothing, and leaves the journal untouched.
+- [ ] A staged file that cannot be applied leaves `the staged restore could not be applied` as an error line in the log. The app relaunches into a restore the moment it is staged, so stage by hand: with the app quit, copy a snapshot to `~/Library/Application Support/com.pipecodes.work-journal/work-journal-restore-staged.db`, run `chmod u-w` on that folder, launch, and read the log. Then `chmod u+w` the folder, quit, and delete the staged file; the journal is as it was, with no rollback file beside it. (A read-only folder may also keep the SQL plugin from opening the journal, so judge the journal after the permissions are back.)
 - [ ] After a restore, a file named `work-journal-rollback-…T….db` sits beside `work-journal.db`; `sqlite3 <that file> "PRAGMA quick_check;"` says `ok`, and it opens standalone with the replaced journal in it.
 - [ ] With `work-journal.db` deleted but `work-journal.db-wal` left behind, restoring still yields the backup's rows: the orphan sidecar is gone from the folder, and the row counts agree with the backup rather than the old journal.
 - [ ] Task Alerts reflect the restored Tasks rather than the replaced ones: a Task with a time restored from the backup alerts at its minute, and nothing arrives for a Task that only existed after the backup.

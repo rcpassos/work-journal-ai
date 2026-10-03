@@ -1625,6 +1625,25 @@ describe('digest of a Filter narrowed by Project', () => {
     expect(digest.markdown).toBe('- read the postmortem')
   })
 
+  it('names the year in headings once the Filter crosses one', async () => {
+    const { journal, clock } = await journalAt('2025-12-31T09:00:00')
+    await journal.capture('last day of the year')
+    clock.set(local('2026-01-02T09:00:00'))
+    await journal.capture('first week')
+
+    const digest = await journal.digest({ from: '2025-12-31', to: '2026-01-02' })
+
+    expect(digest.markdown).toBe(
+      [
+        '## Wed 31 Dec 2025',
+        '- last day of the year',
+        '',
+        '## Fri 2 Jan 2026',
+        '- first week',
+      ].join('\n'),
+    )
+  })
+
   it('keeps the prefix under the day headings of a wider Filter', async () => {
     const { journal, clock } = await journalAt('2026-03-11T09:00:00')
     await journal.capture('#api rate limits')
@@ -1694,12 +1713,29 @@ describe('exportJournal', () => {
       [
         '# Notes',
         '',
-        '## Wed 11 Mar',
+        '## Wed 11 Mar 2026',
         '- the migration landed',
         '',
-        '## Fri 13 Mar',
+        '## Fri 13 Mar 2026',
         '- took the on-call handover',
       ].join('\n'),
+    )
+  })
+
+  it('names the year of every day heading and completion across years', async () => {
+    const { journal, clock } = await journalAt('2025-03-11T09:00:00')
+    await journal.capture('last year')
+    const done = await journal.createTask('renew the certificate')
+    clock.set(local('2026-03-11T09:00:00'))
+    await journal.capture('this year')
+    await journal.completeTask(done.id)
+
+    const exported = await journal.exportJournal()
+
+    expect(exported.markdown).toContain('## Tue 11 Mar 2025\n- last year')
+    expect(exported.markdown).toContain('## Wed 11 Mar 2026\n- this year')
+    expect(exported.markdown).toContain(
+      '(completed Wed 11 Mar 2026, 09:00)',
     )
   })
 
@@ -1710,7 +1746,7 @@ describe('exportJournal', () => {
     const exported = await journal.exportJournal()
 
     expect(exported.markdown).toBe(
-      '# Notes\n\n## Fri 13 Mar\n- the only day with anything on it',
+      '# Notes\n\n## Fri 13 Mar 2026\n- the only day with anything on it',
     )
   })
 
@@ -1740,11 +1776,11 @@ describe('exportJournal and Projects', () => {
       [
         '# Notes',
         '',
-        '## Wed 11 Mar',
+        '## Wed 11 Mar 2026',
         '- #api rate limits',
         '- read the postmortem',
         '',
-        '## Fri 13 Mar',
+        '## Fri 13 Mar 2026',
         '- #billing invoices',
       ].join('\n'),
     )
@@ -3566,7 +3602,7 @@ describe('exportJournal with Tasks', () => {
       [
         '# Notes',
         '',
-        '## Wed 11 Mar',
+        '## Wed 11 Mar 2026',
         '- the migration landed',
         '',
         '# Tasks',
@@ -3575,7 +3611,7 @@ describe('exportJournal with Tasks', () => {
         '- [ ] chase the invoice',
         '',
         '## Completed',
-        '- [x] renew the certificate (completed Wed 11 Mar, 16:30)',
+        '- [x] renew the certificate (completed Wed 11 Mar 2026, 16:30)',
       ].join('\n'),
     )
     expect(exported.noteCount).toBe(1)
@@ -3601,7 +3637,7 @@ describe('exportJournal with Tasks', () => {
 
     const exported = await journal.exportJournal()
 
-    expect(exported.markdown).toBe('# Notes\n\n## Wed 11 Mar\n- the migration landed')
+    expect(exported.markdown).toBe('# Notes\n\n## Wed 11 Mar 2026\n- the migration landed')
     expect(exported.taskCount).toBe(0)
   })
 
@@ -4047,7 +4083,7 @@ describe('exportJournal with Scheduled For', () => {
         '- [ ] someday',
         '',
         '## Completed',
-        '- [x] chase the invoice (scheduled 2026-03-16 08:00; completed Mon 16 Mar, 10:30)',
+        '- [x] chase the invoice (scheduled 2026-03-16 08:00; completed Mon 16 Mar 2026, 10:30)',
       ].join('\n'),
     )
   })

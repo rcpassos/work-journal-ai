@@ -221,7 +221,7 @@ _Avoid_: Notification, toast, badge, alert
 A Journal Day that has at least one Note. What "the previous day" means in practice — the most recent Occupied Day, not yesterday's date, so a Monday morning shows Friday rather than an empty Sunday.
 
 **Digest**:
-The Markdown rendering of every Note in the current Filter, oldest first, grouped under day headings when the Filter spans more than one day. When the Project constraint is a single named Project, bullets are Body only. When it is Any or Unfiled, a Note that has a Project is rendered with a `#name` prefix on the bullet so mixed paste still carries filing. Written to be pasted into a standup or an LLM prompt. A copy says what it did twice: as a message that fades, and in a live region for a reader who is not looking at the screen. A clipboard write is invisible, and a count is how the reader knows it worked before they paste.
+The Markdown rendering of every Note in the current Filter, oldest first, grouped under day headings when the Filter spans more than one day, which name their year only when the Filter crosses one. When the Project constraint is a single named Project, bullets are Body only. When it is Any or Unfiled, a Note that has a Project is rendered with a `#name` prefix on the bullet so mixed paste still carries filing. Written to be pasted into a standup or an LLM prompt. A copy says what it did twice: as a message that fades, and in a live region for a reader who is not looking at the screen. A clipboard write is invisible, and a count is how the reader knows it worked before they paste.
 _Avoid_: Export, report, summary, copy-all text
 
 **Yesterday's Digest**:
@@ -240,7 +240,7 @@ A personal assessment of accomplishments and related work from Notes filed in it
 _Avoid_: Standup Post, Digest
 
 **Export**:
-Every Note and Task written to a Markdown file in separate sections, each appearing exactly once. Notes remain day-grouped and use a `#name` prefix when filed under a Project. Tasks are separated into Open and Completed and retain their Task Description, Scheduled For, recurrence rule, and completed Task Occurrence history. The way out of the SQLite file, so nothing kept here is locked in — which is why it ignores the Filter and Tasks View entirely, and why it is a core operation rather than a convenience.
+Every Note and Task written to a Markdown file in separate sections, each appearing exactly once. Notes remain day-grouped, every day heading and completion time names its year, and Notes use a `#name` prefix when filed under a Project. Tasks are separated into Open and Completed and retain their Task Description, Scheduled For, recurrence rule, and completed Task Occurrence history. The way out of the SQLite file, so nothing kept here is locked in — which is why it ignores the Filter and Tasks View entirely, and why it is a core operation rather than a convenience.
 _Avoid_: Backup, dump, save as — Backup, below, is the lossless one: Export is the human-readable way out, not a snapshot of the database.
 
 **Backup**:
