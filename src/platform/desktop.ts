@@ -846,8 +846,9 @@ export interface Desktop {
   /**
    * The commits `identities` authored at or after `since` in the repository
    * at `path`, read and never written: no hook, no ref, no config, no fetch.
-   * Read along first-parent of `origin/HEAD` as this machine has it, then the
-   * current branch's upstream, then `HEAD`. A squash-merged pull request is
+   * Read along first-parent of the default branch as this machine has it —
+   * each remote's `HEAD`, `main` and `master`, `origin` first, then the local
+   * `main` and `master` — and of `HEAD` only when there is none of them. A squash-merged pull request is
    * one commit and the branch behind it none; a branch merged by fast-forward
    * or rebase is each of its own commits; a merge authored by somebody else
    * is theirs, and hides the user's work behind it. No identities is nobody's

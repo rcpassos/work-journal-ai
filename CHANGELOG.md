@@ -4,6 +4,7 @@ What changed in each released version, newest first. Every `vX.Y.Z` section here
 
 ## Unreleased
 
+- Amending, rebasing or squash-merging a branch other than the default one no longer adds its commits to the journal twice: commits are read from the default branch only, even in a repository that was not cloned.
 - Restoring a backup whose migration records were altered is now refused up front, instead of restoring it and then failing to open the app on every launch.
 - Export names the year on every day heading and every completion time, so a journal that spans years no longer repeats the same date.
 - Copying a Digest, Review Material or Work Summary Material across a year boundary names the year on its day headings too.
