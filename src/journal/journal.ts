@@ -2148,10 +2148,11 @@ export function createJournal({
  * Digest is meant to paste into a standup thread or an LLM prompt with no
  * cleanup, so it carries nothing the app knows and the reader does not need.
  *
- * Headings and Project prefixes are the caller's decision rather than the
- * Notes': what is being rendered decides whether a bullet needs to say which
- * day it belongs to, and whether the reader already knows which Project it
- * came from. Days with no Notes are simply absent either way.
+ * Headings, their years and Project prefixes are the caller's decision rather
+ * than the Notes': what is being rendered decides whether a bullet needs to
+ * say which day it belongs to, whether a day heading needs its year to be
+ * unambiguous, and whether the reader already knows which Project it came
+ * from. Days with no Notes are simply absent either way.
  *
  * `notes` must already be in Digest order, which is what the core's read does.
  */
@@ -2160,8 +2161,8 @@ function renderDigest(
   {
     headings,
     projectPrefixes,
-    years = false,
-  }: { headings: boolean; projectPrefixes: boolean; years?: boolean },
+    years,
+  }: { headings: boolean; projectPrefixes: boolean; years: boolean },
 ): Digest {
   const days = groupByJournalDay(notes)
 
