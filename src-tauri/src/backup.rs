@@ -359,6 +359,14 @@ pub async fn validate_restore_candidate(candidate: &Path) -> Result<i64, String>
             }
         }
     }
+    // A row deleted from the middle leaves the migrator to re-run that
+    // migration over tables that already exist, failing every launch. A
+    // genuine journal records every version from 1 to its newest.
+    if let Some(gap) = (1..=version).find(|wanted| !applied.iter().any(|(held, ..)| held == wanted)) {
+        return Err(format!(
+            "the backup is missing its record of migration {gap} (migration check)"
+        ));
+    }
 
     let expected = expected_schema(version);
 
@@ -1868,6 +1876,51 @@ mod tests {
         );
         assert_eq!(candidate_bytes(&candidate), before);
     });
+
+    async_test!(a_migration_row_missing_from_the_middle_is_refused, {
+        // The migrator would re-run migration 4 over the tables it already
+        // made and fail every launch after the restore.
+        let directory = TempDir::new("restore-missing-migration-row");
+        let candidate = directory.path.join("candidate.db");
+        write_journal_file(&candidate, SUPPORTED_MIGRATION_VERSION, "the journal").await;
+        let url = format!("sqlite:{}?mode=rwc", candidate.display());
+        let pool = SqlitePool::connect(&url).await.expect("could not open");
+        sqlx::query("DELETE FROM _sqlx_migrations WHERE version = 4")
+            .execute(&pool)
+            .await
+            .expect("could not delete the row");
+        pool.close().await;
+        let before = candidate_bytes(&candidate);
+
+        let refusal = validate_restore_candidate(&candidate)
+            .await
+            .expect_err("a journal missing a migration row must not validate");
+
+        assert!(
+            refusal.contains("migration check") && refusal.contains("migration 4 "),
+            "a refusal names which check failed, got: {refusal}"
+        );
+        assert_eq!(candidate_bytes(&candidate), before);
+    });
+
+    #[test]
+    fn a_shipped_checksum_is_the_sha384_of_its_migration_file() {
+        // The seeds above take their "genuine" checksums from
+        // `known_migration_checksums`, so this pins one to a literal computed
+        // outside the code: `shasum -a 384 migrations/0001_create_notes.sql`.
+        let hex: String = known_migration_checksums()
+            .into_iter()
+            .find(|(version, _)| *version == 1)
+            .expect("migration 1 is shipped")
+            .1
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
+        assert_eq!(
+            hex,
+            "39ff405accdfa8a657472b7d0f391740069d640cec62c77afed766b556ec59aaf975813ac3a64df3ba753f5507d4d94e"
+        );
+    }
 
     async_test!(a_migration_row_that_did_not_succeed_is_refused, {
         // sqlx's migrator returns `Dirty` for a row with `success = 0`.
