@@ -742,6 +742,22 @@ describe('the restore from a backup', () => {
     expect(rustSource).toContain('apply_staged_restore')
   })
 
+  it('registers the logger in every build, before the staged apply', () => {
+    // The restore's setup runs during build(), before the app's own
+    // `.setup`; a record logged with no logger installed is dropped, and a
+    // release build has to log too (#281).
+    const loggerAt = rustSource.indexOf('Builder::new("logger")')
+    const restoreAt = rustSource.indexOf('Builder::new("restore")')
+    expect(loggerAt).toBeGreaterThan(-1)
+    expect(restoreAt).toBeGreaterThan(-1)
+    expect(
+      loggerAt,
+      'the logger must be registered before the restore hook',
+    ).toBeLessThan(restoreAt)
+    expect(rustSource).toContain('tauri_plugin_log::Builder::default()')
+    expect(rustSource).not.toContain('cfg!(debug_assertions)')
+  })
+
   it('grants the open dialog beside the save dialog and nothing more', () => {
     const capabilities = read('src-tauri/capabilities/default.json')
     expect(capabilities).toContain('dialog:allow-open')
