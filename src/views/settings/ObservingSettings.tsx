@@ -1,3 +1,4 @@
+import { ChevronDownIcon } from 'lucide-react'
 import { useEffect, useId, useRef, useState } from 'react'
 import ProjectChip from '@/components/ProjectChip'
 import {
@@ -8,6 +9,11 @@ import {
 } from '@/components/project-options'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from '@/components/ui/collapsible'
 import { Input } from '@/components/ui/input'
 import {
   Menu,
@@ -219,10 +225,10 @@ export default function ObservingSettings({
 
   // What the pause controls say, from the same rule the Tray Menu's are
   // given — read against the clock when the state changes, and again the
-  // moment a timed pause runs out, so the row says "Paused" only while one
+  // moment a timed pause runs out, so the line says "Paused" only while one
   // is in force. And read again whenever the clock has moved while the timer
   // could not: a Mac that slept through a pause's end stops it part-way, and
-  // a section that sat off screen keeps its row the while — so waking and
+  // a section that sat off screen keeps its line the while — so waking and
   // coming back on screen are both a moment to read the clock again.
   const onScreen = useOnScreen()
   // Ticked by the wake below, and nothing else: waking is one more reason to
@@ -244,7 +250,7 @@ export default function ObservingSettings({
     return () => clearTimeout(timer)
   }, [observing, onScreen, woke])
 
-  // What the pause row and the Last lines read is the clock, and a sleeping
+  // What the paused line and the Last lines read is the clock, and a sleeping
   // Mac runs no timer: the wake is what says the clock moved on its own.
   useEffect(() => {
     let listening = true
@@ -290,8 +296,29 @@ export default function ObservingSettings({
         explanation="Your commits in the repositories you choose, added as Notes."
         controls="observing"
       >
+        {pause.state === 'running' && (
+          <Menu>
+            <MenuTrigger render={<Button variant="outline" size="sm" />}>
+              Pause observing
+            </MenuTrigger>
+            <MenuContent align="end">
+              <MenuItem onClick={() => pauseFor('an-hour')}>For an hour</MenuItem>
+              <MenuItem onClick={() => pauseFor('until-tomorrow')}>Until tomorrow</MenuItem>
+              <MenuItem onClick={() => pauseFor('until-resumed')}>Until resumed</MenuItem>
+            </MenuContent>
+          </Menu>
+        )}
         <Switch id="observing" checked={observing.enabled} onCheckedChange={toggle} />
       </SettingsRow>
+
+      {pause.state === 'paused' && (
+        <div className="flex items-center justify-between gap-4">
+          <p className="type-meta text-muted-foreground">{pause.label}</p>
+          <Button variant="outline" size="sm" onClick={resume}>
+            Resume
+          </Button>
+        </div>
+      )}
 
       {observing.enabled && (
         <>
@@ -338,37 +365,6 @@ export default function ObservingSettings({
             </Button>
           </div>
         </>
-      )}
-
-      {pause.state === 'running' && (
-        <SettingsRow
-          label="Pause observing"
-          explanation="Work done during a pause never enters the journal."
-        >
-          <Menu>
-            <MenuTrigger
-              render={<Button variant="outline" size="sm" />}
-            >
-              Pause observing
-            </MenuTrigger>
-            <MenuContent align="end">
-              <MenuItem onClick={() => pauseFor('an-hour')}>For an hour</MenuItem>
-              <MenuItem onClick={() => pauseFor('until-tomorrow')}>Until tomorrow</MenuItem>
-              <MenuItem onClick={() => pauseFor('until-resumed')}>Until resumed</MenuItem>
-            </MenuContent>
-          </Menu>
-        </SettingsRow>
-      )}
-
-      {pause.state === 'paused' && (
-        <SettingsRow
-          label={pause.label}
-          explanation="Nothing done during the pause enters the journal."
-        >
-          <Button variant="outline" size="sm" onClick={resume}>
-            Resume
-          </Button>
-        </SettingsRow>
       )}
 
       <SettingsAside>
@@ -598,7 +594,7 @@ function RepositoryEntry({
   const [now, setNow] = useState(() => new Date())
   useEffect(() => {
     // Sampled here rather than in the render: the clock is not a render's to
-    // read — the same reason the pause row above sets its own state from an
+    // read — the same reason the pause state above sets its own state from an
     // effect.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setNow(new Date())
@@ -624,6 +620,8 @@ function RepositoryEntry({
   }
 
   const prefixesId = `${idBase}-prefixes`
+  // Nothing ticked observes nothing, so that state is never hidden: the card
+  // says so and starts with the addresses in view.
 
   return (
     <div className="flex flex-col gap-2 rounded-md border border-border p-3">
@@ -636,6 +634,13 @@ function RepositoryEntry({
           Remove
         </Button>
       </div>
+
+      <ProjectMappingField
+        journal={journal}
+        repository={listed.repository}
+        value={mapping}
+        onPick={pick}
+      />
 
       {last !== null ? (
         <span className="type-micro text-muted-foreground">
@@ -655,55 +660,70 @@ function RepositoryEntry({
         </SettingsProblem>
       )}
 
-      <ProjectMappingField
-        journal={journal}
-        repository={listed.repository}
-        value={mapping}
-        onPick={pick}
-      />
+      {listed.identities.length === 0 && (
+        <SettingsProblem>
+          No address ticked, so nothing from this repository is added.
+        </SettingsProblem>
+      )}
 
-      <fieldset className="flex flex-col gap-2 pl-1">
-        <legend className="type-meta text-muted-foreground">Addresses that are you</legend>
-        {offered.length === 0 && (
-          <p className="type-meta text-muted-foreground">No addresses to offer.</p>
-        )}
-        {offered.map((identity) => {
-          const id = `${idBase}-identity-${identity}`
-          return (
-            <div key={identity} className="flex items-center gap-2">
-              <Checkbox
-                id={id}
-                checked={listed.identities.some((each) => sameAddress(each, identity))}
-                onCheckedChange={(next: boolean) => tick(identity, next)}
-              />
-              <label htmlFor={id} className="type-meta">
-                {identity}
-              </label>
-            </div>
-          )
-        })}
-      </fieldset>
-
-      <label htmlFor={prefixesId} className="type-meta text-muted-foreground">
-        Skip commits whose subject begins with, one per line
-      </label>
-      <Textarea
-        id={prefixesId}
-        value={prefixes}
-        placeholder="Release "
-        onChange={(event) => setPrefixes(event.target.value)}
-        // Saved when the field is left, never per keystroke: a sweep between
-        // two keystrokes of a retyped prefix would meet the field empty, and
-        // a commit it lets through is handled for good.
-        // Only a changed list is saved: leaving an untouched field would
-        // otherwise confirm a save that did nothing and wake a sweep.
-        onBlur={() => {
-          const next = prefixes.split('\n').filter((prefix) => prefix !== '')
-          if (next.join('\n') !== listed.ignoredPrefixes.join('\n')) {
-            onIgnoredPrefixes(next)
+      <Collapsible defaultOpen={listed.identities.length === 0}>
+        <CollapsibleTrigger
+          render={
+            <Button
+              variant="ghost"
+              size="sm"
+              className="-ml-2 data-[panel-open]:[&>svg]:rotate-180"
+            />
           }
-        }}
-      />
+        >
+          Details
+          <ChevronDownIcon />
+        </CollapsibleTrigger>
+        <CollapsibleContent className="flex flex-col gap-2 pt-2">
+          <fieldset className="flex flex-col gap-2 pl-1">
+            <legend className="type-meta text-muted-foreground">Addresses that are you</legend>
+            {offered.length === 0 && (
+              <p className="type-meta text-muted-foreground">No addresses to offer.</p>
+            )}
+            {offered.map((identity) => {
+              const id = `${idBase}-identity-${identity}`
+              return (
+                <div key={identity} className="flex items-center gap-2">
+                  <Checkbox
+                    id={id}
+                    checked={listed.identities.some((each) => sameAddress(each, identity))}
+                    onCheckedChange={(next: boolean) => tick(identity, next)}
+                  />
+                  <label htmlFor={id} className="type-meta">
+                    {identity}
+                  </label>
+                </div>
+              )
+            })}
+          </fieldset>
+
+          <label htmlFor={prefixesId} className="type-meta text-muted-foreground">
+            Skip commits whose subject begins with, one per line
+          </label>
+          <Textarea
+            id={prefixesId}
+            value={prefixes}
+            placeholder="Release "
+            onChange={(event) => setPrefixes(event.target.value)}
+            // Saved when the field is left, never per keystroke: a sweep between
+            // two keystrokes of a retyped prefix would meet the field empty, and
+            // a commit it lets through is handled for good.
+            // Only a changed list is saved: leaving an untouched field would
+            // otherwise confirm a save that did nothing and wake a sweep.
+            onBlur={() => {
+              const next = prefixes.split('\n').filter((prefix) => prefix !== '')
+              if (next.join('\n') !== listed.ignoredPrefixes.join('\n')) {
+                onIgnoredPrefixes(next)
+              }
+            }}
+          />
+        </CollapsibleContent>
+      </Collapsible>
     </div>
   )
 }
@@ -828,11 +848,11 @@ function ProjectMappingField({
   }
 
   return (
-    <>
+    <div className="flex items-center gap-3">
       <label htmlFor={fieldId} className="type-meta text-muted-foreground">
         Project
       </label>
-      <div className="relative">
+      <div className="relative flex-1">
         <Input
           id={fieldId}
           value={draft ?? value ?? ''}
@@ -892,7 +912,7 @@ function ProjectMappingField({
           </ul>
         )}
       </div>
-    </>
+    </div>
   )
 }
 
