@@ -2499,7 +2499,7 @@ export function meetingKey(event: CalendarEvent): string {
 }
 
 /** What an untitled meeting reads as, since a Body is never empty. */
-export const UNTITLED_MEETING = '(untitled meeting)'
+const UNTITLED_MEETING = '(untitled meeting)'
 
 /**
  * A meeting's title as a Body: verbatim, but a Body is one line, so any run of
@@ -2916,7 +2916,7 @@ export interface TaskGroup {
 }
 
 /** In the order Tasks View shows them, empty ones included. */
-export const TASK_GROUPS: readonly TaskGroupName[] = [
+const TASK_GROUPS: readonly TaskGroupName[] = [
   'overdue',
   'today',
   'upcoming',

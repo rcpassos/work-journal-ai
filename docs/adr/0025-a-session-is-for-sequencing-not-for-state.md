@@ -1,5 +1,7 @@
 # A session is for sequencing, not for state
 
+> Amended: the count below is out of date. There are nine headless modules now: History, Tasks View, Import (the sweep), the Tray Count, Observe, Task Alerts, Work Summary, Tray Observing and the Yesterday Digest. Each one argued its way in as the last consequence asks: it orders overlapping reads, or it starts and stops around an asynchronous subscription. The rule is unchanged. Also, `askAboutTaskAlerts` is called by the Task Creation window and by the Task Editor through the Tasks View session. Settings only reads the permission and never asks for it.
+
 Four surfaces in the app are headless sessions — History, Tasks View, the sweep, the tray count — and the shape is good enough that its absence started to read as a defect. It is not. A session earns its interface by holding **sequencing**: which of two overlapping reads may reach the screen, what a change re-reads, what a failure leaves behind, what happens in which order. A surface that holds only the value of its own controls is a view, and it keeps its state in React where it already lives.
 
 Settings, the Capture window and the Task Creation window are views. They stay views.

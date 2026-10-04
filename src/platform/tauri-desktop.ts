@@ -15,7 +15,6 @@ import { getCurrentWindow } from '@tauri-apps/api/window'
 import {
   open,
   save,
-  type OpenDialogOptions,
   type SaveDialogOptions,
 } from '@tauri-apps/plugin-dialog'
 import { disable, enable, isEnabled } from '@tauri-apps/plugin-autostart'
@@ -256,12 +255,7 @@ export function createTauriDesktop(): Desktop {
 
     // Opened on this side, like the restore picker: a cancelled dialog is a
     // frontend outcome rather than an error.
-    async chooseRepositoryFolder() {
-      const chosen = await open({ directory: true, multiple: false })
-      if (chosen === null) return null
-      if (Array.isArray(chosen)) return chosen[0] ?? null
-      return chosen
-    },
+    chooseRepositoryFolder: () => open({ directory: true, multiple: false }),
 
     announceObservingChanged: () => emit(OBSERVING_CHANGED_EVENT),
     onObservingChanged: (handle) => listen(OBSERVING_CHANGED_EVENT, () => handle()),
@@ -355,15 +349,11 @@ export function createTauriDesktop(): Desktop {
     // outcome rather than an error. Filtered to the backup extension, so the
     // common case is one confirm — and no path is ever hand-typed.
     async chooseRestoreCandidate() {
-      const options: OpenDialogOptions = {
+      return open({
         filters: [{ name: 'Work Journal backup', extensions: ['db'] }],
         multiple: false,
         directory: false,
-      }
-      const chosen = await open(options)
-      if (chosen === null) return null
-      if (Array.isArray(chosen)) return chosen[0] ?? null
-      return chosen
+      })
     },
 
     stageRestore: (path) => invoke('stage_restore', { path }),

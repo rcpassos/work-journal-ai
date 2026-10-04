@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { useOnScreenToast } from '@/components/on-screen-toast'
@@ -13,6 +13,7 @@ import {
   notStored,
 } from './SettingsGroup'
 import { saySettled } from './saySettled'
+import { useSeededState } from './useSeededState'
 
 /**
  * The preferences a Work Summary is written under, as the user's — plain
@@ -39,32 +40,21 @@ export default function WorkSummaryPromptSettings({
   // The prompt as it stands, starting at the shipped one. Seeded from the
   // stored value by the same coordinated read every group shares, and never
   // over what the user has already typed.
-  const [workSummaryPrompt, setWorkSummaryPrompt] = useState(
+  const [workSummaryPrompt, setWorkSummaryPrompt] = useSeededState(
+    initialSettings,
+    (initial) => initial.stored.workSummaryPrompt,
     DEFAULT_WORK_SUMMARY_PROMPT,
   )
   // Whether the store would not take the last write. Said rather than rolled
   // back: the field is text the user is still typing, and putting an older
   // value back under the cursor would throw away the keystrokes since.
   const [unsaved, setUnsaved] = useState(false)
-  const typedIn = useRef(false)
   // A keystroke is a save here, and the field cannot say so; the toast with
   // the prompt's name replaces itself rather than stacking one per keystroke.
   const says = useOnScreenToast()
 
-  useEffect(() => {
-    if (initialSettings === null) return
-
-    void initialSettings.then((initial) => {
-      if (initial === null) return
-
-      // A field nobody has touched, and only that.
-      if (!typedIn.current)
-        setWorkSummaryPrompt(initial.stored.workSummaryPrompt)
-    })
-  }, [initialSettings])
-
   function change(next: string) {
-    typedIn.current = true
+    // The rollback is not taken: see `unsaved`.
     setWorkSummaryPrompt(next)
     saySettled(says, settings.saveWorkSummaryPrompt(next), {
       id: 'work-summary-prompt',
