@@ -133,6 +133,11 @@ function observingDesktop() {
   })
 }
 
+/** Opens the Details of the one repository card whose addresses are ticked. */
+async function openDetails() {
+  fireEvent.click(await screen.findByRole('button', { name: 'Details' }))
+}
+
 describe('the Observing switch', () => {
   it('reads off until turned on, and offers nothing to choose until then', async () => {
     const desktop = fakeDesktop()
@@ -224,6 +229,35 @@ describe('adding a repository', () => {
 })
 
 describe('a repository on the list', () => {
+  it('shows only its name, path, Project and status until Details is opened', async () => {
+    const { desktop } = listedAt('/code/work-journal-ai', WORK_JOURNAL)
+    showSettings(desktop)
+
+    const details = await screen.findByRole('button', { name: 'Details' })
+    expect(screen.getByText('work-journal-ai')).toBeTruthy()
+    expect(screen.getByRole('combobox', { name: 'Project' })).toBeTruthy()
+    expect(screen.queryByRole('checkbox')).toBeNull()
+    expect(screen.queryByLabelText(/Skip commits whose subject begins with/)).toBeNull()
+    expect(screen.queryByRole('alert')).toBeNull()
+
+    fireEvent.click(details)
+
+    expect(await screen.findByRole('checkbox', { name: 'me@example.com' })).toBeTruthy()
+    expect(screen.getByLabelText(/Skip commits whose subject begins with/)).toBeTruthy()
+  })
+
+  it('says nothing is added with no address ticked, and starts with Details open', async () => {
+    const desktop = observingDesktop()
+    desktop.chosenFolder = '/code/work-journal-ai'
+    showSettings(desktop)
+    ;(await screen.findByRole('button', { name: 'Add Repository…' })).click()
+
+    expect(
+      await screen.findByText('No address ticked, so nothing from this repository is added.'),
+    ).toBeTruthy()
+    expect(await screen.findByRole('checkbox', { name: 'me@example.com' })).toBeTruthy()
+  })
+
   it('takes the prefixes to skip, one per line, once the field is left', async () => {
     const desktop = observingDesktop()
     desktop.chosenFolder = '/code/work-journal-ai'
@@ -368,6 +402,7 @@ describe('a repository that is not working', () => {
       ),
     ).toBeTruthy()
     // Not a dead entry: the addresses are still there to tick.
+    await openDetails()
     expect(await screen.findByRole('checkbox', { name: 'me@example.com' })).toBeTruthy()
     expect(screen.queryByRole('dialog')).toBeNull()
   })
@@ -462,6 +497,7 @@ describe('a repository whose state moves on', () => {
       return answer
     }
     showSettings(desktop, journal)
+    await openDetails()
     await screen.findByRole('checkbox', { name: 'me@example.com' })
     expect(held).toHaveLength(1)
 
@@ -489,6 +525,7 @@ describe('a repository whose state moves on', () => {
     const { desktop } = listedAt('/code/work-journal-ai', WORK_JOURNAL, journal)
     const reads = vi.spyOn(desktop, 'repositoryIdentities')
     showSettings(desktop, journal)
+    await openDetails()
     await screen.findByRole('checkbox', { name: 'me@example.com' })
     await expect.poll(() => reads.mock.calls.length).toBeGreaterThan(0)
     const asked = reads.mock.calls.length
@@ -520,6 +557,7 @@ describe('a repository whose state moves on', () => {
     const { journal } = await journalWith()
     const { desktop } = listedAt('/code/work-journal-ai', WORK_JOURNAL, journal)
     const control = showSettingsOnScreen(desktop, journal)
+    await openDetails()
     await screen.findByRole('checkbox', { name: 'me@example.com' })
     const reads = vi.spyOn(desktop, 'repositoryIdentities')
 
@@ -534,6 +572,7 @@ describe('a repository whose state moves on', () => {
     const { journal } = await journalWith()
     const { desktop } = listedAt('/code/work-journal-ai', WORK_JOURNAL, journal)
     const control = showSettingsOnScreen(desktop, journal)
+    await openDetails()
     await screen.findByRole('checkbox', { name: 'me@example.com' })
 
     await act(async () => control.hide())
