@@ -732,6 +732,15 @@ describe('a repository that is working', () => {
 })
 
 describe('the pause', () => {
+  it('is offered beside the Commits switch, not in a row of its own', async () => {
+    const { desktop } = listedAt('/code/work-journal-ai', WORK_JOURNAL)
+    showSettings(desktop)
+
+    const pause = await screen.findByRole('button', { name: 'Pause observing' })
+
+    expect(pause.parentElement).toBe(observingSwitch().parentElement)
+  })
+
   /** Observing on, one repository added through the picker, and the menu open. */
   async function pausedFromTheMenu(length: string) {
     const user = userEvent.setup()

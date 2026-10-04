@@ -225,10 +225,10 @@ export default function ObservingSettings({
 
   // What the pause controls say, from the same rule the Tray Menu's are
   // given — read against the clock when the state changes, and again the
-  // moment a timed pause runs out, so the row says "Paused" only while one
+  // moment a timed pause runs out, so the line says "Paused" only while one
   // is in force. And read again whenever the clock has moved while the timer
   // could not: a Mac that slept through a pause's end stops it part-way, and
-  // a section that sat off screen keeps its row the while — so waking and
+  // a section that sat off screen keeps its line the while — so waking and
   // coming back on screen are both a moment to read the clock again.
   const onScreen = useOnScreen()
   // Ticked by the wake below, and nothing else: waking is one more reason to
@@ -250,7 +250,7 @@ export default function ObservingSettings({
     return () => clearTimeout(timer)
   }, [observing, onScreen, woke])
 
-  // What the pause row and the Last lines read is the clock, and a sleeping
+  // What the paused line and the Last lines read is the clock, and a sleeping
   // Mac runs no timer: the wake is what says the clock moved on its own.
   useEffect(() => {
     let listening = true
@@ -594,7 +594,7 @@ function RepositoryEntry({
   const [now, setNow] = useState(() => new Date())
   useEffect(() => {
     // Sampled here rather than in the render: the clock is not a render's to
-    // read — the same reason the pause row above sets its own state from an
+    // read — the same reason the pause state above sets its own state from an
     // effect.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setNow(new Date())
@@ -621,9 +621,7 @@ function RepositoryEntry({
 
   const prefixesId = `${idBase}-prefixes`
   // Nothing ticked observes nothing, so that state is never hidden: the card
-  // says so and starts with the addresses in view. Whether Details is open is
-  // the card's own state from then on.
-  const [detailsOpen, setDetailsOpen] = useState(listed.identities.length === 0)
+  // says so and starts with the addresses in view.
 
   return (
     <div className="flex flex-col gap-2 rounded-md border border-border p-3">
@@ -668,14 +666,18 @@ function RepositoryEntry({
         </SettingsProblem>
       )}
 
-      <Collapsible open={detailsOpen} onOpenChange={setDetailsOpen}>
+      <Collapsible defaultOpen={listed.identities.length === 0}>
         <CollapsibleTrigger
-          render={<Button variant="ghost" size="sm" className="-ml-2" />}
+          render={
+            <Button
+              variant="ghost"
+              size="sm"
+              className="-ml-2 data-[panel-open]:[&>svg]:rotate-180"
+            />
+          }
         >
           Details
-          <ChevronDownIcon
-            className={detailsOpen ? 'rotate-180' : undefined}
-          />
+          <ChevronDownIcon />
         </CollapsibleTrigger>
         <CollapsibleContent className="flex flex-col gap-2 pt-2">
           <fieldset className="flex flex-col gap-2 pl-1">
@@ -846,11 +848,11 @@ function ProjectMappingField({
   }
 
   return (
-    <>
+    <div className="flex items-center gap-3">
       <label htmlFor={fieldId} className="type-meta text-muted-foreground">
         Project
       </label>
-      <div className="relative">
+      <div className="relative flex-1">
         <Input
           id={fieldId}
           value={draft ?? value ?? ''}
@@ -910,7 +912,7 @@ function ProjectMappingField({
           </ul>
         )}
       </div>
-    </>
+    </div>
   )
 }
 
