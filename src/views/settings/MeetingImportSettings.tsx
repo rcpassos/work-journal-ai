@@ -238,8 +238,8 @@ export default function MeetingImportSettings({
   return (
     <SettingsGroup>
       <SettingsRow
-        label="Add today's meetings to the journal"
-        explanation="Today's meetings, added to the journal as they end. Never a backfill."
+        label="Meetings"
+        explanation="Today's meetings, added to the journal as they end."
         controls="import-meetings"
       >
         <Switch
@@ -266,10 +266,8 @@ export default function MeetingImportSettings({
       )}
 
       <SettingsAside>
-        Imported meetings are ordinary Notes: reword them, file them under a
-        Project, or delete them. Deleting one refuses that meeting for good —
-        it is never added again. Declined meetings and all-day blocks are never
-        added in the first place.
+        Declined meetings and all-day blocks are skipped. Deleting a meeting's
+        Note keeps it out for good.
       </SettingsAside>
     </SettingsGroup>
   )

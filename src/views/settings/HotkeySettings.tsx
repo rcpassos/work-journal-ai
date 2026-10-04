@@ -117,12 +117,7 @@ export default function HotkeySettings({
       })}
 
       <SettingsAside>
-        The two Hotkeys are independent, and may never be the same
-        combination — one that is already the other will be refused here. A
-        combination another application has claimed globally will be refused
-        and reported too. A combination an application uses only inside its
-        own window cannot be detected — the Hotkey will simply take precedence
-        there.
+        The two can't be the same, or a combination another app has claimed.
       </SettingsAside>
     </SettingsGroup>
   )

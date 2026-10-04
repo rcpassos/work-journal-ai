@@ -84,7 +84,7 @@ function journalExporting(exported: JournalExport): Promise<Journal> {
 /** The Import switch, found the way the user finds it. */
 function importSwitch(): HTMLElement {
   return screen.getByRole('switch', {
-    name: "Add today's meetings to the journal",
+    name: "Meetings",
   })
 }
 
@@ -358,14 +358,14 @@ describe('the Theme control', () => {
   })
 })
 
-describe('Start at login', () => {
+describe('Start at Login', () => {
   it('adds the app to the login items when switched on', async () => {
     const desktop = fakeDesktop({ stored: { startAtLogin: false } })
 
     showSettings(desktop, 'general')
 
     const control = await screen.findByRole('switch', {
-      name: 'Start at login',
+      name: 'Start at Login',
     })
     expect(isOn(control)).toBe(false)
 
@@ -384,7 +384,7 @@ describe('Start at login', () => {
     showSettings(desktop, 'general')
 
     const control = await screen.findByRole('switch', {
-      name: 'Start at login',
+      name: 'Start at Login',
     })
     await expect.poll(() => isOn(control)).toBe(true)
   })
@@ -406,7 +406,7 @@ describe('Start at login', () => {
     showSettings(desktop, 'general')
 
     const control = await screen.findByRole('switch', {
-      name: 'Start at login',
+      name: 'Start at Login',
     })
     expect(isOn(control)).toBe(false)
     control.click()
@@ -415,7 +415,7 @@ describe('Start at login', () => {
     await readLanded()
 
     expect(
-      isOn(screen.getByRole('switch', { name: 'Start at login' })),
+      isOn(screen.getByRole('switch', { name: 'Start at Login' })),
     ).toBe(true)
     await expect.poll(() => desktop.stored.startAtLogin).toBe(true)
   })
@@ -443,7 +443,7 @@ describe('Start at login', () => {
     showSettings(desktop, 'general')
 
     const control = await screen.findByRole('switch', {
-      name: 'Start at login',
+      name: 'Start at Login',
     })
     // The switch reads off at its default while the file is still opening.
     expect(isOn(control)).toBe(false)
@@ -455,7 +455,7 @@ describe('Start at login', () => {
     // The rollback re-read the OS and won over the arriving read: the
     // switch agrees with the OS and the file.
     expect(
-      isOn(screen.getByRole('switch', { name: 'Start at login' })),
+      isOn(screen.getByRole('switch', { name: 'Start at Login' })),
     ).toBe(true)
     expect(desktop.stored.startAtLogin).toBe(true)
   })
@@ -512,7 +512,7 @@ describe('Start at login', () => {
     showSettings(desktop, 'general')
 
     const control = await screen.findByRole('switch', {
-      name: 'Start at login',
+      name: 'Start at Login',
     })
     expect(isOn(control)).toBe(false)
 
@@ -534,7 +534,7 @@ describe('Start at login', () => {
     await new Promise((resolve) => setTimeout(resolve, 0))
     expect(desktop.loginItem).toBe(false)
     expect(
-      isOn(screen.getByRole('switch', { name: 'Start at login' })),
+      isOn(screen.getByRole('switch', { name: 'Start at Login' })),
     ).toBe(false)
     expect(desktop.stored.startAtLogin).toBe(false)
   })
@@ -572,7 +572,7 @@ describe('Start at login', () => {
     showSettings(desktop, 'general')
 
     const control = await screen.findByRole('switch', {
-      name: 'Start at login',
+      name: 'Start at Login',
     })
     expect(isOn(control)).toBe(false)
 
@@ -1008,10 +1008,7 @@ describe('Backup', () => {
       .closest('section')
     const said = group?.textContent ?? ''
 
-    expect(said).toMatch(/API Key.*never included|never included/)
-    expect(said).toMatch(/Hotkeys and settings/)
-    // The automatic folder is not disaster recovery, and the copy says so.
-    expect(said).toMatch(/shares the disk's fate/)
+    expect(said).toMatch(/Settings and API Key not included/)
     expect(said).not.toMatch(/safe|encrypted|survives/i)
   })
 })
@@ -1168,7 +1165,7 @@ describe('Restore', () => {
       await expect.poll(restoreStatus).toBe('Journal restored. Restarting…')
 
       screen.getByRole('tab', { name: 'General' }).click()
-      await screen.findByRole('switch', { name: 'Start at login' })
+      await screen.findByRole('switch', { name: 'Start at Login' })
       frames.drain()
       expect(desktop.restarts).toBe(0)
 
@@ -1226,7 +1223,7 @@ describe('Restore', () => {
   })
 })
 
-describe("What's new", () => {
+describe("What's New", () => {
   it('shows the shipped changelog in Settings, with no check for updates first', async () => {
     const desktop = fakeDesktop({ stored: { startAtLogin: false } })
 
@@ -1235,7 +1232,7 @@ describe("What's new", () => {
     // The changelog is in the build, so the group is answerable the moment
     // Settings is on screen — the release notes beside it need a release to
     // have been found first, and this is the same question asked at any time.
-    await screen.findByRole('heading', { name: "What's new" })
+    await screen.findByRole('heading', { name: "What's New" })
     const newest = screen.getByRole('region', {
       name: /^Work Journal \d+\.\d+\.\d+$/,
     })
@@ -1578,7 +1575,7 @@ describe('save confirmations', () => {
     showSettings(desktop, 'general')
 
     const control = await screen.findByRole('switch', {
-      name: 'Start at login',
+      name: 'Start at Login',
     })
     control.click()
 
@@ -1909,7 +1906,7 @@ describe('the tabs', () => {
     showSettings(fakeDesktop(), 'general')
 
     expect(visibleSettings()).toEqual([
-      'Start at login',
+      'Start at Login',
       'Theme',
       'Note Hotkey',
       'Task Hotkey',
@@ -1919,14 +1916,14 @@ describe('the tabs', () => {
     for (const [tab, settings] of [
       [
         'Sources',
-        ["Add today's meetings to the journal", 'Add your commits to the journal'],
+        ["Meetings", 'Commits'],
       ],
       [
         'Intelligence',
         ['Base URL', 'Model', 'API Key', 'Work Summary Prompt'],
       ],
       ['Data', ['Export', 'Backup', 'Restore']],
-      ['About', ['Updates', "What's new", 'Onboarding']],
+      ['About', ['Updates', "What's New", 'Introduction']],
     ] as const) {
       screen.getByRole('tab', { name: tab }).click()
       await expect.poll(visibleSettings).toEqual(settings)
@@ -1941,7 +1938,7 @@ describe('the tabs', () => {
     })
 
     screen.getByRole('tab', { name: 'General' }).click()
-    await screen.findByRole('switch', { name: 'Start at login' })
+    await screen.findByRole('switch', { name: 'Start at Login' })
     // Still in the document, but hidden: out of reach until its tab is.
     expect(screen.getByLabelText('API Key').closest('[hidden]')).not.toBeNull()
 
@@ -1972,7 +1969,7 @@ describe('the tabs', () => {
       await screen.findByRole('button', { name: 'Export all to Markdown' })
     ).click()
     screen.getByRole('tab', { name: 'General' }).click()
-    await screen.findByRole('switch', { name: 'Start at login' })
+    await screen.findByRole('switch', { name: 'Start at Login' })
     finish()
     await expect.poll(() => desktop.exported.length).toBe(1)
 
@@ -2226,7 +2223,7 @@ describe('Model Access', () => {
     // Every other setting still answers for itself.
     screen.getByRole('tab', { name: 'General' }).click()
     const startAtLogin = await screen.findByRole('switch', {
-      name: 'Start at login',
+      name: 'Start at Login',
     })
     startAtLogin.click()
     await expect.poll(() => desktop.loginItem).toBe(true)
@@ -2682,19 +2679,9 @@ describe('the Work Summary Prompt', () => {
   })
 })
 
-/**
- * What a setting means is one hover away rather than always on screen. The
- * words themselves never left the page — only their visibility did — so what
- * these check is that both readings still work: the sighted one that has to
- * reach the ⓘ, and the read-aloud one that never sees it.
- */
-describe('the ⓘ beside a setting', () => {
-  /** The ⓘ for a named setting, found the way a reader finds it. */
-  function about(label: string): HTMLElement {
-    return screen.getByRole('button', { name: `About ${label}` })
-  }
-
-  it('keeps the explanation in the page while the tooltip is closed', () => {
+/** What a setting is stays on screen, as one sentence under its name. */
+describe('the explanation under a setting', () => {
+  it('is plain text, with no button to reveal it', () => {
     showSettings(fakeDesktop({ stored: { startAtLogin: false } }), 'data')
 
     expect(
@@ -2702,66 +2689,14 @@ describe('the ⓘ beside a setting', () => {
         'A snapshot of the journal database — every Note and Task as stored.',
       ),
     ).toBeTruthy()
-    expect(document.querySelector('[data-slot="tooltip-content"]')).toBeNull()
+    expect(screen.queryByRole('button', { name: /^About / })).toBeNull()
   })
 
   it('leaves the setting name as the name of its control', () => {
     showSettings(fakeDesktop({ stored: { startAtLogin: false } }), 'data')
 
-    // The ⓘ is a sibling of the heading, not a child of it: inside, its own
-    // name would join the heading's and so the control's.
     expect(screen.getByRole('heading', { name: 'Backup' }).textContent).toBe(
       'Backup',
     )
-  })
-
-  it('is an ordinary tab stop, and says the explanation when focused', async () => {
-    showSettings(fakeDesktop({ stored: { startAtLogin: false } }), 'data')
-
-    const trigger = about('Backup')
-    expect(trigger.getAttribute('tabindex')).not.toBe('-1')
-
-    // Focus reached by keyboard, which is the only way a tooltip is worth
-    // opening on focus at all.
-    fireEvent.keyDown(document.body, { key: 'Tab' })
-    await act(async () => {
-      trigger.focus()
-    })
-
-    await expect
-      .poll(
-        () =>
-          document.querySelector('[data-slot="tooltip-content"]')?.textContent,
-      )
-      .toContain('A snapshot of the journal database')
-  })
-
-  it('never hides a failure behind a hover', async () => {
-    const stored: Record<string, unknown> = { startAtLogin: false }
-    const desktop = fakeDesktop({
-      stored,
-      openSettingsStore: async () => ({
-        async get<T>(key: string) {
-          return stored[key] as T | undefined
-        },
-        async has(key: string) {
-          return key in stored
-        },
-        async set(key: string, value: unknown) {
-          if (key === 'modelBaseUrl') throw new Error('the file is read-only')
-          stored[key] = value
-        },
-      }),
-    })
-    vi.spyOn(console, 'error').mockImplementation(() => {})
-
-    showSettings(desktop, 'intelligence')
-
-    fireEvent.change(await screen.findByLabelText('Base URL'), {
-      target: { value: 'http://localhost:11434/v1' },
-    })
-
-    const alert = await screen.findByRole('alert')
-    expect(alert.closest('[data-slot="tooltip-content"]')).toBeNull()
   })
 })

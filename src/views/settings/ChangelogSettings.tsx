@@ -37,7 +37,7 @@ export default function ChangelogSettings({
   return (
     <SettingsGroup>
       <SettingsRow
-        label="What's new"
+        label="What's New"
         explanation="What each version of Work Journal changed, starting with the one running now."
       >
         {versions.length > from + 1 && (

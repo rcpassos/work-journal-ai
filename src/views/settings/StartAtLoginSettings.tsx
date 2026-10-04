@@ -77,7 +77,7 @@ export default function StartAtLoginSettings({
   return (
     <SettingsGroup>
       <SettingsRow
-        label="Start at login"
+        label="Start at Login"
         explanation="Whether Work Journal launches when you log in."
         controls="start-at-login"
       >
