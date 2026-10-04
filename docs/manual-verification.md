@@ -51,7 +51,8 @@ Everything else is checked against the release build.
 - [ ] **Work Summary** opens the Main Window on the Work Summary section without spending a model call — no summary appears until **Generate** is clicked.
 - [ ] **Copy Yesterday's Notes** puts yesterday's Notes on the clipboard without opening any window, and with the Main Window already open it leaves History's range exactly where it was.
 - [ ] On a morning with no Notes filed under yesterday, **Copy Yesterday's Notes** leaves the clipboard as it was — paste to confirm the previous contents are still there.
-- [ ] **Settings** opens the Main Window, showing Settings.
+- [ ] **Settings** opens the Main Window, showing Settings on its General tab.
+- [ ] **Check for Updates…** opens the Main Window on Settings with the About tab selected, and switching to another tab and back leaves what was typed there as it was.
 - [ ] **Quit** ends the process — the tray icon disappears and nothing is left running.
 - [ ] Launching the app a second time while it is running — from Spotlight, and again from the Finder — leaves exactly one tray icon and one process each time, and opens a capture window rather than a second app.
 
@@ -232,8 +233,9 @@ both halves, a past month whose Tasks are long since closed, and a range with on
 - [ ] Closing the window without answering counts as **Not now** — the app is not added to the login items, and the question is not asked again either.
 - [ ] Answering **Start at login** adds it, and the app launches after a log out and back in.
 - [ ] The checkbox afterwards adds and removes the login item, and matches what System Settings shows when the Settings section is re-opened.
-- [ ] Settings shows the exact configured Tauri application version centered at the bottom.
+- [ ] The About tab of Settings shows the exact configured Tauri application version centered at the bottom.
 - [ ] A development build shows a **Dev** label beside that version; a release build shows the version without it.
+- [ ] Settings shows five tabs — General, Sources, Intelligence, Data and About — with one showing at a time, and opens on General. Work Summary's **Open Settings**, after a Model Access failure, lands on Intelligence.
 - [ ] **Work Summary Prompt** in Settings opens holding the shipped prompt, with the whole of it reachable: on this machine's WebKit the box is tall enough for the prompt, or the prompt scrolls inside a fixed box — nothing is cut off either way.
 - [ ] Pasting the prompt over itself until it is several times as long never grows the field past its cap: the box stops growing and scrolls inside itself, and **Restore Default** stays put.
 

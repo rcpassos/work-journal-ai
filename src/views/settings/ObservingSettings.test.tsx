@@ -60,6 +60,7 @@ function showSettings(
         settings={settings}
         journal={journal}
         tab="sources"
+        onTabChange={() => {}}
       />
     </ThemeProvider>,
   )
@@ -94,6 +95,7 @@ function showSettingsOnScreen(desktop: FakeDesktop, journal: Promise<Journal>) {
               settings={settings}
               journal={journal}
               tab="sources"
+        onTabChange={() => {}}
             />
           </div>
         </OnScreenContext.Provider>

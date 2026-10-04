@@ -46,9 +46,8 @@ import ChangelogSettings from './ChangelogSettings'
  * Every tab stays mounted and only the selected one is on screen, so what the
  * user did on a tab — an API Key typed and not yet saved, an Export still
  * running — is still there after they switch away and back. Which tab is
- * selected is the Main Window's to say when it names one, and otherwise the
- * view's own, starting on General; see
- * docs/adr/0025-a-session-is-for-sequencing-not-for-state.md.
+ * selected is view state, held by the Main Window because an Entry Point can
+ * name one; see docs/adr/0025-a-session-is-for-sequencing-not-for-state.md.
  *
  * The window behind this view is created on demand and genuinely closed on
  * dismiss, so the view loads once on mount and needs no reset — see
@@ -66,11 +65,10 @@ export default function SettingsView({
   settings: AppSettings
   journal: Promise<Journal>
   /**
-   * The tab showing, when the Main Window holds it so an Entry Point can name
-   * one. Left out, the view keeps it itself, on General.
+   * The tab showing, held by the Main Window so an Entry Point can name one.
    */
-  tab?: SettingsTab
-  onTabChange?: (tab: SettingsTab) => void
+  tab: SettingsTab
+  onTabChange: (tab: SettingsTab) => void
   /**
    * The Main Window's way of showing the Onboarding flow again, in place of
    * the sections. Replaying starts at the introduction, reflects current
@@ -134,8 +132,7 @@ export default function SettingsView({
             to reach the last one, and the window gets a second scrollbar. */}
         <Tabs
           value={tab}
-          defaultValue="general"
-          onValueChange={(next) => onTabChange?.(next as SettingsTab)}
+          onValueChange={(next) => onTabChange(next as SettingsTab)}
           className="min-h-0 flex-1 gap-0"
         >
           <TabsList className="mx-auto mt-3 shrink-0">

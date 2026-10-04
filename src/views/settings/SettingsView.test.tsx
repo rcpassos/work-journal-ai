@@ -603,6 +603,7 @@ describe('replaying the Onboarding flow', () => {
           settings={settings}
           journal={new Promise<Journal>(() => {})}
           tab="about"
+          onTabChange={() => {}}
           onReplayOnboarding={replayed}
         />
       </ThemeProvider>,
@@ -1834,18 +1835,8 @@ describe('the tabs', () => {
       .map((heading) => heading.textContent ?? '')
   }
 
-  it('offers five, and opens on General', () => {
-    const desktop = fakeDesktop()
-    const settings = createAppSettings(desktop)
-    render(
-      <ThemeProvider settings={settings}>
-        <SettingsView
-          desktop={desktop}
-          settings={settings}
-          journal={new Promise<Journal>(() => {})}
-        />
-      </ThemeProvider>,
-    )
+  it('offers five, in order', () => {
+    showSettings(fakeDesktop(), 'general')
 
     expect(
       screen.getAllByRole('tab').map((tab) => tab.textContent),

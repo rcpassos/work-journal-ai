@@ -823,8 +823,8 @@ export interface Desktop {
   onTaskAlertsReconciled(handle: (held: boolean) => void): Promise<Unlisten>
   /**
    * Which section the Entry Point that opened this window named, and the tab
-   * of Settings with it, if it named any — asked for by the Main Window as it opens, and null when nothing was
-   * named, which resolves to History.
+   * of Settings with it, if it named any — asked for by the Main Window as it
+   * opens, and null when nothing was named, which resolves to History.
    *
    * Written down rather than only announced, for the same reason the Task
    * Alert is: a window built by the very request that names a section has no
