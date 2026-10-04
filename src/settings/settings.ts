@@ -214,63 +214,27 @@ export async function readSettings(store: SettingsStore): Promise<Settings> {
   }
 }
 
-/** Where the model is. Kept as typed: what a valid endpoint is, is the endpoint's own answer. */
-export async function writeModelBaseUrl(
-  store: SettingsStore,
-  modelBaseUrl: string,
-): Promise<void> {
-  await store.set(MODEL_BASE_URL_KEY, modelBaseUrl)
-}
-
-/** Which model to ask, in the endpoint's own words. */
-export async function writeModel(
-  store: SettingsStore,
-  model: string,
-): Promise<void> {
-  await store.set(MODEL_KEY, model)
+/** Each setting under the key the store holds it by. */
+const KEYS: Record<keyof Settings, string> = {
+  startAtLogin: START_AT_LOGIN_KEY,
+  importMeetings: IMPORT_MEETINGS_KEY,
+  importCalendars: IMPORT_CALENDARS_KEY,
+  observing: OBSERVING_KEY,
+  modelBaseUrl: MODEL_BASE_URL_KEY,
+  model: MODEL_KEY,
+  workSummaryPrompt: WORK_SUMMARY_PROMPT_KEY,
 }
 
 /**
- * The preferences a Work Summary is written under, kept as typed. A cleared
- * field is written too — the default into which it is read is the store's
- * answer to "nothing was entered" — and Restore Default writes the shipped
- * prompt back whole.
+ * One setting, kept as given. Every answer is an answer: `false`, an empty
+ * list and a cleared field are written exactly as their opposites are, and
+ * what a value that says nothing means is decided on the way back in, by
+ * `readSettings`.
  */
-export async function writeWorkSummaryPrompt(
+export async function writeSetting<K extends keyof Settings>(
   store: SettingsStore,
-  workSummaryPrompt: string,
+  name: K,
+  value: Settings[K],
 ): Promise<void> {
-  await store.set(WORK_SUMMARY_PROMPT_KEY, workSummaryPrompt)
-}
-
-/** Whether meetings are swept at all. Both answers are the user's. */
-export async function writeImportMeetings(
-  store: SettingsStore,
-  importMeetings: boolean,
-): Promise<void> {
-  await store.set(IMPORT_MEETINGS_KEY, importMeetings)
-}
-
-/** Which calendars an Import reads. An empty list is a real answer: none. */
-export async function writeImportCalendars(
-  store: SettingsStore,
-  importCalendars: string[],
-): Promise<void> {
-  await store.set(IMPORT_CALENDARS_KEY, importCalendars)
-}
-
-/** Observing, whole — see `OBSERVING_KEY`. */
-export async function writeObserving(
-  store: SettingsStore,
-  observing: Observing,
-): Promise<void> {
-  await store.set(OBSERVING_KEY, observing)
-}
-
-/** Both answers are answers: declining is recorded exactly as accepting is. */
-export async function writeStartAtLogin(
-  store: SettingsStore,
-  startAtLogin: boolean,
-): Promise<void> {
-  await store.set(START_AT_LOGIN_KEY, startAtLogin)
+  await store.set(KEYS[name], value)
 }

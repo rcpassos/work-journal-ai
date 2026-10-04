@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { formatDayRange } from './range-label'
+import { formatDayRange } from '@/journal/journal'
 
 // The label is the whole of what the day axis says on screen now, so what it
 // says is asserted in the reader's own locale rather than in one pinned here:

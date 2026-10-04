@@ -4,7 +4,7 @@ import { join } from 'node:path'
 // here only so the suite can exercise real SQL without Tauri running. In
 // production the driver is plugin-sql.
 import { DatabaseSync } from 'node:sqlite'
-import type { Clock, SqlDriver } from '../journal'
+import type { Clock, Journal, SqlDriver, TaskOccurrence } from '../journal'
 
 const MIGRATIONS_DIR = join(import.meta.dirname, '../../../src-tauri/migrations')
 
@@ -106,4 +106,12 @@ export function fixedClock(instant: string | Date): Clock & {
       now = next
     },
   }
+}
+
+/** One Task's Task Occurrences, read the way a screen reads them. */
+export async function occurrencesOf(
+  journal: Journal,
+  taskId: string,
+): Promise<TaskOccurrence[]> {
+  return (await journal.occurrencesOfEach([taskId]))[taskId] ?? []
 }

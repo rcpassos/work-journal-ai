@@ -7,9 +7,8 @@ import { toast } from 'sonner'
 import ThemeProvider from '@/components/ThemeProvider'
 import { fakeDesktop, type FakeDesktop } from '@/platform/testing/desktop'
 import type { CalendarAccess, CalendarInfo, MainSection } from '@/platform/desktop'
-import type { Task } from '@/journal/journal'
+import { formatDayRange, type Task } from '@/journal/journal'
 import type { SettingsStore } from '@/settings/settings'
-import { formatDayRange } from '@/views/history/range-label'
 import { createAppSettings } from '@/settings/app-settings'
 import {
   closeTestDatabases,

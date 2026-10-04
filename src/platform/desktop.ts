@@ -235,6 +235,10 @@ export const TASK_CREATION_DETAILS_ROW = 128
  * The refusal grows the window on top of that, exactly as it does for a
  * Capture: the description being refused has to stay in sight and stay
  * editable.
+ *
+ * Unrefused, this is what the window is built at before its view has asked
+ * for anything. Must match `.inner_size` in `build_task_creation_window`
+ * (`src-tauri/src/lib.rs`).
  */
 export function taskCreationWindowHeight(refused: boolean): number {
   return (
@@ -246,13 +250,6 @@ export function taskCreationWindowHeight(refused: boolean): number {
     (refused ? CAPTURE_REFUSAL_HEIGHT : 0)
   )
 }
-
-/**
- * What the Task Creation window is built at, before its view has asked for
- * anything. Must match `.inner_size` in `build_task_creation_window`
- * (`src-tauri/src/lib.rs`).
- */
-export const TASK_CREATION_HEIGHT = taskCreationWindowHeight(false)
 
 /** How tall the window has to be to show the field and everything under it. */
 export function captureWindowHeight(fit: CaptureFit): number {

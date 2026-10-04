@@ -146,11 +146,7 @@ const SUGGESTION_LOOKBACK: f64 = 90.0 * 24.0 * 60.0 * 60.0 * 1000.0;
 /// The addresses that might be the user in this repository: the configured
 /// one, and whoever authored first-parent commits in the last ninety days.
 pub fn identities(path: &Path) -> IdentitiesRead {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|elapsed| elapsed.as_millis() as f64)
-        .unwrap_or(0.0);
-    Git::SYSTEM.identities(path, now - SUGGESTION_LOOKBACK)
+    Git::SYSTEM.identities(path, crate::now_ms() - SUGGESTION_LOOKBACK)
 }
 
 /// The `git` every call goes through. A seam only so the tests can name a

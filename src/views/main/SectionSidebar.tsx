@@ -1,7 +1,7 @@
 import { cn } from '@/lib/utils'
 import WindowTitleBar from '@/components/WindowTitleBar'
 import type { MainSection } from '@/platform/desktop'
-import type { SectionEntry } from './sections'
+import { SECTIONS } from './sections'
 
 /**
  * The Main Window's sidebar: every section, with the one showing marked.
@@ -16,11 +16,9 @@ import type { SectionEntry } from './sections'
  * sidebar of a few named places is a list of links, not a grid to steer around.
  */
 export default function SectionSidebar({
-  sections,
   current,
   onChoose,
 }: {
-  sections: SectionEntry[]
   current: MainSection
   onChoose: (section: MainSection) => void
 }) {
@@ -31,7 +29,7 @@ export default function SectionSidebar({
     >
       <WindowTitleBar />
       <div className="flex flex-col gap-0.5 p-2">
-        {sections.map(({ id, label, icon: Icon }) => {
+        {SECTIONS.map(({ id, label, icon: Icon }) => {
           const showing = id === current
 
           return (

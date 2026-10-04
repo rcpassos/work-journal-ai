@@ -5,7 +5,7 @@ import userEvent from '@testing-library/user-event'
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { fakeDesktop } from '@/platform/testing/desktop'
 import { createJournal, type Task } from '@/journal/journal'
-import { fixedClock, openTestDatabase } from '@/journal/testing/database'
+import { fixedClock, occurrencesOf, openTestDatabase } from '@/journal/testing/database'
 import TasksView from './TasksView'
 
 // Tasks View as the user meets it: the two lists, the checkbox that completes
@@ -951,7 +951,7 @@ describe('a Recurring Task in the list', () => {
         }),
       )
       .toBeNull()
-    expect(await core.occurrencesOf(task.id)).toHaveLength(1)
+    expect(await occurrencesOf(core, task.id)).toHaveLength(1)
   })
 
   it('does not offer Undo Completion once an edit has replaced the successor', async () => {
@@ -992,7 +992,7 @@ describe('a Recurring Task in the list', () => {
       .poll(async () => (await core.openTasks())[0].recurrence)
       .toBeNull()
     // The history survives; only the rule and the Open occurrence go.
-    expect(await core.occurrencesOf(task.id)).toHaveLength(1)
+    expect(await occurrencesOf(core, task.id)).toHaveLength(1)
   })
 
   it('warns that deleting takes the occurrence history with it', async () => {
@@ -1008,7 +1008,7 @@ describe('a Recurring Task in the list', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Delete' }))
 
     await expect.poll(async () => await core.openTasks()).toEqual([])
-    expect(await core.occurrencesOf(task.id)).toEqual([])
+    expect(await occurrencesOf(core, task.id)).toEqual([])
   })
 
   it('still warns about the history once the recurrence has been stopped', async () => {

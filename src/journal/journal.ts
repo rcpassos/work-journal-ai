@@ -667,15 +667,11 @@ export interface Journal {
    */
   stopRecurrence(id: string): Promise<Task>
   /**
-   * One Recurring Task's Task Occurrences, newest slot first, the Open one
-   * among them — the expandable history under the Task, and the record a
-   * screen asks whether Undo Completion is still safe.
-   */
-  occurrencesOf(taskId: string): Promise<TaskOccurrence[]>
-  /**
-   * The same for a whole list at once, by Task — what a screen showing a list
-   * needs, in one read rather than one per row. A Task with none is absent
-   * rather than empty, which is most of them.
+   * Each listed Task's Task Occurrences, newest slot first, the Open one among
+   * them — the expandable history under a Task, and the record a screen asks
+   * whether Undo Completion is still safe. One read for a whole list rather
+   * than one per row. A Task with none is absent rather than empty, which is
+   * most of them.
    *
    * Asked for every Task rather than only the repeating ones: Stop Recurrence
    * keeps the history under a Task that no longer has a cadence, and that
@@ -2053,10 +2049,6 @@ export function createJournal({
         date: task.scheduledDate,
         time: task.scheduledTime,
       })
-    },
-
-    async occurrencesOf(taskId) {
-      return readOccurrences(driver, taskId)
     },
 
     async occurrencesOfEach(taskIds) {

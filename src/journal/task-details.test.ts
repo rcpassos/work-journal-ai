@@ -3,7 +3,7 @@ import { createJournal } from './journal'
 import { buildWorkSummaryMaterial, selectWorkSummary } from './work-summary'
 import { buildReviewMaterial, selectReviewCompletions } from './review'
 import { taskAlerts } from './journal'
-import { fixedClock, openTestDatabase } from './testing/database'
+import { fixedClock, occurrencesOf, openTestDatabase } from './testing/database'
 
 it('persists optional details with LF line endings and preserves nonblank whitespace', async () => {
   const { driver, close } = await openTestDatabase()
@@ -28,10 +28,10 @@ it('searches literal details once and preserves details across recurring lifecyc
     const task = await journal.createTask('renew', { date: '2026-03-12', time: null }, { unit: 'day', interval: 1, weekdays: [] }, 'Only HERE %_')
     expect((await journal.tasksMatching('here %_')).map(t => t.id)).toEqual([task.id])
     const next = await journal.completeTask(task.id)
-    const history = await journal.occurrencesOf(task.id)
+    const history = await occurrencesOf(journal, task.id)
     const edited = await journal.editTask(task.id, { description: 'renew HERE %_', details: 'new HERE %_', schedule: { date: next.scheduledDate!, time: null } })
     expect(edited).toEqual({ ...next, description: 'renew HERE %_', details: 'new HERE %_' })
-    expect(await journal.occurrencesOf(task.id)).toEqual(history)
+    expect(await occurrencesOf(journal, task.id)).toEqual(history)
     expect(await journal.tasksMatching('HERE %_')).toHaveLength(1)
     const undone = await journal.undoCompletion(task.id)
     expect(undone.details).toBe('new HERE %_')

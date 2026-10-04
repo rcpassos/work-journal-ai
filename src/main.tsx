@@ -4,8 +4,7 @@ import './index.css'
 import App from './App.tsx'
 import ErrorBoundary from './components/ErrorBoundary.tsx'
 import ThemeProvider from './components/ThemeProvider.tsx'
-import { createAppJournal } from './journal/app-journal.ts'
-import { systemClock } from './journal/journal.ts'
+import { createJournal, systemClock } from './journal/journal.ts'
 import { createImportSession } from './journal/import-session.ts'
 import { createObserveSession } from './journal/observe-session.ts'
 import { createTaskAlertsSession } from './journal/task-alerts-session.ts'
@@ -24,7 +23,9 @@ const settings = createAppSettings(desktop)
 
 // A promise rather than an awaited value: the database opens after the first
 // paint, and a Capture is typed into a window that is already on screen.
-const journal = createAppJournal({ desktop })
+const journal = desktop
+  .openJournalDatabase()
+  .then((driver) => createJournal({ clock: systemClock, driver }))
 // A journal that cannot be opened is reported by whichever view asks for it.
 // This is only so that a window which never asks — Settings, unless the user
 // exports — does not leave the failure unhandled.

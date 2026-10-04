@@ -9,7 +9,6 @@ import WorkSummaryView from '@/views/work-summary/WorkSummaryView'
 import TasksView from '@/views/tasks/TasksView'
 import OnboardingView from '@/views/onboarding/OnboardingView'
 import SectionSidebar from './SectionSidebar'
-import { SECTIONS } from './sections'
 
 /**
  * The one window the journal is read in: a sidebar of sections down the left,
@@ -227,11 +226,7 @@ export default function MainWindow({
 
   return (
     <div className="flex h-screen bg-background">
-      <SectionSidebar
-        sections={SECTIONS}
-        current={section}
-        onChoose={openSection}
-      />
+      <SectionSidebar current={section} onChoose={openSection} />
       {onboarding !== null && (
         <OnboardingView
           desktop={desktop}

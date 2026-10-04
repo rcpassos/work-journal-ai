@@ -11,13 +11,7 @@
 import type { Desktop, Unlisten } from '@/platform/desktop'
 import {
   readSettings,
-  writeImportCalendars,
-  writeImportMeetings,
-  writeModel,
-  writeModelBaseUrl,
-  writeObserving,
-  writeWorkSummaryPrompt,
-  writeStartAtLogin,
+  writeSetting,
   type Settings,
   type SettingsStore,
 } from './settings'
@@ -274,7 +268,7 @@ export function createAppSettings(
     async saveStartAtLogin(startAtLogin) {
       const save = ++startAtLoginSaves
       await desktop.setStartAtLogin(startAtLogin)
-      await writeStartAtLogin(await store(), startAtLogin)
+      await writeSetting(await store(), 'startAtLogin', startAtLogin)
       // After it took: a save still in flight when a window departs must
       // still reach the control that stayed mounted, and a control must never
       // be told a change was saved before the OS has it — nor told about a
@@ -308,7 +302,7 @@ export function createAppSettings(
     },
 
     async saveImportMeetings(importMeetings) {
-      await writeImportMeetings(await store(), importMeetings)
+      await writeSetting(await store(), 'importMeetings', importMeetings)
       emitChange(desktop.announceImportChanged())
       // After it took: a save still in flight when a window departs must
       // still reach the control that stayed mounted — and every settled save
@@ -317,7 +311,7 @@ export function createAppSettings(
     },
 
     async saveImportCalendars(importCalendars) {
-      await writeImportCalendars(await store(), importCalendars)
+      await writeSetting(await store(), 'importCalendars', importCalendars)
       emitChange(desktop.announceImportChanged())
       announceImport()
     },
@@ -340,7 +334,7 @@ export function createAppSettings(
 
     async saveModelBaseUrl(modelBaseUrl) {
       const save = ++modelBaseUrlSaves
-      await writeModelBaseUrl(await store(), modelBaseUrl)
+      await writeSetting(await store(), 'modelBaseUrl', modelBaseUrl)
       // After it took, and only if no newer Base URL save has been started
       // since: a keystroke that settles after the next one has already been
       // typed must not put its older value back over it. The value announced
@@ -351,7 +345,7 @@ export function createAppSettings(
 
     async saveModel(model) {
       const save = ++modelSaves
-      await writeModel(await store(), model)
+      await writeSetting(await store(), 'model', model)
       announceModelAccess(save === modelSaves, { model })
     },
 
@@ -372,7 +366,7 @@ export function createAppSettings(
     },
 
     async saveWorkSummaryPrompt(workSummaryPrompt) {
-      await writeWorkSummaryPrompt(await store(), workSummaryPrompt)
+      await writeSetting(await store(), 'workSummaryPrompt', workSummaryPrompt)
     },
 
     updateObserving(change) {
@@ -380,7 +374,7 @@ export function createAppSettings(
         const opened = await store()
         const { observing } = await readSettings(opened)
         const next = change(observing, clock.now().getTime())
-        await writeObserving(opened, next)
+        await writeSetting(opened, 'observing', next)
         emitChange(desktop.announceObservingChanged())
         return next
       })

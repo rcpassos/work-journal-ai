@@ -51,7 +51,13 @@ import {
   type TaskGroupName,
   type TaskOccurrence,
 } from './journal'
-import { fixedClock, migrationAt, migrationSql, openTestDatabase } from './testing/database'
+import {
+  fixedClock,
+  migrationAt,
+  migrationSql,
+  occurrencesOf,
+  openTestDatabase,
+} from './testing/database'
 
 // Every test drives the core through its public operations and asserts on what
 // comes back out. Nothing here asserts that a particular query ran.
@@ -3507,7 +3513,7 @@ describe('completeTaskAt', () => {
       }),
     })
     expect(
-      (await journal.occurrencesOf(daily.id)).map(
+      (await occurrencesOf(journal, daily.id)).map(
         (one) => `${formatSlot(slotOf(one))} ${one.completedAt === null ? 'open' : 'kept'}`,
       ),
     ).toEqual(['2026-03-11 09:00 open', '2026-03-10 09:00 kept'])
@@ -3532,7 +3538,7 @@ describe('completeTaskAt', () => {
 
     expect(outcome.outcome).toBe('stale')
     expect(
-      (await journal.occurrencesOf(daily.id)).map(
+      (await occurrencesOf(journal, daily.id)).map(
         (one) => `${formatSlot(slotOf(one))} ${one.completedAt === null ? 'open' : 'kept'}`,
       ),
     ).toEqual(['2026-03-11 09:00 open', '2026-03-10 09:00 kept'])
