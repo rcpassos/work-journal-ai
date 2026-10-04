@@ -4,7 +4,11 @@ What changed in each released version, newest first. Every `vX.Y.Z` section here
 
 ## Unreleased
 
+## 0.17.0 — 2026-10-04
+
 - Settings is split into five tabs along the top, General, Sources, Intelligence, Data and About, and Check for Updates… in the menu bar opens the About tab.
+- Every Settings row shows its one-line description, rows are labelled by what they hold, and the fine print is shorter.
+- Each repository in Settings is a compact card with its details folded away, and Pause sits in the Commits row.
 
 ## 0.16.1 — 2026-10-04
 
