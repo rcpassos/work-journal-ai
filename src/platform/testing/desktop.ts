@@ -21,6 +21,8 @@ import type {
   PauseState,
   PracticeEnded,
   RepositoryUnreadable,
+  SectionRequested,
+  SettingsTab,
   WorkSummaryRequest,
   WorkSummaryResponse,
   TaskAlertCompletion,
@@ -170,14 +172,17 @@ export interface FakeDesktop extends Desktop {
    *
    * Null is an Entry Point that names no section — a click on the Dock icon,
    * which opens the window on History and takes away whatever an earlier
-   * request left waiting.
+   * request left waiting. The tab is the Settings tab named with Settings,
+   * and null leaves Settings on the tab it is on.
    */
-  requestSection(section: MainSection | null): void
+  requestSection(section: MainSection | null, tab?: SettingsTab): void
   /**
    * The section waiting to be claimed by the Main Window it named. Null when
    * nothing has asked for one, which resolves to History.
    */
   pendingSection: MainSection | null
+  /** The Settings tab named along with it, if one was. */
+  pendingTab: SettingsTab | null
   /** How many times a window has asked which section it opened on. */
   sectionsClaimed: number
   /** The user clicks a Task Alert. */
@@ -304,7 +309,7 @@ export function fakeDesktop({
   const themeChanged = subscribers<Theme>()
   const windowFocused = subscribers<void>()
   const closeRequested = subscribers<void>()
-  const sectionRequested = subscribers<MainSection>()
+  const sectionRequested = subscribers<SectionRequested>()
   const taskAlertOpened = subscribers<string>()
   const taskAlertCompleted = subscribers<TaskAlertCompletion>()
   const taskAlertsReconciled = subscribers<boolean>()
@@ -343,6 +348,7 @@ export function fakeDesktop({
     alertsFail: false,
     notificationSettingsOpened: 0,
     pendingSection: null,
+    pendingTab: null,
     sectionsClaimed: 0,
     pendingTaskAlert: null,
     pendingTaskAlertCompletion: [],
@@ -472,20 +478,24 @@ export function fakeDesktop({
       desktop.pendingAlerts =
         desktop.alertPermission === 'granted' ? alerts : []
     },
-    requestSection: (section) => {
+    requestSection: (section, tab) => {
       // Both, exactly as the Rust side does it: written down for a Main Window
       // that has yet to ask — one this request is about to build, or one still
       // starting up — and announced for a window already listening.
       desktop.pendingSection = section
-      if (section !== null) sectionRequested.announce(section)
+      desktop.pendingTab = tab ?? null
+      if (section !== null)
+        sectionRequested.announce({ section, tab: tab ?? null })
     },
     requestedSection: async () => {
       // Handed over exactly once, like the Alert: the section an Entry Point
       // named is for the window it opened, not for every window after it.
       desktop.sectionsClaimed += 1
       const waiting = desktop.pendingSection
+      const tab = desktop.pendingTab
       desktop.pendingSection = null
-      return waiting
+      desktop.pendingTab = null
+      return waiting === null ? null : { section: waiting, tab }
     },
     onSectionRequested: async (handle) => {
       // Listening begins only once this has settled, as it does across the

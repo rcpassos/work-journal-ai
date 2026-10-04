@@ -29,6 +29,7 @@ import {
   WORK_SUMMARY_SECTION,
   SETTINGS_FILE,
   SETTINGS_SECTION,
+  ABOUT_TAB,
   SYSTEM_WOKE_EVENT,
   TASK_ALERT_COMPLETED_EVENT,
   TASK_ALERT_OPENED_EVENT,
@@ -80,6 +81,7 @@ const shared: Record<string, string> = {
   TASKS_SECTION,
   WORK_SUMMARY_SECTION,
   SETTINGS_SECTION,
+  ABOUT_TAB,
   CAPTURE_SHOWN_EVENT,
   TASK_CREATION_SHOWN_EVENT,
   COPY_YESTERDAY_DIGEST_EVENT,
@@ -1062,7 +1064,7 @@ describe('the data that crosses the command boundary', () => {
     { ts: 'ExportedFile', tsSource: desktop, rust: 'ExportedFile', rustSource: exportRs, fields: ['path', 'fileName'] },
     { ts: 'CaptureShown', tsSource: desktop, rust: 'CaptureShown', rustSource, fields: ['practice'] },
     { ts: 'TaskAlertOpened', tsSource: desktop, rust: 'TaskAlertOpened', rustSource, fields: ['taskId'] },
-    { ts: 'SectionRequested', tsSource: desktop, rust: 'SectionRequested', rustSource, fields: ['section'] },
+    { ts: 'SectionRequested', tsSource: desktop, rust: 'SectionRequested', rustSource, fields: ['section', 'tab'] },
   ]
 
   it.each(structs)('names $ts\'s fields the same on both sides', (record) => {

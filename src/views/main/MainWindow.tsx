@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Clock, Journal } from '@/journal/journal'
-import type { Desktop, MainSection, Unlisten } from '@/platform/desktop'
+import type {
+  Desktop,
+  MainSection,
+  SettingsTab,
+  Unlisten,
+} from '@/platform/desktop'
 import OnScreenContext from '@/components/on-screen-context'
 import type { AppSettings } from '@/settings/app-settings'
 import HistoryView from '@/views/history/HistoryView'
@@ -56,6 +61,11 @@ export default function MainWindow({
   clock: Clock
 }) {
   const [section, setSection] = useState<MainSection>('history')
+  // The tab of Settings showing. Held here rather than in Settings because
+  // what names one — the Tray Menu's Check for Updates…, Work Summary asking
+  // for Model Access — is outside it. Not stored anywhere: the window is
+  // rebuilt on open, so Settings starts on General each time.
+  const [settingsTab, setSettingsTab] = useState<SettingsTab>('general')
   // The Onboarding flow currently showing in place of the sections, and
   // whether it was offered automatically (a fresh installation still due) or
   // replayed by hand from Settings. Null is the ordinary state: sections.
@@ -147,7 +157,7 @@ export default function MainWindow({
     // listening: a request arriving in the gap between the two would otherwise
     // be announced to nothing and already taken from where it was written.
     let announced = false
-    const listening = desktop.onSectionRequested((requested) => {
+    const listening = desktop.onSectionRequested(({ section, tab }) => {
       announced = true
       // The section heard is claimed as well, exactly as Tasks View claims a
       // Task Alert it hears: what was written down for this window has been
@@ -156,7 +166,8 @@ export default function MainWindow({
       void desktop.requestedSection().catch((error: unknown) => {
         console.error('could not claim the section that was announced', error)
       })
-      openSection(requested)
+      openSection(section)
+      if (tab !== null) setSettingsTab(tab)
     })
 
     void listening.then(() => desktop.requestedSection()).then(
@@ -164,7 +175,9 @@ export default function MainWindow({
         // An announcement that has already landed is the later word: the
         // window was told a section while this claim was still crossing, and
         // what it came back with cannot undo that.
-        if (requested !== null && !announced) openSection(requested)
+        if (requested === null || announced) return
+        openSection(requested.section)
+        if (requested.tab !== null) setSettingsTab(requested.tab)
       },
       (error: unknown) => {
         console.error('could not read the section this window opened on', error)
@@ -246,6 +259,8 @@ export default function MainWindow({
           desktop={desktop}
           settings={settings}
           journal={journal}
+          tab={settingsTab}
+          onTabChange={setSettingsTab}
           onReplayOnboarding={() => setOnboarding({ automatic: false })}
         />
       </Section>
@@ -259,7 +274,10 @@ export default function MainWindow({
           settings={settings}
           journal={journal}
           clock={clock}
-          onOpenSettings={() => setSection('settings')}
+          onOpenSettings={() => {
+            setSettingsTab('intelligence')
+            setSection('settings')
+          }}
         />
       </Section>
     </div>

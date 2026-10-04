@@ -35,7 +35,7 @@ xattr -dr com.apple.quarantine "/Applications/Work Journal.app"
 
 A copy you compiled yourself was never quarantined and needs nothing. Updates need nothing either — the app unpacks its own signed payload and restarts into it.
 
-Already running Work Journal? **Settings › Updates › Check for updates** installs the next version with no download and no terminal.
+Already running Work Journal? **Settings › About › Check for updates** installs the next version with no download and no terminal.
 
 What changed in each version is in [CHANGELOG.md](CHANGELOG.md).
 

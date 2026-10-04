@@ -6,7 +6,12 @@ import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
 import ThemeProvider from '@/components/ThemeProvider'
 import { fakeDesktop, type FakeDesktop } from '@/platform/testing/desktop'
-import type { CalendarAccess, CalendarInfo, MainSection } from '@/platform/desktop'
+import type {
+  CalendarAccess,
+  CalendarInfo,
+  MainSection,
+  SettingsTab,
+} from '@/platform/desktop'
 import { formatDayRange, type Task } from '@/journal/journal'
 import type { SettingsStore } from '@/settings/settings'
 import { createAppSettings } from '@/settings/app-settings'
@@ -100,6 +105,49 @@ describe('the section the Main Window opens on', () => {
     ).toBe('page')
   })
 
+  it('opens Settings on General when no tab is named', async () => {
+    await showMainWindow({ captured: [MONDAY], section: 'settings' })
+
+    await showsSettings()
+    expect(selectedTab()).toBe('General')
+  })
+
+  it('opens Settings on the tab the Entry Point named with it', async () => {
+    await showMainWindow({ captured: [MONDAY], section: 'settings', tab: 'about' })
+
+    await showsSettings()
+    expect(selectedTab()).toBe('About')
+  })
+
+  it('opens Settings on the tab named while the window was still starting up', async () => {
+    await showMainWindow({
+      captured: [MONDAY],
+      whileStartingUp: (desktop) => desktop.requestSection('settings', 'about'),
+    })
+
+    await showsSettings()
+    await expect.poll(selectedTab).toBe('About')
+  })
+
+  it('moves a window already open to the tab named, and leaves it where it is when none is', async () => {
+    const user = userEvent.setup()
+    const { desktop } = await showMainWindow({ captured: [MONDAY] })
+
+    desktop.requestSection('settings', 'about')
+    await showsSettings()
+    await expect.poll(selectedTab).toBe('About')
+
+    await user.click(screen.getByRole('tab', { name: 'Data' }))
+    desktop.requestSection('history')
+    await showsHistory()
+
+    // An Entry Point that names Settings and no tab is not a request to
+    // forget where the user was.
+    desktop.requestSection('settings')
+    await showsSettings()
+    expect(selectedTab()).toBe('Data')
+  })
+
   it('lands on Work Summary when the Entry Point names it', async () => {
     await showMainWindow({ captured: [MONDAY], section: 'work-summary' })
 
@@ -177,7 +225,7 @@ describe('an update installing while the user goes elsewhere', () => {
 
     try {
       await user.click(within(sidebar()).getByRole('button', { name: 'Settings' }))
-      await showsSettings()
+      await showsSettings('About')
 
       await user.click(
         await screen.findByRole('button', { name: 'Check for updates' }),
@@ -495,6 +543,8 @@ describe('switching sections', () => {
     ).toBeTruthy()
     await user.click(screen.getByRole('button', { name: 'Open Settings' }))
     await showsSettings()
+    // Model Access is what it asked for, so that is the tab it lands on.
+    expect(selectedTab()).toBe('Intelligence')
 
     // The refusal happened before anything was asked: the Model Access line
     // is the view's own, and the call never had a chance to spend.
@@ -639,6 +689,7 @@ describe('a section that is not showing', () => {
       captured: [MONDAY],
       tasks: ['renew the cert'],
       section: 'settings',
+      tab: 'data',
     })
 
     await user.click(
@@ -697,6 +748,7 @@ describe('a section that is not showing', () => {
       captured: [MONDAY],
       tasks: ['renew the cert'],
       section: 'settings',
+      tab: 'data',
     })
     let releaseExport!: () => void
     const held = new Promise<void>((resolve) => {
@@ -1070,7 +1122,7 @@ describe('replaying Onboarding from Settings', () => {
     // An earlier run left the login item there, which is what the choice is
     // really stored as.
     desktop.loginItem = true
-    await showsSettings()
+    await showsSettings('About')
 
     await user.click(
       await screen.findByRole('button', { name: 'Replay introduction' }),
@@ -1091,12 +1143,14 @@ describe('replaying Onboarding from Settings', () => {
   it('keeps unsaved Settings input through a replay of the flow', async () => {
     const user = userEvent.setup()
     await showMainWindow({ captured: [MONDAY], section: 'settings' })
-    await showsSettings()
+    await showsSettings('Intelligence')
 
     // A key being typed, on its way out of the window — not saved yet, so it
-    // lives only in the input. A replay of the flow must not take it.
+    // lives only in the input. A replay of the flow must not take it, and
+    // neither does the trip to the tab the replay is on.
     await user.type(await screen.findByLabelText('API Key'), 'sk-replay-secret')
 
+    await showsSettings('About')
     await user.click(
       await screen.findByRole('button', { name: 'Replay introduction' }),
     )
@@ -1105,7 +1159,7 @@ describe('replaying Onboarding from Settings', () => {
     await showsHistory()
 
     await user.click(within(sidebar()).getByRole('button', { name: 'Settings' }))
-    await showsSettings()
+    await showsSettings('Intelligence')
 
     // The section stayed mounted, so the half-typed key is still under the
     // cursor.
@@ -1120,7 +1174,7 @@ describe('replaying Onboarding from Settings', () => {
       captured: [MONDAY],
       section: 'settings',
     })
-    await showsSettings()
+    await showsSettings('About')
 
     await user.click(
       await screen.findByRole('button', { name: 'Replay introduction' }),
@@ -1347,7 +1401,7 @@ describe('Meeting Import during Onboarding', () => {
     await finishFromMeetingImport(user)
     await showsHistory()
     await user.click(within(sidebar()).getByRole('button', { name: 'Settings' }))
-    await showsSettings()
+    await showsSettings('Sources')
 
     const control = await screen.findByRole('switch', {
       name: "Add today's meetings to the journal",
@@ -1409,7 +1463,7 @@ describe('Meeting Import during Onboarding', () => {
     await finishFromMeetingImport(user)
     await showsHistory()
     await user.click(within(sidebar()).getByRole('button', { name: 'Settings' }))
-    await showsSettings()
+    await showsSettings('Sources')
 
     // The file says on with Work ticked, and so does the section — the
     // held write's announcement was heard last, as it landed last.
@@ -1434,7 +1488,7 @@ describe('Meeting Import during Onboarding', () => {
       access: 'granted',
       calendars: [{ id: 'work', title: 'Work', source: 'iCloud' }],
     })
-    await showsSettings()
+    await showsSettings('About')
 
     await user.click(
       await screen.findByRole('button', { name: 'Replay introduction' }),
@@ -1544,7 +1598,7 @@ describe('Model Access during Onboarding', () => {
     await user.click(screen.getByRole('button', { name: 'Open History' }))
     await showsHistory()
     await user.click(within(sidebar()).getByRole('button', { name: 'Settings' }))
-    await showsSettings()
+    await showsSettings('Intelligence')
 
     await expect.poll(() => baseUrlField().value).toBe(
       'http://localhost:11434/v1',
@@ -1698,7 +1752,7 @@ describe('Model Access during Onboarding', () => {
       },
       apiKey: 'sk-from-an-earlier-run',
     })
-    await showsSettings()
+    await showsSettings('About')
 
     await user.click(
       await screen.findByRole('button', { name: 'Replay introduction' }),
@@ -1998,7 +2052,7 @@ describe('practicing Capture from Onboarding', () => {
     await expect.poll(() => project().textContent).toContain('#alpha')
 
     await user.click(within(sidebar()).getByRole('button', { name: 'Settings' }))
-    await showsSettings()
+    await showsSettings('About')
     await user.click(
       await screen.findByRole('button', { name: 'Replay introduction' }),
     )
@@ -2297,6 +2351,7 @@ async function showMainWindow({
   captured,
   tasks = [],
   section,
+  tab,
   whileStartingUp,
   alertFor,
   stored = { startAtLogin: false },
@@ -2313,6 +2368,8 @@ async function showMainWindow({
   tasks?: string[]
   /** The section the Entry Point that opened the window named, if it named one. */
   section?: MainSection
+  /** The Settings tab named along with it, if one was. */
+  tab?: SettingsTab
   /**
    * An Entry Point reached in the moment between the window being built and
    * its webview coming up — the window exists, and nothing in it is listening.
@@ -2359,7 +2416,7 @@ async function showMainWindow({
   })
   if (onboarding !== undefined) desktop.onboarding = onboarding
   const settings = createAppSettings(desktop)
-  if (section !== undefined) desktop.requestSection(section)
+  if (section !== undefined) desktop.requestSection(section, tab)
   if (alertFor !== undefined) {
     desktop.pendingTaskAlert = `task:${created[alertFor].id}`
   }
@@ -2432,10 +2489,30 @@ async function showsHistory(): Promise<void> {
   await expect.poll(sectionOnScreen).toBe('history')
 }
 
-/** Settings is the section on screen, once whatever asked for it lands. */
-async function showsSettings(): Promise<void> {
+/**
+ * Settings is the section on screen, once whatever asked for it lands. Given a
+ * tab, that tab is chosen as the user would, since a group on another tab is
+ * hidden and out of reach until it is.
+ */
+async function showsSettings(tab?: string): Promise<void> {
   await screen.findByText('Note Hotkey')
   await expect.poll(sectionOnScreen).toBe('settings')
+  if (tab !== undefined) {
+    screen.getByRole('tab', { name: tab }).click()
+    await expect
+      .poll(() => screen.getByRole('tab', { name: tab }).getAttribute('aria-selected'))
+      .toBe('true')
+  }
+}
+
+/** The Settings tab showing, by name. */
+function selectedTab(): string | null {
+  return (
+    screen
+      .getAllByRole('tab')
+      .find((tab) => tab.getAttribute('aria-selected') === 'true')
+      ?.textContent ?? null
+  )
 }
 
 /** Work Summary is ready once its date header is on screen. */
