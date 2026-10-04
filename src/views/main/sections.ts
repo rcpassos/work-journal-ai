@@ -20,7 +20,7 @@ import type { MainSection } from '@/platform/desktop'
  * which is what fast refresh needs to swap one without losing state.
  */
 
-export interface SectionEntry {
+interface SectionEntry {
   id: MainSection
   /**
    * What the sidebar calls it — the record it is about, since the sidebar

@@ -1,10 +1,14 @@
 import type { Clock, Journal } from './journal/journal'
-import type { Desktop } from './platform/desktop'
+import {
+  CAPTURE_WINDOW,
+  MAIN_WINDOW,
+  TASK_CREATION_WINDOW,
+  type Desktop,
+} from './platform/desktop'
 import type { AppSettings } from './settings/app-settings'
 import CaptureView from './views/capture/CaptureView'
 import MainWindow from './views/main/MainWindow'
 import TaskCreationView from './views/tasks/TaskCreationView'
-import { viewForLabel } from './views/route'
 
 /**
  * Every window loads the same bundle; the window label picks the view. An
@@ -27,21 +31,15 @@ export default function App({
   /** What the day is, for the views that group by it. */
   clock: Clock
 }) {
-  const view = viewForLabel(windowLabel)
-
-  if (view === null) {
-    return null
-  }
-
-  if (view === 'capture') {
+  if (windowLabel === CAPTURE_WINDOW) {
     return <CaptureView desktop={desktop} journal={journal} />
   }
 
-  if (view === 'task-creation') {
+  if (windowLabel === TASK_CREATION_WINDOW) {
     return <TaskCreationView desktop={desktop} journal={journal} />
   }
 
-  if (view === 'main') {
+  if (windowLabel === MAIN_WINDOW) {
     return (
       <MainWindow
         desktop={desktop}
@@ -52,14 +50,5 @@ export default function App({
     )
   }
 
-  return noViewFor(view)
-}
-
-/**
- * The `View` union is closed, so by here nothing is left. A member added
- * without a branch above arrives as something other than `never` and fails
- * typecheck at this call.
- */
-function noViewFor(view: never): never {
-  throw new Error(`No view for ${String(view)}.`)
+  return null
 }

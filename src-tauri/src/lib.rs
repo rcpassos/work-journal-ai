@@ -69,7 +69,7 @@ const APP_NAME: &str = "Work Journal";
 // holds the pair together; the geometry constants further down are the one
 // deliberate exception, and say why.
 
-/// The window labels the frontend routes on — see `src/views/route.ts`. Must
+/// The window labels the frontend routes on — see `src/App.tsx`. Must
 /// match `CAPTURE_WINDOW`, `TASK_CREATION_WINDOW` and `MAIN_WINDOW` in
 /// `src/platform/desktop.ts`, as `src/platform/desktop-rust.test.ts` checks.
 const CAPTURE_WINDOW: &str = "capture";
@@ -186,7 +186,7 @@ const TASK_ALERT_COMPLETED_EVENT: &str = "task-alert://completed";
 /// differ because a Task may say when it is meant to be done and how often it
 /// repeats, and a Note may say neither, so the Task Creation panel has two more
 /// rows under its field. Must match `CAPTURE_HEIGHT` and
-/// `TASK_CREATION_HEIGHT` in `src/platform/desktop.ts`.
+/// `taskCreationWindowHeight(false)` in `src/platform/desktop.ts`.
 const CAPTURE_HEIGHT: f64 = 130.0;
 const TASK_CREATION_HEIGHT: f64 = 347.0;
 
@@ -387,8 +387,8 @@ fn pause_controls(state: &PauseState, now_ms: f64) -> PauseControls {
 }
 
 /// This instant, in the milliseconds the webview counts in — what a pause's
-/// end is compared against.
-fn now_ms() -> f64 {
+/// end is compared against, and what a repository's lookback counts back from.
+pub(crate) fn now_ms() -> f64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|elapsed| elapsed.as_millis() as f64)
@@ -1751,7 +1751,6 @@ fn automatic_backups(app: tauri::AppHandle) -> Result<backup::AutomaticBackups, 
 /// holds the pair together.
 #[tauri::command(async)]
 async fn backup_journal(
-    _app: tauri::AppHandle,
     databases: tauri::State<'_, DbInstances>,
     path: String,
 ) -> Result<BackupResult, String> {

@@ -5,14 +5,8 @@ import {
   OPENAI_BASE_URL,
   WORK_SUMMARY_GROUNDING,
   readSettings,
-  writeImportCalendars,
-  writeImportMeetings,
-  writeModel,
-  writeModelBaseUrl,
-  writeObserving,
-  writeWorkSummaryPrompt,
-  writeStartAtLogin,
   workSummarySystemPrompt,
+  writeSetting,
   type SettingsStore,
 } from './settings'
 import { NO_OBSERVING, turnObserving } from './observing'
@@ -55,14 +49,14 @@ describe('readSettings', () => {
 
   it('reads back what was written', async () => {
     const store = emptyStore()
-    await writeStartAtLogin(store, true)
-    await writeImportMeetings(store, true)
-    await writeImportCalendars(store, ['work', 'personal'])
-    await writeModelBaseUrl(store, 'http://localhost:11434/v1')
-    await writeModel(store, 'llama3.1')
-    await writeWorkSummaryPrompt(store, 'Write it in pirate speak.')
+    await writeSetting(store, 'startAtLogin', true)
+    await writeSetting(store, 'importMeetings', true)
+    await writeSetting(store, 'importCalendars', ['work', 'personal'])
+    await writeSetting(store, 'modelBaseUrl', 'http://localhost:11434/v1')
+    await writeSetting(store, 'model', 'llama3.1')
+    await writeSetting(store, 'workSummaryPrompt', 'Write it in pirate speak.')
     const observing = turnObserving(NO_OBSERVING, true, 5)
-    await writeObserving(store, observing)
+    await writeSetting(store, 'observing', observing)
 
     expect(await readSettings(store)).toEqual({
       startAtLogin: true,
@@ -170,7 +164,7 @@ describe('the Work Summary Prompt', () => {
   it('reads back what was written, verbatim', async () => {
     const store = emptyStore()
     const prompt = 'Write it in pirate speak.'
-    await writeWorkSummaryPrompt(store, prompt)
+    await writeSetting(store, 'workSummaryPrompt', prompt)
 
     expect((await readSettings(store)).workSummaryPrompt).toBe(prompt)
   })

@@ -5,7 +5,7 @@ import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { cleanup, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import OnScreenContext from '@/components/on-screen-context'
-import { journalDayFor } from '@/journal/journal'
+import { formatDayRange, journalDayFor } from '@/journal/journal'
 import HistoryView from './HistoryView'
 import { fakeDesktop } from '@/platform/testing/desktop'
 import {
@@ -17,7 +17,6 @@ import {
   noteById,
   showHistory,
 } from './testing/history-view'
-import { formatDayRange } from './range-label'
 
 // The Filter's header as the reader meets it: a click on the days, a Project
 // chosen, a term typed — over a real journal, asserting on what is on screen.

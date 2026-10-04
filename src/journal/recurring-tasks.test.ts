@@ -17,7 +17,7 @@ import {
   type Task,
   type TaskOccurrence,
 } from './journal'
-import { fixedClock, migrationAt, openTestDatabase } from './testing/database'
+import { fixedClock, migrationAt, occurrencesOf, openTestDatabase } from './testing/database'
 
 // Every test drives the core through its public operations, against the same
 // SQL the app ships — including the index that permits exactly one Open
@@ -108,7 +108,7 @@ describe('creating a Recurring Task', () => {
       every(1, 'day'),
     )
 
-    const occurrences = await journal.occurrencesOf(task.id)
+    const occurrences = await occurrencesOf(journal, task.id)
     expect(occurrences).toHaveLength(1)
     expect(await openCount(driver, task.id)).toBe(1)
   })
@@ -279,8 +279,8 @@ describe('a weekly cadence with several weekdays', () => {
     const nextMonday = await journal.completeTask(task.id)
     expect(nextMonday.scheduledDate).toBe('2026-03-23')
 
-    expect(openOccurrence(await journal.occurrencesOf(task.id))).not.toBeNull()
-    expect(completedOccurrences(await journal.occurrencesOf(task.id))).toHaveLength(3)
+    expect(openOccurrence(await occurrencesOf(journal, task.id))).not.toBeNull()
+    expect(completedOccurrences(await occurrencesOf(journal, task.id))).toHaveLength(3)
   })
 
   it('ignores selected weekdays that fall before the starting date', async () => {
@@ -389,7 +389,7 @@ describe('completing an overdue occurrence', () => {
     const advanced = await journal.completeTask(task.id)
 
     expect(advanced.scheduledDate).toBe('2026-03-16')
-    expect(await journal.occurrencesOf(task.id)).toHaveLength(2)
+    expect(await occurrencesOf(journal, task.id)).toHaveLength(2)
   })
 
   it('lands on today when today has not reached its own minute yet', async () => {
@@ -417,7 +417,7 @@ describe('completing an overdue occurrence', () => {
     clock.set(new Date('2026-03-16T20:00:00'))
     await journal.completeTask(task.id)
 
-    const history = completedOccurrences(await journal.occurrencesOf(task.id))
+    const history = completedOccurrences(await occurrencesOf(journal, task.id))
     expect(history).toHaveLength(1)
     expect(history[0].scheduledDate).toBe('2026-03-16')
     expect(history[0].completedAt).toBe(new Date('2026-03-16T20:00:00').toISOString())
@@ -444,8 +444,8 @@ describe('editing a Recurring Task', () => {
     expect(moved.scheduledDate).toBe('2026-03-19')
     expect(moved.recurrenceAnchor).toBe('2026-03-19')
     // Replaced, not completed: nothing went into the history.
-    expect(completedOccurrences(await journal.occurrencesOf(task.id))).toEqual([])
-    expect(await journal.occurrencesOf(task.id)).toHaveLength(1)
+    expect(completedOccurrences(await occurrencesOf(journal, task.id))).toEqual([])
+    expect(await occurrencesOf(journal, task.id)).toHaveLength(1)
   })
 
   it('reanchors when only the time changes', async () => {
@@ -456,7 +456,7 @@ describe('editing a Recurring Task', () => {
       { date: '2026-03-16', time: '09:00' },
       every(1, 'day'),
     )
-    const before = openOccurrence(await journal.occurrencesOf(task.id))!
+    const before = openOccurrence(await occurrencesOf(journal, task.id))!
 
     const retimed = await journal.editTask(task.id, {
       description: 'stand-up',
@@ -465,7 +465,7 @@ describe('editing a Recurring Task', () => {
     })
 
     expect(retimed.scheduledTime).toBe('07:00')
-    const after = openOccurrence(await journal.occurrencesOf(task.id))!
+    const after = openOccurrence(await occurrencesOf(journal, task.id))!
     expect(after.id).not.toBe(before.id)
     expect(after.advancedFrom).toBeNull()
   })
@@ -571,7 +571,7 @@ describe('editing a Recurring Task', () => {
       clock.set(new Date(`${label}T10:00:00`))
       await journal.completeTask(task.id)
     }
-    expect(openOccurrence(await journal.occurrencesOf(task.id))!.scheduledDate).toBe(
+    expect(openOccurrence(await occurrencesOf(journal, task.id))!.scheduledDate).toBe(
       '2026-06-16',
     )
 
@@ -583,13 +583,13 @@ describe('editing a Recurring Task', () => {
     })
 
     expect(retimed.scheduledDate).toBe('2026-06-16')
-    const kept = completedOccurrences(await journal.occurrencesOf(task.id))
+    const kept = completedOccurrences(await occurrencesOf(journal, task.id))
     expect(kept).toHaveLength(15)
     expect(kept.map((one) => one.scheduledDate)).not.toContain('2026-06-16')
 
     clock.set(new Date('2026-06-16T10:00:00'))
     await journal.completeTask(task.id)
-    const dates = completedOccurrences(await journal.occurrencesOf(task.id)).map(
+    const dates = completedOccurrences(await occurrencesOf(journal, task.id)).map(
       (one) => one.scheduledDate,
     )
     expect(dates.filter((date) => date === '2026-06-15')).toHaveLength(1)
@@ -648,7 +648,7 @@ describe('editing a Recurring Task', () => {
       { date: '2026-03-16', time: null },
       every(1, 'day'),
     )
-    const before = openOccurrence(await journal.occurrencesOf(task.id))!
+    const before = openOccurrence(await occurrencesOf(journal, task.id))!
 
     const reworded = await journal.editTask(task.id, {
       description: 'the gym',
@@ -657,14 +657,14 @@ describe('editing a Recurring Task', () => {
     })
 
     expect(reworded.description).toBe('the gym')
-    expect(openOccurrence(await journal.occurrencesOf(task.id))!.id).toBe(before.id)
+    expect(openOccurrence(await occurrencesOf(journal, task.id))!.id).toBe(before.id)
   })
 
   it('turns an ordinary Task into a Recurring one', async () => {
     const { journal } = await journalAt('2026-03-16T08:00:00')
 
     const task = await journal.createTask('gym', { date: '2026-03-16', time: null })
-    expect(await journal.occurrencesOf(task.id)).toEqual([])
+    expect(await occurrencesOf(journal, task.id)).toEqual([])
 
     const repeating = await journal.editTask(task.id, {
       description: 'gym',
@@ -673,7 +673,7 @@ describe('editing a Recurring Task', () => {
     })
 
     expect(repeating.recurrence).toEqual(every(1, 'week', [1]))
-    expect(await journal.occurrencesOf(task.id)).toHaveLength(1)
+    expect(await occurrencesOf(journal, task.id)).toHaveLength(1)
   })
 
   it('leaves the cadence alone when an edit does not mention it', async () => {
@@ -712,8 +712,8 @@ describe('editing a Recurring Task', () => {
     expect(unscheduled.recurrenceAnchor).toBeNull()
     expect(unscheduled.scheduledDate).toBeNull()
     // The history is retained; only the Open occurrence goes.
-    expect(completedOccurrences(await journal.occurrencesOf(task.id))).toHaveLength(1)
-    expect(openOccurrence(await journal.occurrencesOf(task.id))).toBeNull()
+    expect(completedOccurrences(await occurrencesOf(journal, task.id))).toHaveLength(1)
+    expect(openOccurrence(await occurrencesOf(journal, task.id))).toBeNull()
   })
 })
 
@@ -734,8 +734,8 @@ describe('Stop Recurrence', () => {
     expect(stopped.recurrence).toBeNull()
     expect(stopped.scheduledDate).toBe(advanced.scheduledDate)
     expect(stopped.scheduledTime).toBe('09:00')
-    expect(completedOccurrences(await journal.occurrencesOf(task.id))).toHaveLength(1)
-    expect(openOccurrence(await journal.occurrencesOf(task.id))).toBeNull()
+    expect(completedOccurrences(await occurrencesOf(journal, task.id))).toHaveLength(1)
+    expect(openOccurrence(await occurrencesOf(journal, task.id))).toBeNull()
   })
 
   it('leaves an ordinary Task untouched', async () => {
@@ -783,18 +783,18 @@ describe('Undo Completion', () => {
     const restored = await journal.undoCompletion(task.id)
 
     expect(restored.scheduledDate).toBe('2026-03-16')
-    expect(await journal.occurrencesOf(task.id)).toHaveLength(1)
+    expect(await occurrencesOf(journal, task.id)).toHaveLength(1)
     expect(await openCount(driver, task.id)).toBe(1)
-    expect(completedOccurrences(await journal.occurrencesOf(task.id))).toEqual([])
+    expect(completedOccurrences(await occurrencesOf(journal, task.id))).toEqual([])
   })
 
   it('is offered exactly while it is safe', async () => {
     const { journal, task } = await completedOnce()
 
-    expect(canUndoCompletion(await journal.occurrencesOf(task.id))).toBe(true)
+    expect(canUndoCompletion(await occurrencesOf(journal, task.id))).toBe(true)
 
     await journal.undoCompletion(task.id)
-    expect(canUndoCompletion(await journal.occurrencesOf(task.id))).toBe(false)
+    expect(canUndoCompletion(await occurrencesOf(journal, task.id))).toBe(false)
   })
 
   it('reaches only the latest completion, one at a time', async () => {
@@ -808,7 +808,7 @@ describe('Undo Completion', () => {
     const restored = await journal.undoCompletion(task.id)
     expect(restored.scheduledDate).toBe('2026-03-17')
     expect(
-      (await journal.occurrencesOf(task.id)).map((one) => one.scheduledDate),
+      (await occurrencesOf(journal, task.id)).map((one) => one.scheduledDate),
     ).toEqual(['2026-03-17', '2026-03-16'])
   })
 
@@ -820,7 +820,7 @@ describe('Undo Completion', () => {
 
     // 18 March is Open and points back at 17 March, so 16 March is out of
     // reach: undoing it would open two occurrences at once.
-    const occurrences = await journal.occurrencesOf(task.id)
+    const occurrences = await occurrencesOf(journal, task.id)
     const open = openOccurrence(occurrences)!
     expect(open.scheduledDate).toBe('2026-03-18')
     expect(open.advancedFrom).toBe(
@@ -838,7 +838,7 @@ describe('Undo Completion', () => {
       recurrence: every(1, 'day'),
     })
 
-    expect(canUndoCompletion(await journal.occurrencesOf(task.id))).toBe(false)
+    expect(canUndoCompletion(await occurrencesOf(journal, task.id))).toBe(false)
     await expect(journal.undoCompletion(task.id)).rejects.toThrow(/latest completion/)
   })
 
@@ -907,7 +907,7 @@ describe('the one-Open-occurrence invariant', () => {
       await expect(brittle.completeTask(task.id)).rejects.toThrow()
 
       expect(await openCount(driver, task.id)).toBe(1)
-      const occurrences = await journal.occurrencesOf(task.id)
+      const occurrences = await occurrencesOf(journal, task.id)
       expect(occurrences).toHaveLength(1)
       expect(occurrences[0].scheduledDate).toBe('2026-03-16')
     }
@@ -932,7 +932,7 @@ describe('the one-Open-occurrence invariant', () => {
       await expect(brittle.undoCompletion(task.id)).rejects.toThrow()
 
       expect(await openCount(driver, task.id)).toBe(1)
-      expect(canUndoCompletion(await journal.occurrencesOf(task.id))).toBe(true)
+      expect(canUndoCompletion(await occurrencesOf(journal, task.id))).toBe(true)
     }
 
     expect((await journal.undoCompletion(task.id)).scheduledDate).toBe('2026-03-16')
@@ -965,10 +965,10 @@ describe('the one-Open-occurrence invariant', () => {
       const [standing] = await journal.openTasks()
       expect(standing.scheduledDate).toBe('2026-03-17')
       expect(standing.recurrenceAnchor).toBe('2026-03-16')
-      expect(openOccurrence(await journal.occurrencesOf(task.id))?.scheduledDate).toBe(
+      expect(openOccurrence(await occurrencesOf(journal, task.id))?.scheduledDate).toBe(
         '2026-03-17',
       )
-      expect(completedOccurrences(await journal.occurrencesOf(task.id))).toHaveLength(1)
+      expect(completedOccurrences(await occurrencesOf(journal, task.id))).toHaveLength(1)
     }
 
     // And the ordinary path still works afterwards.
@@ -979,7 +979,7 @@ describe('the one-Open-occurrence invariant', () => {
     })
     expect(reanchored.scheduledDate).toBe('2026-03-20')
     expect(await openCount(driver, task.id)).toBe(1)
-    expect(completedOccurrences(await journal.occurrencesOf(task.id))).toHaveLength(1)
+    expect(completedOccurrences(await occurrencesOf(journal, task.id))).toHaveLength(1)
   })
 
   it('leaves the series intact when Stop Recurrence is interrupted', async () => {
@@ -1003,13 +1003,13 @@ describe('the one-Open-occurrence invariant', () => {
     const [standing] = await journal.openTasks()
     expect(standing.recurrence).toEqual(every(1, 'day'))
     expect(standing.scheduledDate).toBe('2026-03-17')
-    expect(await journal.occurrencesOf(task.id)).toHaveLength(2)
+    expect(await occurrencesOf(journal, task.id)).toHaveLength(2)
 
     const stopped = await journal.stopRecurrence(task.id)
     expect(stopped.recurrence).toBeNull()
     expect(stopped.scheduledDate).toBe('2026-03-17')
     expect(await openCount(driver, task.id)).toBe(0)
-    expect(completedOccurrences(await journal.occurrencesOf(task.id))).toHaveLength(1)
+    expect(completedOccurrences(await occurrencesOf(journal, task.id))).toHaveLength(1)
   })
 
   it('leaves the whole Task behind when deleting is interrupted', async () => {
@@ -1027,7 +1027,7 @@ describe('the one-Open-occurrence invariant', () => {
     await expect(brittle.deleteTask(task.id)).rejects.toThrow()
 
     expect((await journal.openTasks()).map((one) => one.id)).toEqual([task.id])
-    expect(await journal.occurrencesOf(task.id)).toHaveLength(2)
+    expect(await occurrencesOf(journal, task.id)).toHaveLength(2)
   })
 })
 
@@ -1045,9 +1045,11 @@ describe('the occurrences of a whole list', () => {
 
     const each = await journal.occurrencesOfEach([repeating.id, ordinary.id])
 
-    // The same answer the one-Task read gives, in the same order.
-    expect(each[repeating.id]).toEqual(await journal.occurrencesOf(repeating.id))
-    expect(each[repeating.id]).toHaveLength(2)
+    // Newest slot first: the Open one, then the one just kept.
+    expect(each[repeating.id].map((one) => one.scheduledDate)).toEqual([
+      '2026-03-17',
+      '2026-03-16',
+    ])
     expect(ordinary.id in each).toBe(false)
   })
 

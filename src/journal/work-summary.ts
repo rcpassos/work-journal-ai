@@ -89,20 +89,16 @@ export async function selectWorkSummary({
   }
 }
 
-const formatGeneratedAt = localFormatter({
-  dateStyle: 'medium',
-  timeStyle: 'short',
-})
-
 /**
  * When a Work Summary was written, in the reader's own locale — the
  * generation time each snapshot carries beside its original range. A value,
  * not a rule: tests compute the same string from the same fixed clock rather
  * than matching prose across locales.
  */
-export function formatWorkSummaryGeneratedAt(at: Date): string {
-  return formatGeneratedAt(at)
-}
+export const formatWorkSummaryGeneratedAt = localFormatter({
+  dateStyle: 'medium',
+  timeStyle: 'short',
+})
 
 /**
  * Whether a Generate would refuse without spending a call. The two halves are
