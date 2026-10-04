@@ -222,10 +222,8 @@ export default function BackupSettings({ desktop }: { desktop: Desktop }) {
       </SettingsRow>
 
       <SettingsAside>
-        Taken automatically at launch into a backups folder beside the
-        journal, so it shares the disk's fate; Back up now goes wherever you
-        say, which is the copy that leaves this machine. Your API Key, Hotkeys
-        and settings are never included.
+        Taken automatically at launch. Back up now saves a copy wherever you
+        choose. Settings and API Key not included.
       </SettingsAside>
 
       <SettingsRow
@@ -247,12 +245,6 @@ export default function BackupSettings({ desktop }: { desktop: Desktop }) {
           </Button>
         </div>
       </SettingsRow>
-
-      <SettingsAside>
-        The current journal is kept as a rollback file beside it and never
-        deleted, and the app restarts into the restored one. Your API Key,
-        Hotkeys and settings are not restored.
-      </SettingsAside>
 
       <AlertDialog
         open={confirmingRestore}

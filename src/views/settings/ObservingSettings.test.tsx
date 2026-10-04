@@ -107,7 +107,7 @@ function showSettingsOnScreen(desktop: FakeDesktop, journal: Promise<Journal>) {
 }
 
 function observingSwitch(): HTMLElement {
-  return screen.getByRole('switch', { name: 'Add your commits to the journal' })
+  return screen.getByRole('switch', { name: 'Commits' })
 }
 
 function stored(desktop: FakeDesktop): Observing {

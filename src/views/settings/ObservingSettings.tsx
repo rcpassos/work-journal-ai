@@ -286,8 +286,8 @@ export default function ObservingSettings({
   return (
     <SettingsGroup>
       <SettingsRow
-        label="Add your commits to the journal"
-        explanation="Commits you made in the repositories you choose, added as Notes on the day they were authored. Nothing from before you turn this on."
+        label="Commits"
+        explanation="Your commits in the repositories you choose, added as Notes."
         controls="observing"
       >
         <Switch id="observing" checked={observing.enabled} onCheckedChange={toggle} />
@@ -343,7 +343,7 @@ export default function ObservingSettings({
       {pause.state === 'running' && (
         <SettingsRow
           label="Pause observing"
-          explanation="Work done during a pause never enters the journal — for a screen share, or a client's confidential work. A pause for an hour or until tomorrow ends by itself."
+          explanation="Work done during a pause never enters the journal."
         >
           <Menu>
             <MenuTrigger
@@ -363,7 +363,7 @@ export default function ObservingSettings({
       {pause.state === 'paused' && (
         <SettingsRow
           label={pause.label}
-          explanation="Observing is paused. Nothing done during the pause enters the journal — the pause is kept as when the work happened, so a commit from inside it never arrives, however late a sweep meets it."
+          explanation="Nothing done during the pause enters the journal."
         >
           <Button variant="outline" size="sm" onClick={resume}>
             Resume
@@ -372,10 +372,8 @@ export default function ObservingSettings({
       )}
 
       <SettingsAside>
-        Each commit becomes an ordinary Note: reword it, file it under a
-        Project, or delete it. Deleting one refuses that commit for good, and
-        one filed by hand stays filed that way. The repositories are only ever
-        read.
+        Repositories are only read. Deleting a commit's Note keeps it out for
+        good.
       </SettingsAside>
     </SettingsGroup>
   )

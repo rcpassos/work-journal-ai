@@ -100,9 +100,7 @@ export default function WorkSummaryPromptSettings({
       </SettingsRow>
 
       <SettingsAside>
-        Factual-grounding rules are always sent with it and cannot be edited
-        out. Left empty, the shipped voice is used — a model is never asked
-        nothing.
+        Left empty, the built-in prompt is used.
       </SettingsAside>
 
       {unsaved && (

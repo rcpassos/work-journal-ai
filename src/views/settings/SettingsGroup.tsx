@@ -1,10 +1,4 @@
-import { InfoIcon } from 'lucide-react'
 import { Card } from '@/components/ui/card'
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from '@/components/ui/tooltip'
 
 /**
  * One tab's card: the groups inside it divided by hairlines. The tab says what
@@ -26,10 +20,8 @@ export function SettingsGroup({ children }: { children: React.ReactNode }) {
  * it as one. `controls` names the control's element inside that heading, so the
  * name is also the control's label rather than text that merely sits beside it.
  *
- * The explanation is shown on hover or focus of the ⓘ beside the name, and
- * stays in the document as text for a screen reader to read in order. A row
- * that carries its paragraph at all times is a row nobody scans; a row whose
- * detail is one hover away is.
+ * The explanation is one short sentence, always shown under the name: what a
+ * setting is is the first thing a reader wants, so it is never hidden.
  */
 export function SettingsRow({
   label,
@@ -56,37 +48,14 @@ export function SettingsRow({
       }
     >
       <div className="flex flex-col">
-        {/*
-          The ⓘ is a sibling of the heading rather than a child of it: its own
-          name would otherwise become part of the heading's, and the heading is
-          what names the control beside it.
-        */}
-        <div className="flex items-center gap-1.5">
-          <h2 id={`${headingId(label)}-heading`} className="type-section">
-            {controls === undefined ? (
-              label
-            ) : (
-              <label htmlFor={controls}>{label}</label>
-            )}
-          </h2>
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <button
-                  type="button"
-                  aria-label={`About ${label}`}
-                  className="flex items-center rounded-sm text-muted-foreground transition-colors hover:text-foreground"
-                />
-              }
-            >
-              <InfoIcon className="size-3.5" />
-            </TooltipTrigger>
-            {/* A visual duplicate of the sentence already below, which a
-                screen reader would otherwise read twice. */}
-            <TooltipContent aria-hidden="true">{explanation}</TooltipContent>
-          </Tooltip>
-        </div>
-        <p className="sr-only">{explanation}</p>
+        <h2 id={`${headingId(label)}-heading`} className="type-section">
+          {controls === undefined ? (
+            label
+          ) : (
+            <label htmlFor={controls}>{label}</label>
+          )}
+        </h2>
+        <p className="type-meta text-muted-foreground">{explanation}</p>
       </div>
       <div
         className={
@@ -121,8 +90,8 @@ export function notStored(field: string): string {
 }
 
 /**
- * Standing context: a consequence the reader needs before they act, which is
- * exactly what must not be hidden behind a hover.
+ * Standing context under a group: a consequence the reader needs before they
+ * act, beyond the one sentence every row already says about itself.
  */
 export function SettingsAside({ children }: { children: React.ReactNode }) {
   return <p className="type-meta text-muted-foreground">{children}</p>

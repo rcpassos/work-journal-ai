@@ -231,7 +231,7 @@ both halves, a past month whose Tasks are long since closed, and a range with on
 - [ ] On a first run — with no `settings.json` in the app data directory — the Main Window opens on its Settings section and asks about starting at login.
 - [ ] Answering **Not now** leaves the app out of System Settings → General → Login Items, and the question is not asked again on the next launch.
 - [ ] Closing the window without answering counts as **Not now** — the app is not added to the login items, and the question is not asked again either.
-- [ ] Answering **Start at login** adds it, and the app launches after a log out and back in.
+- [ ] Answering **Start at Login** adds it, and the app launches after a log out and back in.
 - [ ] The checkbox afterwards adds and removes the login item, and matches what System Settings shows when the Settings section is re-opened.
 - [ ] The About tab of Settings shows the exact configured Tauri application version centered at the bottom.
 - [ ] A development build shows a **Dev** label beside that version; a release build shows the version without it.
@@ -243,7 +243,7 @@ both halves, a past month whose Tasks are long since closed, and a range with on
 
 Against a release build and a repository with commits of your own from today.
 
-- [ ] **Add your commits to the journal** reads off on a fresh install and offers no repositories until turned on; turning it on toasts.
+- [ ] **Commits** reads off on a fresh install and offers no repositories until turned on; turning it on toasts.
 - [ ] **Add Repository…** opens a folder picker (no path field); the chosen repository appears by name with your addresses offered unticked.
 - [ ] The row carries a **Project** field, empty — Unfiled — and typing at it offers the repository's name first; nothing is mapped until one of the offered names is picked or a name is typed and Enter is pressed.
 - [ ] Nothing arrives until an address is ticked; after ticking, a commit you make now appears in History within five minutes — muted, under the Project the row names, and hovering it says `Commit <short hash> · <repository>`.
@@ -446,7 +446,7 @@ Needs two builds: the one installed, and a release tagged after it.
 - [ ] Switching to History while the download runs leaves the app running: it must not quit out from under a section that never mentioned an update. Coming back to Settings is where the restart happens.
 - [ ] That line is genuinely on screen, not merely in the DOM. The suite can only prove the restart waits two frames; whether a frame was painted is a thing only eyes and a screen recording settle. Record the window during the update and step through the frames before it closes.
 - [ ] The version in the footer, and in the About item, is the new one after the restart.
-- [ ] **What's new** in Settings lists that version's changelog straight after the restart, with no check for updates first, and **Earlier versions** opens the ones before it. Neither needs the network: turn Wi-Fi off and reopen Settings.
+- [ ] **What's New** in Settings lists that version's changelog straight after the restart, with no check for updates first, and **Earlier versions** opens the ones before it. Neither needs the network: turn Wi-Fi off and reopen Settings.
 - [ ] `xattr -p com.apple.quarantine "/Applications/Work Journal.app"` reports no such attribute after an update — the terminal step belongs to the DMG only.
 - [ ] The journal, the settings, the Hotkeys and the API Key are all exactly as they were before the update.
 - [ ] With no network, the check says it could not be made rather than failing silently, and the rest of Settings keeps working.

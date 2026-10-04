@@ -1015,7 +1015,7 @@ describe('automatic Onboarding', () => {
     await showsSettings()
 
     const control = await screen.findByRole('switch', {
-      name: 'Start at login',
+      name: 'Start at Login',
     })
     await expect
       .poll(() => control.getAttribute('aria-checked'))
@@ -1062,7 +1062,7 @@ describe('automatic Onboarding', () => {
     // The save finished after the flow had gone: the row that stayed mounted
     // still heard it, rather than the window's snapshot keeping the old no.
     const control = await screen.findByRole('switch', {
-      name: 'Start at login',
+      name: 'Start at Login',
     })
     await expect
       .poll(() => control.getAttribute('aria-checked'))
@@ -1404,7 +1404,7 @@ describe('Meeting Import during Onboarding', () => {
     await showsSettings('Sources')
 
     const control = await screen.findByRole('switch', {
-      name: "Add today's meetings to the journal",
+      name: "Meetings",
     })
     await expect
       .poll(() => control.getAttribute('aria-checked'))
@@ -1468,7 +1468,7 @@ describe('Meeting Import during Onboarding', () => {
     // The file says on with Work ticked, and so does the section — the
     // held write's announcement was heard last, as it landed last.
     const control = await screen.findByRole('switch', {
-      name: "Add today's meetings to the journal",
+      name: "Meetings",
     })
     await expect
       .poll(() => control.getAttribute('aria-checked'))
