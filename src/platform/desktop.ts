@@ -52,6 +52,21 @@ export type MainSection =
   | typeof SETTINGS_SECTION
 
 /**
+ * The tabs of Settings, which opens on General. An Entry Point can ask for
+ * one besides: the Tray Menu's Check for Updates… names About, which is the
+ * only one the Rust side knows — must match `ABOUT_TAB` in
+ * `src-tauri/src/lib.rs`, as `src/platform/desktop-rust.test.ts` checks.
+ */
+export const ABOUT_TAB = 'about'
+
+export type SettingsTab =
+  | 'general'
+  | 'sources'
+  | 'intelligence'
+  | 'data'
+  | typeof ABOUT_TAB
+
+/**
  * An Entry Point named a section of the Main Window. Addressed to a window
  * already open — one this very request is about to build hears nothing and
  * asks for `requestedSection` instead. Must match `SECTION_REQUESTED_EVENT` in
@@ -378,12 +393,14 @@ export interface TaskAlertOpened {
 }
 
 /**
- * Which section of the Main Window an Entry Point named. Must match
- * `SectionRequested` in `src-tauri/src/lib.rs`, as
+ * Which section of the Main Window an Entry Point named, and which tab of
+ * Settings with it — null where it named none, which leaves Settings on the
+ * tab it is on. Must match `SectionRequested` in `src-tauri/src/lib.rs`, as
  * `src/platform/desktop-rust.test.ts` checks.
  */
 export interface SectionRequested {
   section: MainSection
+  tab: SettingsTab | null
 }
 
 /**
@@ -805,20 +822,20 @@ export interface Desktop {
   announceTaskAlertsReconciled(held: boolean): Promise<void>
   onTaskAlertsReconciled(handle: (held: boolean) => void): Promise<Unlisten>
   /**
-   * Which section the Entry Point that opened this window named, if it named
-   * one — asked for by the Main Window as it opens, and null when nothing was
+   * Which section the Entry Point that opened this window named, and the tab
+   * of Settings with it, if it named any — asked for by the Main Window as it opens, and null when nothing was
    * named, which resolves to History.
    *
    * Written down rather than only announced, for the same reason the Task
    * Alert is: a window built by the very request that names a section has no
    * webview yet. Handed over exactly once.
    */
-  requestedSection(): Promise<MainSection | null>
+  requestedSection(): Promise<SectionRequested | null>
   /**
    * An Entry Point named a section while the Main Window was already open, so
    * the window switches to it.
    */
-  onSectionRequested(handle: (section: MainSection) => void): Promise<Unlisten>
+  onSectionRequested(handle: (request: SectionRequested) => void): Promise<Unlisten>
 
   /**
    * The Task Alert that opened this window, if one did — asked for by Tasks

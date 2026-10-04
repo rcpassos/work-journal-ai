@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
+import { useState } from 'react'
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { toast } from 'sonner'
 import {
@@ -9,6 +10,7 @@ import {
   type FakeDesktop,
 } from '@/platform/testing/desktop'
 import ThemeProvider from '@/components/ThemeProvider'
+import type { SettingsTab } from '@/platform/desktop'
 import { createAppSettings } from '@/settings/app-settings'
 import type { Journal, JournalExport } from '@/journal/journal'
 import { DEFAULT_WORK_SUMMARY_PROMPT } from '@/settings/settings'
@@ -46,14 +48,30 @@ beforeAll(() => {
  */
 function showSettings(
   desktop: FakeDesktop,
+  tab: SettingsTab,
   journal: Promise<Journal> = new Promise<Journal>(() => {}),
 ) {
   const settings = createAppSettings(desktop)
-  render(
-    <ThemeProvider settings={settings}>
-      <SettingsView desktop={desktop} settings={settings} journal={journal} />
-    </ThemeProvider>,
-  )
+
+  // Opened on the tab the test is about, as the Main Window would hold it:
+  // a group on another tab is hidden, and a hidden group is out of the
+  // accessibility tree.
+  function Host() {
+    const [selected, setSelected] = useState(tab)
+    return (
+      <ThemeProvider settings={settings}>
+        <SettingsView
+          desktop={desktop}
+          settings={settings}
+          journal={journal}
+          tab={selected}
+          onTabChange={setSelected}
+        />
+      </ThemeProvider>
+    )
+  }
+
+  render(<Host />)
 }
 
 /** A journal that exports whatever it is told to, and nothing else. */
@@ -96,7 +114,7 @@ describe('the Import switch', () => {
       access: 'denied',
     })
 
-    showSettings(desktop)
+    showSettings(desktop, 'sources')
 
     // The mount effect has to have read the store and the access status.
     await screen.findByText(/calendar/i)
@@ -117,7 +135,7 @@ describe('the Import switch', () => {
       access: 'denied',
     })
 
-    showSettings(desktop)
+    showSettings(desktop, 'sources')
 
     await screen.findByText(/macOS is not allowing Work Journal/)
     importSwitch().click()
@@ -147,7 +165,7 @@ describe('the Import switch', () => {
       openSettingsStore: deferred.openSettingsStore,
     })
 
-    showSettings(desktop)
+    showSettings(desktop, 'sources')
 
     expect(isOn(importSwitch())).toBe(false)
     importSwitch().click()
@@ -178,7 +196,7 @@ describe('the Import switch', () => {
       openSettingsStore: deferred.openSettingsStore,
     })
 
-    showSettings(desktop)
+    showSettings(desktop, 'sources')
 
     // The switch reads off until the read lands, so the user turns Import on
     // and ticks a calendar while the file is still opening.
@@ -215,7 +233,7 @@ describe('the Import switch', () => {
     desktop.announceImportChanged = () =>
       Promise.reject(new Error('the window is gone'))
 
-    showSettings(desktop)
+    showSettings(desktop, 'sources')
 
     expect(isOn(importSwitch())).toBe(false)
     importSwitch().click()
@@ -264,7 +282,7 @@ describe('the Import switch', () => {
     })
     vi.spyOn(console, 'error').mockImplementation(() => {})
 
-    showSettings(desktop)
+    showSettings(desktop, 'sources')
 
     const work = await screen.findByRole('checkbox', { name: /Work/ })
     work.click()
@@ -299,7 +317,7 @@ describe('the Import switch', () => {
       openSettingsStore: deferred.openSettingsStore,
     })
 
-    showSettings(desktop)
+    showSettings(desktop, 'sources')
 
     // The switch reads off at its default while the file is still opening,
     // so the user turns Import on; macOS answers the grant.
@@ -327,7 +345,7 @@ describe('the Theme control', () => {
   it('offers the three Themes and records the one pressed', async () => {
     const desktop = fakeDesktop({ stored: { startAtLogin: false } })
 
-    showSettings(desktop)
+    showSettings(desktop, 'general')
 
     for (const name of ['Light', 'Dark', 'System']) {
       expect(screen.getByRole('button', { name })).toBeTruthy()
@@ -344,7 +362,7 @@ describe('Start at login', () => {
   it('adds the app to the login items when switched on', async () => {
     const desktop = fakeDesktop({ stored: { startAtLogin: false } })
 
-    showSettings(desktop)
+    showSettings(desktop, 'general')
 
     const control = await screen.findByRole('switch', {
       name: 'Start at login',
@@ -363,7 +381,7 @@ describe('Start at login', () => {
     // earlier run left there.
     desktop.loginItem = true
 
-    showSettings(desktop)
+    showSettings(desktop, 'general')
 
     const control = await screen.findByRole('switch', {
       name: 'Start at login',
@@ -385,7 +403,7 @@ describe('Start at login', () => {
       openSettingsStore: deferred.openSettingsStore,
     })
 
-    showSettings(desktop)
+    showSettings(desktop, 'general')
 
     const control = await screen.findByRole('switch', {
       name: 'Start at login',
@@ -422,7 +440,7 @@ describe('Start at login', () => {
     desktop.setStartAtLogin = () =>
       Promise.reject(new Error('macOS refused'))
 
-    showSettings(desktop)
+    showSettings(desktop, 'general')
 
     const control = await screen.findByRole('switch', {
       name: 'Start at login',
@@ -491,7 +509,7 @@ describe('Start at login', () => {
       return readAnswered.then(() => value)
     }
 
-    showSettings(desktop)
+    showSettings(desktop, 'general')
 
     const control = await screen.findByRole('switch', {
       name: 'Start at login',
@@ -551,7 +569,7 @@ describe('Start at login', () => {
       }),
     })
 
-    showSettings(desktop)
+    showSettings(desktop, 'general')
 
     const control = await screen.findByRole('switch', {
       name: 'Start at login',
@@ -584,6 +602,7 @@ describe('replaying the Onboarding flow', () => {
           desktop={desktop}
           settings={settings}
           journal={new Promise<Journal>(() => {})}
+          tab="about"
           onReplayOnboarding={replayed}
         />
       </ThemeProvider>,
@@ -607,7 +626,7 @@ describe('the two Hotkeys', () => {
       },
     })
 
-    showSettings(desktop)
+    showSettings(desktop, 'general')
 
     await screen.findByRole('group', { name: 'Current Note Hotkey' })
     expect(chips('Current Note Hotkey')).toEqual(['Cmd', 'Shift', 'J'])
@@ -622,7 +641,7 @@ describe('the two Hotkeys', () => {
       },
     })
 
-    showSettings(desktop)
+    showSettings(desktop, 'general')
 
     const problem = await screen.findByRole('alert')
     expect(problem.textContent).toContain('Task Hotkey')
@@ -642,7 +661,7 @@ describe('the two Hotkeys', () => {
       }
     }
 
-    showSettings(desktop)
+    showSettings(desktop, 'general')
 
     const change = await screen.findByRole('button', {
       name: 'Change Task Hotkey',
@@ -672,7 +691,7 @@ describe('the two Hotkeys', () => {
     desktop.setHotkey = () =>
       Promise.reject(new Error('it is already the Note Hotkey'))
 
-    showSettings(desktop)
+    showSettings(desktop, 'general')
 
     const change = await screen.findByRole('button', {
       name: 'Change Task Hotkey',
@@ -712,7 +731,7 @@ describe('the two Hotkeys', () => {
       openSettingsStore: deferred.openSettingsStore,
     })
 
-    showSettings(desktop)
+    showSettings(desktop, 'general')
 
     const change = await screen.findByRole('button', {
       name: 'Change Note Hotkey',
@@ -753,7 +772,7 @@ describe('Escape', () => {
       closed += 1
     }
 
-    showSettings(desktop)
+    showSettings(desktop, 'general')
 
     const change = await screen.findByRole('button', {
       name: 'Change Note Hotkey',
@@ -780,6 +799,7 @@ describe('Export', () => {
 
     showSettings(
       desktop,
+      'data',
       journalExporting({ markdown: '- a note', noteCount: 1, taskCount: 0 }),
     )
 
@@ -819,7 +839,7 @@ describe('Backup', () => {
     const desktop = fakeDesktop({ stored: { startAtLogin: false } })
     desktop.automaticBackupStatus = { count: 2, newestTakenAt: 1_788_425_100 }
 
-    showSettings(desktop)
+    showSettings(desktop, 'data')
 
     await expect
       .poll(backupStatus)
@@ -830,7 +850,7 @@ describe('Backup', () => {
     const desktop = fakeDesktop({ stored: { startAtLogin: false } })
     desktop.automaticBackupStatus = { count: 0, newestTakenAt: null }
 
-    showSettings(desktop)
+    showSettings(desktop, 'data')
 
     await expect
       .poll(backupStatus)
@@ -841,7 +861,7 @@ describe('Backup', () => {
     const desktop = fakeDesktop({ stored: { startAtLogin: false } })
     desktop.chosenBackupLocation = '/Volumes/Offsite/work-journal-20260903T084500.db'
 
-    showSettings(desktop)
+    showSettings(desktop, 'data')
 
     ;(await screen.findByRole('button', { name: 'Back up now' })).click()
 
@@ -865,7 +885,7 @@ describe('Backup', () => {
     desktop.backups.push('/Volumes/Offsite/work-journal-20260903T084500.db')
     desktop.chosenBackupLocation = '/Volumes/Offsite/work-journal-20260903T084500.db'
 
-    showSettings(desktop)
+    showSettings(desktop, 'data')
 
     ;(await screen.findByRole('button', { name: 'Back up now' })).click()
 
@@ -896,7 +916,7 @@ describe('Backup', () => {
     const realBackup = desktop.backupJournal.bind(desktop)
     desktop.backupJournal = (path) => writing.then(() => realBackup(path))
 
-    showSettings(desktop)
+    showSettings(desktop, 'data')
 
     ;(await screen.findByRole('button', { name: 'Back up now' })).click()
 
@@ -924,7 +944,7 @@ describe('Backup', () => {
     const desktop = fakeDesktop({ stored: { startAtLogin: false } })
     desktop.chosenBackupLocation = null
 
-    showSettings(desktop)
+    showSettings(desktop, 'data')
 
     ;(await screen.findByRole('button', { name: 'Back up now' })).click()
 
@@ -940,7 +960,7 @@ describe('Backup', () => {
     desktop.backupFails = true
     vi.spyOn(console, 'error').mockImplementation(() => {})
 
-    showSettings(desktop)
+    showSettings(desktop, 'data')
 
     ;(await screen.findByRole('button', { name: 'Back up now' })).click()
 
@@ -953,7 +973,7 @@ describe('Backup', () => {
   it('reveals the automatic backups when asked', async () => {
     const desktop = fakeDesktop({ stored: { startAtLogin: false } })
 
-    showSettings(desktop)
+    showSettings(desktop, 'data')
 
     ;(await screen.findByRole('button', { name: 'Reveal backups' })).click()
 
@@ -965,7 +985,7 @@ describe('Backup', () => {
     desktop.revealFails = true
     vi.spyOn(console, 'error').mockImplementation(() => {})
 
-    showSettings(desktop)
+    showSettings(desktop, 'data')
 
     ;(await screen.findByRole('button', { name: 'Reveal backups' })).click()
 
@@ -980,7 +1000,7 @@ describe('Backup', () => {
   it('keeps its promise small: no Key, no Hotkeys, no settings, no safety claim', async () => {
     const desktop = fakeDesktop({ stored: { startAtLogin: false } })
 
-    showSettings(desktop)
+    showSettings(desktop, 'data')
 
     const group = screen
       .getByRole('heading', { name: 'Backup' })
@@ -1018,7 +1038,7 @@ describe('Restore', () => {
   it('says before confirming that the journal is replaced, kept, restarted, and what is not restored', async () => {
     const desktop = fakeDesktop({ stored: { startAtLogin: false } })
 
-    showSettings(desktop)
+    showSettings(desktop, 'data')
 
     ;(await screen.findByRole('button', { name: 'Restore from backup…' })).click()
 
@@ -1040,7 +1060,7 @@ describe('Restore', () => {
     const desktop = fakeDesktop({ stored: { startAtLogin: false } })
     desktop.chosenRestoreCandidate = '/Volumes/Offsite/work-journal-20260903T084500.db'
 
-    showSettings(desktop)
+    showSettings(desktop, 'data')
 
     ;(await screen.findByRole('button', { name: 'Restore from backup…' })).click()
 
@@ -1061,7 +1081,7 @@ describe('Restore', () => {
     const desktop = fakeDesktop({ stored: { startAtLogin: false } })
     desktop.chosenRestoreCandidate = null
 
-    showSettings(desktop)
+    showSettings(desktop, 'data')
 
     ;(await screen.findByRole('button', { name: 'Restore from backup…' })).click()
     await confirmRestoreDialog()
@@ -1079,7 +1099,7 @@ describe('Restore', () => {
       'the backup needs migration version 7, newer than this build understands (6)'
     vi.spyOn(console, 'error').mockImplementation(() => {})
 
-    showSettings(desktop)
+    showSettings(desktop, 'data')
 
     ;(await screen.findByRole('button', { name: 'Restore from backup…' })).click()
     await confirmRestoreDialog()
@@ -1104,7 +1124,7 @@ describe('Restore', () => {
     const frames = holdFrames()
 
     try {
-      showSettings(desktop)
+      showSettings(desktop, 'data')
 
       ;(await screen.findByRole('button', { name: 'Restore from backup…' })).click()
       await confirmRestoreDialog()
@@ -1141,7 +1161,7 @@ describe('Restore', () => {
     const frames = holdFrames()
 
     try {
-      showSettings(desktop)
+      showSettings(desktop, 'data')
 
       ;(await screen.findByRole('button', { name: 'Restore from backup…' })).click()
       await confirmRestoreDialog()
@@ -1167,7 +1187,7 @@ describe('Restore', () => {
       throw new Error('The process would not go.')
     }
 
-    showSettings(desktop)
+    showSettings(desktop, 'data')
 
     ;(await screen.findByRole('button', { name: 'Restore from backup…' })).click()
     await confirmRestoreDialog()
@@ -1183,7 +1203,7 @@ describe("What's new", () => {
   it('shows the shipped changelog in Settings, with no check for updates first', async () => {
     const desktop = fakeDesktop({ stored: { startAtLogin: false } })
 
-    showSettings(desktop)
+    showSettings(desktop, 'about')
 
     // The changelog is in the build, so the group is answerable the moment
     // Settings is on screen — the release notes beside it need a release to
@@ -1209,7 +1229,7 @@ describe('Updates', () => {
   it('says the build is current when nothing newer has been released', async () => {
     const desktop = fakeDesktop({ stored: { startAtLogin: false } })
 
-    showSettings(desktop)
+    showSettings(desktop, 'about')
 
     const button = await screen.findByRole('button', {
       name: 'Check for updates',
@@ -1228,7 +1248,7 @@ describe('Updates', () => {
     const desktop = fakeDesktop({ stored: { startAtLogin: false } })
     desktop.availableUpdate = { version: '0.9.0', notes: [] }
 
-    showSettings(desktop)
+    showSettings(desktop, 'about')
 
     ;(await screen.findByRole('button', { name: 'Check for updates' })).click()
 
@@ -1270,7 +1290,7 @@ describe('Updates', () => {
       return new Promise<void>(() => {})
     }
 
-    showSettings(desktop)
+    showSettings(desktop, 'about')
 
     ;(await screen.findByRole('button', { name: 'Check for updates' })).click()
 
@@ -1301,7 +1321,7 @@ describe('Updates', () => {
     // is what an installed copy updating today is most likely to find.
     desktop.availableUpdate = { version: '0.9.0', notes: [] }
 
-    showSettings(desktop)
+    showSettings(desktop, 'about')
 
     ;(await screen.findByRole('button', { name: 'Check for updates' })).click()
 
@@ -1315,7 +1335,7 @@ describe('Updates', () => {
     const desktop = fakeDesktop({ stored: { startAtLogin: false } })
     desktop.updateCheckFails = true
 
-    showSettings(desktop)
+    showSettings(desktop, 'about')
 
     ;(await screen.findByRole('button', { name: 'Check for updates' })).click()
 
@@ -1330,7 +1350,7 @@ describe('Updates', () => {
     desktop.availableUpdate = { version: '0.9.0', notes: [] }
     desktop.updateInstallFails = true
 
-    showSettings(desktop)
+    showSettings(desktop, 'about')
 
     ;(await screen.findByRole('button', { name: 'Check for updates' })).click()
     ;(await screen.findByRole('button', { name: 'Install 0.9.0' })).click()
@@ -1357,7 +1377,7 @@ describe('Updates', () => {
       return new Promise<void>(() => {})
     }
 
-    showSettings(desktop)
+    showSettings(desktop, 'about')
 
     ;(await screen.findByRole('button', { name: 'Check for updates' })).click()
     ;(await screen.findByRole('button', { name: 'Install 0.9.0' })).click()
@@ -1381,7 +1401,11 @@ describe('Updates', () => {
     const frames = holdFrames()
 
     try {
-      showSettings(desktop)
+      showSettings(desktop, 'about')
+      // The tabs ask for frames of their own as they mount, which are not the
+      // restart's to wait for.
+      await screen.findByRole('button', { name: 'Check for updates' })
+      frames.drain()
 
       ;(await screen.findByRole('button', { name: 'Check for updates' })).click()
       ;(await screen.findByRole('button', { name: 'Install 0.9.0' })).click()
@@ -1416,7 +1440,7 @@ describe('Updates', () => {
     const frames = holdFrames()
 
     try {
-      showSettings(desktop)
+      showSettings(desktop, 'about')
 
       ;(await screen.findByRole('button', { name: 'Check for updates' })).click()
       ;(await screen.findByRole('button', { name: 'Install 0.9.0' })).click()
@@ -1445,7 +1469,7 @@ describe('Updates', () => {
       throw new Error('The process would not go.')
     }
 
-    showSettings(desktop)
+    showSettings(desktop, 'about')
 
     ;(await screen.findByRole('button', { name: 'Check for updates' })).click()
     ;(await screen.findByRole('button', { name: 'Install 0.9.0' })).click()
@@ -1478,7 +1502,7 @@ describe('Updates', () => {
       return new Promise<void>(() => {})
     }
 
-    showSettings(desktop)
+    showSettings(desktop, 'about')
 
     ;(await screen.findByRole('button', { name: 'Check for updates' })).click()
     ;(await screen.findByRole('button', { name: 'Install 0.9.0' })).click()
@@ -1491,7 +1515,7 @@ describe('save confirmations', () => {
   it('says what a Start at Login press did', async () => {
     const desktop = fakeDesktop({ stored: { startAtLogin: false } })
 
-    showSettings(desktop)
+    showSettings(desktop, 'general')
 
     const control = await screen.findByRole('switch', {
       name: 'Start at login',
@@ -1506,7 +1530,7 @@ describe('save confirmations', () => {
   it('replaces one field’s toast rather than stacking one per keystroke', async () => {
     const desktop = fakeDesktop({ stored: { startAtLogin: false } })
 
-    showSettings(desktop)
+    showSettings(desktop, 'sources')
 
     const model = await screen.findByLabelText('Model')
     fireEvent.change(model, { target: { value: 'llama3' } })
@@ -1539,7 +1563,7 @@ describe('save confirmations', () => {
     })
     vi.spyOn(console, 'error').mockImplementation(() => {})
 
-    showSettings(desktop)
+    showSettings(desktop, 'intelligence')
 
     fireEvent.change(await screen.findByLabelText('Base URL'), {
       target: { value: 'http://localhost:11434/v1' },
@@ -1578,7 +1602,7 @@ describe('save confirmations', () => {
     })
     vi.spyOn(console, 'error').mockImplementation(() => {})
 
-    showSettings(desktop)
+    showSettings(desktop, 'general')
 
     screen.getByRole('button', { name: 'Dark' }).click()
     await expect.poll(() => toasts().join(' | ')).toBe('Theme saved.')
@@ -1593,7 +1617,7 @@ describe('save confirmations', () => {
   it('confirms a Hotkey remap, and a refused one, by the setting’s own name', async () => {
     const desktop = fakeDesktop({ stored: { startAtLogin: false } })
 
-    showSettings(desktop)
+    showSettings(desktop, 'general')
 
     const change = await screen.findByRole('button', {
       name: 'Change Note Hotkey',
@@ -1672,7 +1696,7 @@ describe('save confirmations', () => {
       apiKey: 'sk-from-an-earlier-run',
     })
 
-    showSettings(desktop)
+    showSettings(desktop, 'intelligence')
 
     await screen.findByText(/A key is saved/)
     screen.getByRole('button', { name: 'Clear' }).click()
@@ -1692,7 +1716,7 @@ describe('save confirmations', () => {
       calendars: [{ id: 'work', title: 'Work', source: 'iCloud' }],
     })
 
-    showSettings(desktop)
+    showSettings(desktop, 'sources')
 
     // On, over a permission already granted: no ask, just the wish.
     importSwitch().click()
@@ -1714,7 +1738,7 @@ describe('save confirmations', () => {
       access: 'denied',
     })
 
-    showSettings(desktop)
+    showSettings(desktop, 'sources')
 
     // Pressed against a refusal: the wish is stored anyway, and the toast
     // says what the press did — that Import starts the moment macOS allows
@@ -1760,7 +1784,7 @@ describe('save confirmations', () => {
     })
     vi.spyOn(console, 'error').mockImplementation(() => {})
 
-    showSettings(desktop)
+    showSettings(desktop, 'sources')
 
     importSwitch().click()
 
@@ -1779,7 +1803,7 @@ describe('save confirmations', () => {
       calendars: [{ id: 'work', title: 'Work', source: 'iCloud' }],
     })
 
-    showSettings(desktop)
+    showSettings(desktop, 'sources')
 
     const work = await screen.findByRole('checkbox', { name: /Work/ })
     work.click()
@@ -1790,7 +1814,7 @@ describe('save confirmations', () => {
   it('confirms a Work Summary Prompt keystroke', async () => {
     const desktop = fakeDesktop({ stored: { startAtLogin: false } })
 
-    showSettings(desktop)
+    showSettings(desktop, 'sources')
 
     fireEvent.change(await screen.findByLabelText('Work Summary Prompt'), {
       target: { value: 'Write it in pirate speak.' },
@@ -1802,9 +1826,122 @@ describe('save confirmations', () => {
   })
 })
 
+describe('the tabs', () => {
+  /** The headings showing: one per setting, the way a screen reader lists them. */
+  function visibleSettings(): string[] {
+    return screen
+      .getAllByRole('heading', { level: 2 })
+      .map((heading) => heading.textContent ?? '')
+  }
+
+  it('offers five, and opens on General', () => {
+    const desktop = fakeDesktop()
+    const settings = createAppSettings(desktop)
+    render(
+      <ThemeProvider settings={settings}>
+        <SettingsView
+          desktop={desktop}
+          settings={settings}
+          journal={new Promise<Journal>(() => {})}
+        />
+      </ThemeProvider>,
+    )
+
+    expect(
+      screen.getAllByRole('tab').map((tab) => tab.textContent),
+    ).toEqual(['General', 'Sources', 'Intelligence', 'Data', 'About'])
+    expect(
+      screen.getByRole('tab', { name: 'General' }).getAttribute('aria-selected'),
+    ).toBe('true')
+  })
+
+  it('shows the groups of the selected tab and no others', async () => {
+    showSettings(fakeDesktop(), 'general')
+
+    expect(visibleSettings()).toEqual([
+      'Start at login',
+      'Theme',
+      'Note Hotkey',
+      'Task Hotkey',
+      'Task Alerts',
+    ])
+
+    for (const [tab, settings] of [
+      [
+        'Sources',
+        ["Add today's meetings to the journal", 'Add your commits to the journal'],
+      ],
+      [
+        'Intelligence',
+        ['Base URL', 'Model', 'API Key', 'Work Summary Prompt'],
+      ],
+      ['Data', ['Export', 'Backup', 'Restore']],
+      ['About', ['Updates', "What's new", 'Onboarding']],
+    ] as const) {
+      screen.getByRole('tab', { name: tab }).click()
+      await expect.poll(visibleSettings).toEqual(settings)
+    }
+  })
+
+  it('keeps what was typed on a tab while another one shows', async () => {
+    showSettings(fakeDesktop(), 'intelligence')
+
+    fireEvent.change(await screen.findByLabelText('API Key'), {
+      target: { value: 'sk-unsaved' },
+    })
+
+    screen.getByRole('tab', { name: 'General' }).click()
+    await screen.findByRole('switch', { name: 'Start at login' })
+    // Still in the document, but hidden: out of reach until its tab is.
+    expect(screen.getByLabelText('API Key').closest('[hidden]')).not.toBeNull()
+
+    screen.getByRole('tab', { name: 'Intelligence' }).click()
+    expect(
+      ((await screen.findByLabelText('API Key')) as HTMLInputElement).value,
+    ).toBe('sk-unsaved')
+  })
+
+  it('keeps an export running while another tab shows', async () => {
+    let finish!: () => void
+    const held = new Promise<void>((resolve) => {
+      finish = resolve
+    })
+    const desktop = fakeDesktop()
+    const write = desktop.exportJournal.bind(desktop)
+    desktop.exportJournal = async (markdown, fileName) => {
+      await held
+      return write(markdown, fileName)
+    }
+    showSettings(
+      desktop,
+      'data',
+      journalExporting({ markdown: '- a note', noteCount: 1, taskCount: 0 }),
+    )
+
+    ;(
+      await screen.findByRole('button', { name: 'Export all to Markdown' })
+    ).click()
+    screen.getByRole('tab', { name: 'General' }).click()
+    await screen.findByRole('switch', { name: 'Start at login' })
+    finish()
+    await expect.poll(() => desktop.exported.length).toBe(1)
+
+    screen.getByRole('tab', { name: 'Data' }).click()
+    expect(await screen.findByText(/Exported/)).toBeTruthy()
+  })
+
+  it('keeps the version footer on About', async () => {
+    showSettings(fakeDesktop(), 'general')
+
+    expect(screen.queryByLabelText('Application version')).toBeNull()
+    screen.getByRole('tab', { name: 'About' }).click()
+    expect(await screen.findByLabelText('Application version')).toBeTruthy()
+  })
+})
+
 describe('the window chrome', () => {
   it('keeps a strip above everything for the traffic lights to sit in', async () => {
-    showSettings(fakeDesktop())
+    showSettings(fakeDesktop(), 'general')
     await screen.findByText('Note Hotkey')
 
     const strip = titleBarStrip()
@@ -1863,10 +2000,13 @@ async function readLanded(model = 'gpt-stored'): Promise<void> {
 
 describe('Task Alerts', () => {
   it('reports what macOS allows, asked afresh every time', async () => {
-    showSettings(fakeDesktop({
-      stored: { startAtLogin: false },
-      alertPermission: 'granted',
-    }))
+    showSettings(
+      fakeDesktop({
+        stored: { startAtLogin: false },
+        alertPermission: 'granted',
+      }),
+      'general',
+    )
 
     const row = await screen.findByText('Task Alerts')
     expect(row.closest('section')?.textContent).toContain('Allowed')
@@ -1876,10 +2016,13 @@ describe('Task Alerts', () => {
   })
 
   it('says the app has not asked yet, and why', async () => {
-    showSettings(fakeDesktop({
-      stored: { startAtLogin: false },
-      alertPermission: 'undetermined',
-    }))
+    showSettings(
+      fakeDesktop({
+        stored: { startAtLogin: false },
+        alertPermission: 'undetermined',
+      }),
+      'general',
+    )
 
     await screen.findByText('Task Alerts')
     expect(
@@ -1894,7 +2037,7 @@ describe('Task Alerts', () => {
     })
     let announced = 0
     void desktop.onTasksChanged(() => (announced += 1))
-    showSettings(desktop)
+    showSettings(desktop, 'general')
     await screen.findByText('Task Alerts')
 
     // The user goes to System Settings, turns it on, and comes back.
@@ -1911,7 +2054,7 @@ describe('Task Alerts', () => {
       stored: { startAtLogin: false },
       alertPermission: 'denied',
     })
-    showSettings(desktop)
+    showSettings(desktop, 'general')
 
     await screen.findByText('Task Alerts')
     expect(
@@ -1931,7 +2074,7 @@ describe('Model Access', () => {
   it('remembers the Base URL and the Model as they are typed', async () => {
     const desktop = fakeDesktop({ stored: { startAtLogin: false } })
 
-    showSettings(desktop)
+    showSettings(desktop, 'intelligence')
 
     const baseUrl = await screen.findByLabelText('Base URL')
     // OpenAI's until the user points it somewhere else.
@@ -1957,7 +2100,7 @@ describe('Model Access', () => {
       },
     })
 
-    showSettings(desktop)
+    showSettings(desktop, 'intelligence')
 
     const baseUrl = (await screen.findByLabelText(
       'Base URL',
@@ -1971,7 +2114,7 @@ describe('Model Access', () => {
   it('puts the API Key in the Keychain and never in the settings file', async () => {
     const desktop = fakeDesktop({ stored: { startAtLogin: false } })
 
-    showSettings(desktop)
+    showSettings(desktop, 'intelligence')
 
     await screen.findByText(/No key is saved/)
     fireEvent.change(screen.getByLabelText('API Key'), {
@@ -1993,7 +2136,7 @@ describe('Model Access', () => {
       apiKey: 'sk-from-an-earlier-run',
     })
 
-    showSettings(desktop)
+    showSettings(desktop, 'intelligence')
 
     await screen.findByText(/A key is saved/)
     expect((screen.getByLabelText('API Key') as HTMLInputElement).value).toBe('')
@@ -2006,7 +2149,7 @@ describe('Model Access', () => {
       apiKey: 'sk-from-an-earlier-run',
     })
 
-    showSettings(desktop)
+    showSettings(desktop, 'intelligence')
 
     const clear = await screen.findByRole('button', { name: 'Clear' })
     clear.click()
@@ -2022,7 +2165,7 @@ describe('Model Access', () => {
       keychainRefuses: true,
     })
 
-    showSettings(desktop)
+    showSettings(desktop, 'intelligence')
 
     // In the Keychain's own words, so a locked one and a denied prompt do not
     // read the same.
@@ -2031,13 +2174,15 @@ describe('Model Access', () => {
     expect(screen.queryByRole('button', { name: 'Clear' })).toBe(null)
     expect(document.body.textContent).not.toContain('A key is saved')
     // Every other setting still answers for itself.
+    screen.getByRole('tab', { name: 'General' }).click()
     const startAtLogin = await screen.findByRole('switch', {
       name: 'Start at login',
     })
     startAtLogin.click()
     await expect.poll(() => desktop.loginItem).toBe(true)
 
-    fireEvent.change(screen.getByLabelText('Model'), {
+    screen.getByRole('tab', { name: 'Intelligence' }).click()
+    fireEvent.change(await screen.findByLabelText('Model'), {
       target: { value: 'gpt-test' },
     })
     await expect.poll(() => desktop.stored.model).toBe('gpt-test')
@@ -2060,7 +2205,7 @@ describe('Model Access', () => {
       openSettingsStore: deferred.openSettingsStore,
     })
 
-    showSettings(desktop)
+    showSettings(desktop, 'intelligence')
 
     // The field is on screen at its default while the file is still opening.
     const baseUrl = screen.getByLabelText('Base URL') as HTMLInputElement
@@ -2100,7 +2245,7 @@ describe('Model Access', () => {
       }),
     })
 
-    showSettings(desktop)
+    showSettings(desktop, 'intelligence')
 
     fireEvent.change(await screen.findByLabelText('Base URL'), {
       target: { value: 'http://localhost:11434/v1' },
@@ -2156,7 +2301,7 @@ describe('Model Access', () => {
       return ask()
     }
 
-    showSettings(desktop)
+    showSettings(desktop, 'intelligence')
 
     const baseUrl = await screen.findByLabelText('Base URL')
     // The coordinated read has landed by the time the stored Base URL is
@@ -2197,7 +2342,7 @@ describe('Model Access', () => {
       }),
     })
 
-    showSettings(desktop)
+    showSettings(desktop, 'intelligence')
 
     const baseUrl = (await screen.findByLabelText(
       'Base URL',
@@ -2220,7 +2365,7 @@ describe('Model Access', () => {
     })
     vi.spyOn(console, 'error').mockImplementation(() => {})
 
-    showSettings(desktop)
+    showSettings(desktop, 'intelligence')
 
     const clear = await screen.findByRole('button', { name: 'Clear' })
     desktop.keychainRefuses = true
@@ -2245,7 +2390,7 @@ describe('Model Access', () => {
     })
     vi.spyOn(console, 'error').mockImplementation(() => {})
 
-    showSettings(desktop)
+    showSettings(desktop, 'intelligence')
 
     expect(
       await screen.findByText(/the keychain could not be reached/),
@@ -2274,7 +2419,7 @@ describe('Model Access', () => {
       apiKey: 'sk-from-an-earlier-run',
     })
 
-    showSettings(desktop)
+    showSettings(desktop, 'intelligence')
 
     const clear = await screen.findByRole('button', { name: 'Clear' })
     desktop.keychainRefuses = true
@@ -2297,7 +2442,7 @@ describe('the Work Summary Prompt', () => {
   it('opens on the shipped prompt, and remembers what is typed', async () => {
     const desktop = fakeDesktop({ stored: { startAtLogin: false } })
 
-    showSettings(desktop)
+    showSettings(desktop, 'intelligence')
 
     const prompt = await screen.findByLabelText('Work Summary Prompt')
     // The user starts from the shipped prompt rather than from a blank box.
@@ -2320,7 +2465,7 @@ describe('the Work Summary Prompt', () => {
       },
     })
 
-    showSettings(desktop)
+    showSettings(desktop, 'intelligence')
 
     const prompt = (await screen.findByLabelText(
       'Work Summary Prompt',
@@ -2340,7 +2485,7 @@ describe('the Work Summary Prompt', () => {
       },
     })
 
-    showSettings(desktop)
+    showSettings(desktop, 'intelligence')
 
     const prompt = (await screen.findByLabelText(
       'Work Summary Prompt',
@@ -2356,7 +2501,7 @@ describe('the Work Summary Prompt', () => {
       },
     })
 
-    showSettings(desktop)
+    showSettings(desktop, 'intelligence')
 
     fireEvent.change(await screen.findByLabelText('Work Summary Prompt'), {
       target: { value: 'Write it in pirate speak.' },
@@ -2381,7 +2526,7 @@ describe('the Work Summary Prompt', () => {
     // shipped prompt by the very first read after it.
     const desktop = fakeDesktop({ stored: { startAtLogin: false } })
 
-    showSettings(desktop)
+    showSettings(desktop, 'intelligence')
 
     fireEvent.change(await screen.findByLabelText('Work Summary Prompt'), {
       target: { value: '' },
@@ -2424,7 +2569,7 @@ describe('the Work Summary Prompt', () => {
       },
     })
 
-    showSettings(desktop)
+    showSettings(desktop, 'intelligence')
 
     // The field is on screen at its default while the file is still opening.
     const prompt = screen.getByLabelText('Work Summary Prompt') as HTMLTextAreaElement
@@ -2467,7 +2612,7 @@ describe('the Work Summary Prompt', () => {
       }),
     })
 
-    showSettings(desktop)
+    showSettings(desktop, 'intelligence')
 
     fireEvent.change(await screen.findByLabelText('Work Summary Prompt'), {
       target: { value: 'Write it in pirate speak.' },
@@ -2500,7 +2645,7 @@ describe('the ⓘ beside a setting', () => {
   }
 
   it('keeps the explanation in the page while the tooltip is closed', () => {
-    showSettings(fakeDesktop({ stored: { startAtLogin: false } }))
+    showSettings(fakeDesktop({ stored: { startAtLogin: false } }), 'data')
 
     expect(
       screen.getByText(
@@ -2511,7 +2656,7 @@ describe('the ⓘ beside a setting', () => {
   })
 
   it('leaves the setting name as the name of its control', () => {
-    showSettings(fakeDesktop({ stored: { startAtLogin: false } }))
+    showSettings(fakeDesktop({ stored: { startAtLogin: false } }), 'data')
 
     // The ⓘ is a sibling of the heading, not a child of it: inside, its own
     // name would join the heading's and so the control's.
@@ -2521,7 +2666,7 @@ describe('the ⓘ beside a setting', () => {
   })
 
   it('is an ordinary tab stop, and says the explanation when focused', async () => {
-    showSettings(fakeDesktop({ stored: { startAtLogin: false } }))
+    showSettings(fakeDesktop({ stored: { startAtLogin: false } }), 'data')
 
     const trigger = about('Backup')
     expect(trigger.getAttribute('tabindex')).not.toBe('-1')
@@ -2560,7 +2705,7 @@ describe('the ⓘ beside a setting', () => {
     })
     vi.spyOn(console, 'error').mockImplementation(() => {})
 
-    showSettings(desktop)
+    showSettings(desktop, 'intelligence')
 
     fireEvent.change(await screen.findByLabelText('Base URL'), {
       target: { value: 'http://localhost:11434/v1' },

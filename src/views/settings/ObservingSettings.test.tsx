@@ -55,7 +55,12 @@ function showSettings(
   const settings = createAppSettings(desktop)
   render(
     <ThemeProvider settings={settings}>
-      <SettingsView desktop={desktop} settings={settings} journal={journal} />
+      <SettingsView
+        desktop={desktop}
+        settings={settings}
+        journal={journal}
+        tab="sources"
+      />
     </ThemeProvider>,
   )
   return { core: journal }
@@ -84,7 +89,12 @@ function showSettingsOnScreen(desktop: FakeDesktop, journal: Promise<Journal>) {
       <ThemeProvider settings={settings}>
         <OnScreenContext.Provider value={onScreen}>
           <div hidden={!onScreen}>
-            <SettingsView desktop={desktop} settings={settings} journal={journal} />
+            <SettingsView
+              desktop={desktop}
+              settings={settings}
+              journal={journal}
+              tab="sources"
+            />
           </div>
         </OnScreenContext.Provider>
       </ThemeProvider>

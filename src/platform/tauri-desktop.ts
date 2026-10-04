@@ -60,7 +60,6 @@ import {
   type Desktop,
   type ExportedFile,
   type IdentitiesRead,
-  type MainSection,
   type OnboardingState,
   type PauseLength,
   type PracticeEnded,
@@ -226,10 +225,10 @@ export function createTauriDesktop(): Desktop {
         handle(payload.held),
       ),
     requestedSection: async () =>
-      (await invoke<MainSection | null>('requested_section')) ?? null,
+      (await invoke<SectionRequested | null>('requested_section')) ?? null,
     onSectionRequested: (handle) =>
       listen<SectionRequested>(SECTION_REQUESTED_EVENT, ({ payload }) =>
-        handle(payload.section),
+        handle(payload),
       ),
 
     openedTaskAlert: async () =>

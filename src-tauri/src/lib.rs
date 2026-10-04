@@ -85,6 +85,11 @@ const TASKS_SECTION: &str = "tasks";
 const WORK_SUMMARY_SECTION: &str = "work-summary";
 const SETTINGS_SECTION: &str = "settings";
 
+/// The tab of Settings an Entry Point can name, besides the one Settings opens
+/// on. Must match `ABOUT_TAB` in `src/platform/desktop.ts`, as
+/// `src/platform/desktop-rust.test.ts` checks.
+const ABOUT_TAB: &str = "about";
+
 /// Where the settings live. Must match `SETTINGS_FILE` in
 /// `src/platform/desktop.ts`, as `src/platform/desktop-rust.test.ts` checks. Written from both sides — see
 /// `src/settings/tauri-settings.ts` — which is acceptable only because v1 has
@@ -208,15 +213,15 @@ const RESIDENT_WINDOW_WIDTH: f64 = 626.0;
 /// reads, so the preload entry says the same thing in words beside it.
 const DATABASE_URL: &str = "sqlite:work-journal.db";
 
-/// The section of the Main Window the last Entry Point named, waiting for a
-/// window to claim it.
+/// The section of the Main Window the last Entry Point named, and the Settings
+/// tab it named with it if it did, waiting for a window to claim them.
 ///
 /// The event alone is not enough, for the same reason the Alert below keeps
 /// one of these: a Main Window built by this very request has no webview yet,
 /// so nothing is listening. It is kept here instead, and the window asks for it
 /// as it opens. Taken rather than read: a request opens the window once.
 #[derive(Default)]
-struct RequestedSection(Mutex<Option<String>>);
+struct RequestedSection(Mutex<Option<SectionRequested>>);
 
 /// The Task Alert the user clicked, waiting for a window to claim it.
 ///
@@ -644,7 +649,7 @@ pub fn run() {
                 app.state::<OpenedForOnboarding>()
                     .0
                     .store(true, std::sync::atomic::Ordering::Relaxed);
-                open_main_window(app.handle(), None);
+                open_main_window(app.handle(), None, None);
             }
 
             Ok(())
@@ -666,7 +671,7 @@ pub fn run() {
             // opens a new one on the section it opens on by default — History.
             #[cfg(target_os = "macos")]
             if let tauri::RunEvent::Reopen { .. } = &event {
-                open_main_window(app, None);
+                open_main_window(app, None, None);
             }
         });
 }
@@ -990,7 +995,9 @@ fn rollback_main_window_open(app: &tauri::AppHandle, menu_was_attempted: bool) {
 ///
 /// The section is what the Entry Point asked for, and `None` where it asked
 /// for nothing — a click on the Dock icon, which raises whatever the window is
-/// already showing and opens a new one on History.
+/// already showing and opens a new one on History. The tab is the Settings tab
+/// it asked for along with Settings, and `None` leaves Settings on the tab it
+/// is on — General in a window that has just opened.
 ///
 /// Which section is said twice, exactly as a Task Alert is: written down for a
 /// window that has yet to ask — one this call is about to build, or one built
@@ -1002,11 +1009,16 @@ fn rollback_main_window_open(app: &tauri::AppHandle, menu_was_attempted: bool) {
 /// listening, and deciding between them left a request arriving while the
 /// window was still starting up written down nowhere and announced to nothing.
 /// The window takes whichever of the two arrives last.
-fn open_main_window(app: &tauri::AppHandle, section: Option<&str>) {
+fn open_main_window(app: &tauri::AppHandle, section: Option<&str>, tab: Option<&str>) {
+    let request = section.map(|section| SectionRequested {
+        section: section.to_string(),
+        tab: tab.map(str::to_string),
+    });
+
     // An Entry Point that names no section — a click on the Dock icon — takes
     // away what an earlier request left waiting, so the window it opens starts
     // on History rather than inheriting that request.
-    remember_requested_section(app, section);
+    remember_requested_section(app, request.clone());
 
     if let Err(error) = show_main_window(app) {
         log::error!("could not open the Main Window: {error}");
@@ -1019,37 +1031,32 @@ fn open_main_window(app: &tauri::AppHandle, section: Option<&str>) {
         // and only taking focus failed — so what was written down stands.
     }
 
-    let Some(section) = section else {
+    let Some(request) = request else {
         return;
     };
 
     // Addressed rather than broadcast: only the Main Window has sections.
-    if let Err(error) = app.emit_to(
-        MAIN_WINDOW,
-        SECTION_REQUESTED_EVENT,
-        SectionRequested {
-            section: section.to_string(),
-        },
-    ) {
+    if let Err(error) = app.emit_to(MAIN_WINDOW, SECTION_REQUESTED_EVENT, request) {
         log::warn!("could not pass on the section: {error}");
     }
 }
 
-/// Puts the section a window has yet to claim down, or takes it away again.
-fn remember_requested_section(app: &tauri::AppHandle, section: Option<&str>) {
+/// Puts the request a window has yet to claim down, or takes it away again.
+fn remember_requested_section(app: &tauri::AppHandle, request: Option<SectionRequested>) {
     if let Some(pending) = app.try_state::<RequestedSection>() {
         if let Ok(mut waiting) = pending.0.lock() {
-            *waiting = section.map(str::to_string);
+            *waiting = request;
         }
     }
 }
 
-/// Which section of the Main Window an Entry Point named. Must match
-/// `SectionRequested` in `src/platform/desktop.ts`, as
-/// `src/platform/desktop-rust.test.ts` checks.
+/// Which section of the Main Window an Entry Point named, and which tab of
+/// Settings with it. Must match `SectionRequested` in `src/platform/desktop.ts`,
+/// as `src/platform/desktop-rust.test.ts` checks.
 #[derive(Clone, serde::Serialize)]
 struct SectionRequested {
     section: String,
+    tab: Option<String>,
 }
 
 /// The section the Entry Point that opened this window named, if it named one
@@ -1057,7 +1064,7 @@ struct SectionRequested {
 /// Alert: a window opened for any other reason must not inherit the last
 /// request.
 #[tauri::command]
-fn requested_section(pending: tauri::State<'_, RequestedSection>) -> Option<String> {
+fn requested_section(pending: tauri::State<'_, RequestedSection>) -> Option<SectionRequested> {
     pending.0.lock().ok()?.take()
 }
 
@@ -1198,7 +1205,13 @@ fn show_presence(app: &tauri::AppHandle, presence: Option<Presence>) {
 /// own host's — no command crosses the boundary for a trip the sidebar already
 /// makes.
 fn open_settings(app: &tauri::AppHandle) {
-    open_main_window(app, Some(SETTINGS_SECTION));
+    open_main_window(app, Some(SETTINGS_SECTION), None);
+}
+
+/// Opens the Main Window on the About tab of Settings, where the update check
+/// lives.
+fn open_settings_about(app: &tauri::AppHandle) {
+    open_main_window(app, Some(SETTINGS_SECTION), Some(ABOUT_TAB));
 }
 
 /// Closes the Main Window without quitting the app. The resident Capture and
@@ -2127,7 +2140,7 @@ fn show_task_alert(app: &tauri::AppHandle, identifier: String) {
         }
     }
 
-    open_main_window(app, Some(TASKS_SECTION));
+    open_main_window(app, Some(TASKS_SECTION), None);
 
     // And announced too, for the window that was already open and has long
     // since asked. Addressed rather than broadcast: only Tasks View has
@@ -2747,9 +2760,9 @@ fn build_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
         .on_menu_event(|app, event| match event.id().as_ref() {
             NEW_NOTE_MENU_ITEM => start_capture(app),
             NEW_TASK_MENU_ITEM => start_task_creation_window(app),
-            VIEW_NOTES_MENU_ITEM => open_main_window(app, Some(HISTORY_SECTION)),
-            VIEW_TASKS_MENU_ITEM => open_main_window(app, Some(TASKS_SECTION)),
-            VIEW_WORK_SUMMARY_MENU_ITEM => open_main_window(app, Some(WORK_SUMMARY_SECTION)),
+            VIEW_NOTES_MENU_ITEM => open_main_window(app, Some(HISTORY_SECTION), None),
+            VIEW_TASKS_MENU_ITEM => open_main_window(app, Some(TASKS_SECTION), None),
+            VIEW_WORK_SUMMARY_MENU_ITEM => open_main_window(app, Some(WORK_SUMMARY_SECTION), None),
             COPY_YESTERDAY_DIGEST_MENU_ITEM => copy_yesterday_digest(app),
             PAUSE_AN_HOUR_MENU_ITEM => pause_observing(app, PauseLength::AnHour),
             PAUSE_UNTIL_TOMORROW_MENU_ITEM => {
@@ -2757,7 +2770,8 @@ fn build_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
             }
             PAUSE_UNTIL_RESUMED_MENU_ITEM => pause_observing(app, PauseLength::UntilResumed),
             RESUME_OBSERVING_MENU_ITEM => resume_observing(app),
-            SETTINGS_MENU_ITEM | CHECK_FOR_UPDATES_MENU_ITEM => open_settings(app),
+            SETTINGS_MENU_ITEM => open_settings(app),
+            CHECK_FOR_UPDATES_MENU_ITEM => open_settings_about(app),
             QUIT_MENU_ITEM => app.exit(0),
             _ => {}
         });

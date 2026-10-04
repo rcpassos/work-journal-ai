@@ -7,28 +7,11 @@ import {
 } from '@/components/ui/tooltip'
 
 /**
- * A named part of the settings pane: a caption over one card, with the groups
- * inside it divided by hairlines. The caption is what says which settings
- * belong together; without it a long pane is one undifferentiated scroll.
+ * One tab's card: the groups inside it divided by hairlines. The tab says what
+ * the settings are about, so the card needs no caption of its own.
  */
-export function SettingsSection({
-  title,
-  children,
-}: {
-  title: string
-  children: React.ReactNode
-}) {
-  return (
-    <section aria-labelledby={`${headingId(title)}-section`}>
-      <h2
-        id={`${headingId(title)}-section`}
-        className="px-1 pb-2 type-micro font-semibold uppercase text-muted-foreground"
-      >
-        {title}
-      </h2>
-      <Card className="divide-y divide-border px-4">{children}</Card>
-    </section>
-  )
+export function SettingsCard({ children }: { children: React.ReactNode }) {
+  return <Card className="divide-y divide-border px-4">{children}</Card>
 }
 
 /** Settings about one subject, between two hairlines. */
