@@ -182,7 +182,7 @@ export interface CaptureFit {
  * sizes those elements from these very numbers rather than restating them in
  * classes, so the window and the panel inside it cannot drift apart.
  */
-export const CAPTURE_PANEL_WIDTH = 560
+const CAPTURE_PANEL_WIDTH = 560
 export const CAPTURE_FIELD_HEIGHT = 64
 export const CAPTURE_PREDICTION_ROW = 36
 export const CAPTURE_HAIRLINE = 1
@@ -223,7 +223,7 @@ export const TASK_CREATION_SCHEDULE_ROW = 44
 export const TASK_CREATION_RECURRENCE_ROW = 44
 
 /** Fixed label and scrollable details field, including its bottom padding. */
-export const TASK_CREATION_DETAILS_ROW = 128
+const TASK_CREATION_DETAILS_ROW = 128
 
 /**
  * The Task Creation panel is the Capture panel's shape — the same width and

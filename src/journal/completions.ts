@@ -181,12 +181,12 @@ export function completionsInRange({
  * The one day each kept commitment falls under, oldest day first, bullets in
  * the order they arrived. Days with no completions are simply absent.
  */
-export interface CompletionDayGroup {
+interface CompletionDayGroup {
   journalDay: string
   bullets: string[]
 }
 
-export function groupCompletionsByDay(
+function groupCompletionsByDay(
   completions: CompletionBullet[],
 ): CompletionDayGroup[] {
   const groups: CompletionDayGroup[] = []

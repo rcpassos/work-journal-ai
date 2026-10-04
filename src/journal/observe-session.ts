@@ -58,7 +58,7 @@ export interface ObserveSession {
  * becomes a Note — or Unfiled when the repository has none. Nothing is ever
  * inferred from a path.
  */
-export function commitsToObserve({
+function commitsToObserve({
   observing,
   listed,
   commits,
