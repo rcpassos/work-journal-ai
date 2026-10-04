@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import OnScreenContext, { useOnScreen } from '@/components/on-screen-context'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { CHANGELOG } from '@/settings/changelog'
@@ -153,7 +154,7 @@ export default function SettingsView({
               the page itself grows to reach the last one, and the window gets a
               second scrollbar. */}
           <div className="relative flex min-h-0 flex-1 flex-col overflow-y-auto px-6 pt-5 pb-5">
-            <TabsContent value="general" keepMounted>
+            <TabPanel value="general" selected={tab}>
               <SettingsCard>
                 <StartAtLoginSettings
                   desktop={desktop}
@@ -173,9 +174,9 @@ export default function SettingsView({
                   initialSettings={initialSettings}
                 />
               </SettingsCard>
-            </TabsContent>
+            </TabPanel>
 
-            <TabsContent value="sources" keepMounted>
+            <TabPanel value="sources" selected={tab}>
               <SettingsCard>
                 <MeetingImportSettings
                   desktop={desktop}
@@ -190,9 +191,9 @@ export default function SettingsView({
                   initialSettings={initialSettings}
                 />
               </SettingsCard>
-            </TabsContent>
+            </TabPanel>
 
-            <TabsContent value="intelligence" keepMounted>
+            <TabPanel value="intelligence" selected={tab}>
               <SettingsCard>
                 <ModelAccessSettings
                   desktop={desktop}
@@ -208,9 +209,9 @@ export default function SettingsView({
                   initialSettings={initialSettings}
                 />
               </SettingsCard>
-            </TabsContent>
+            </TabPanel>
 
-            <TabsContent value="data" keepMounted>
+            <TabPanel value="data" selected={tab}>
               <SettingsCard>
                 <ExportSettings desktop={desktop} journal={journal} />
 
@@ -219,9 +220,9 @@ export default function SettingsView({
                     entries in CONTEXT.md and ADR 0032. */}
                 <BackupSettings desktop={desktop} />
               </SettingsCard>
-            </TabsContent>
+            </TabPanel>
 
-            <TabsContent value="about" keepMounted className="flex flex-col">
+            <TabPanel value="about" selected={tab} className="flex flex-col">
               <SettingsCard>
                 {/* Beside the version in the footer: both are about the build
                     rather than about the journal it holds. */}
@@ -262,12 +263,42 @@ export default function SettingsView({
                   )}
                 </footer>
               )}
-            </TabsContent>
+            </TabPanel>
 
             <Toaster />
           </div>
         </Tabs>
       </TooltipProvider>
     </div>
+  )
+}
+
+/**
+ * One tab's panel. Kept mounted while another tab shows, and hidden — which
+ * hides only what it holds, so each group is told it is off screen exactly as
+ * it is when the whole section is: a restart an Update was waiting to make, or
+ * a toast, must not land on a tab nobody is looking at. See
+ * docs/adr/0024-a-view-is-told-whether-it-is-on-screen.md.
+ */
+function TabPanel({
+  value,
+  selected,
+  className,
+  children,
+}: {
+  value: SettingsTab
+  /** The tab showing. */
+  selected: SettingsTab
+  className?: string
+  children: React.ReactNode
+}) {
+  const sectionOnScreen = useOnScreen()
+
+  return (
+    <TabsContent value={value} keepMounted className={className}>
+      <OnScreenContext.Provider value={sectionOnScreen && selected === value}>
+        {children}
+      </OnScreenContext.Provider>
+    </TabsContent>
   )
 }

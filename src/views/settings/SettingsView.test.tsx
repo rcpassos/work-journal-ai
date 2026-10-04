@@ -1155,6 +1155,32 @@ describe('Restore', () => {
     }
   })
 
+  it('defers the restart while another tab shows, and takes it on coming back', async () => {
+    const desktop = fakeDesktop({ stored: { startAtLogin: false } })
+    desktop.chosenRestoreCandidate = '/Volumes/Offsite/work-journal-20260903T084500.db'
+    const frames = holdFrames()
+
+    try {
+      showSettings(desktop, 'data')
+
+      ;(await screen.findByRole('button', { name: 'Restore from backup…' })).click()
+      await confirmRestoreDialog()
+      await expect.poll(restoreStatus).toBe('Journal restored. Restarting…')
+
+      screen.getByRole('tab', { name: 'General' }).click()
+      await screen.findByRole('switch', { name: 'Start at login' })
+      frames.drain()
+      expect(desktop.restarts).toBe(0)
+
+      screen.getByRole('tab', { name: 'Data' }).click()
+      await expect.poll(() => frames.pending()).toBeGreaterThan(0)
+      frames.drain()
+      expect(desktop.restarts).toBe(1)
+    } finally {
+      frames.restore()
+    }
+  })
+
   it('does not restart once Settings has gone away', async () => {
     const desktop = fakeDesktop({ stored: { startAtLogin: false } })
     desktop.chosenRestoreCandidate = '/Volumes/Offsite/work-journal-20260903T084500.db'
@@ -1432,6 +1458,39 @@ describe('Updates', () => {
     }
   })
 
+  it('defers the restart while another tab shows, and takes it on coming back', async () => {
+    const desktop = fakeDesktop({ stored: { startAtLogin: false } })
+    desktop.availableUpdate = { version: '0.9.0', notes: [] }
+    const frames = holdFrames()
+
+    try {
+      showSettings(desktop, 'about')
+      await screen.findByRole('button', { name: 'Check for updates' })
+      frames.drain()
+
+      ;(await screen.findByRole('button', { name: 'Check for updates' })).click()
+      ;(await screen.findByRole('button', { name: 'Install 0.9.0' })).click()
+      await expect
+        .poll(updateStatus)
+        .toBe('Work Journal 0.9.0 is installed. Restarting…')
+
+      // The line is in a hidden panel now: quitting while the user is on
+      // another tab — with an API Key half typed, say — is the app
+      // disappearing for no reason they can see.
+      screen.getByRole('tab', { name: 'Intelligence' }).click()
+      await screen.findByLabelText('API Key')
+      frames.drain()
+      expect(desktop.restarts).toBe(0)
+
+      screen.getByRole('tab', { name: 'About' }).click()
+      await expect.poll(() => frames.pending()).toBeGreaterThan(0)
+      frames.drain()
+      expect(desktop.restarts).toBe(1)
+    } finally {
+      frames.restore()
+    }
+  })
+
   it('does not restart once Settings has gone away', async () => {
     const desktop = fakeDesktop({ stored: { startAtLogin: false } })
     desktop.availableUpdate = { version: '0.9.0', notes: [] }
@@ -1531,7 +1590,7 @@ describe('save confirmations', () => {
   it('replaces one field’s toast rather than stacking one per keystroke', async () => {
     const desktop = fakeDesktop({ stored: { startAtLogin: false } })
 
-    showSettings(desktop, 'sources')
+    showSettings(desktop, 'intelligence')
 
     const model = await screen.findByLabelText('Model')
     fireEvent.change(model, { target: { value: 'llama3' } })
@@ -1815,7 +1874,7 @@ describe('save confirmations', () => {
   it('confirms a Work Summary Prompt keystroke', async () => {
     const desktop = fakeDesktop({ stored: { startAtLogin: false } })
 
-    showSettings(desktop, 'sources')
+    showSettings(desktop, 'intelligence')
 
     fireEvent.change(await screen.findByLabelText('Work Summary Prompt'), {
       target: { value: 'Write it in pirate speak.' },
