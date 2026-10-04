@@ -198,8 +198,10 @@ export const CAPTURE_PANEL_BORDER = 1
 export const CAPTURE_SHADOW_GUTTER = 32
 
 /**
- * Window width and resting height — the panel plus its gutter. Must match
- * `.inner_size` in `build_capture_window` (`src-tauri/src/lib.rs`).
+ * Window width and resting height — the panel plus its gutter. The same
+ * numbers as `RESIDENT_WINDOW_WIDTH` and `CAPTURE_HEIGHT`, which
+ * `build_resident_window` in `src-tauri/src/lib.rs` builds the window at;
+ * nothing checks the two, so a change here is made there too.
  */
 const CAPTURE_PANEL_MARGIN = 2 * (CAPTURE_PANEL_BORDER + CAPTURE_SHADOW_GUTTER)
 export const CAPTURE_WIDTH = CAPTURE_PANEL_WIDTH + CAPTURE_PANEL_MARGIN
@@ -237,8 +239,9 @@ export const TASK_CREATION_DETAILS_ROW = 128
  * editable.
  *
  * Unrefused, this is what the window is built at before its view has asked
- * for anything. Must match `.inner_size` in `build_task_creation_window`
- * (`src-tauri/src/lib.rs`).
+ * for anything: the same number as `TASK_CREATION_HEIGHT`, which
+ * `build_resident_window` in `src-tauri/src/lib.rs` is given. Nothing checks
+ * the two, so a change here is made there too.
  */
 export function taskCreationWindowHeight(refused: boolean): number {
   return (
