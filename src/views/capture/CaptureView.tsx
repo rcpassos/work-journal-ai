@@ -60,11 +60,16 @@ export default function CaptureView({
   // dismiss — returning focus to the Main Window and reporting its outcome —
   // while an ordinary one hands focus back as before.
   const practiceRaised = useRef(false)
+  // Synchronous across submission events, through announcements and dismissal.
+  // A new showing can keep its Draft while an older save finishes.
+  const submitting = useRef(false)
+  const showing = useRef(0)
 
   // A Capture never inherits the last one: a Draft is nothing, so ending one
   // leaves exactly the empty window the next one begins in. Ending it is the
   // only thing that clears it — see the window being shown, below.
   const reset = useCallback(() => {
+    showing.current += 1
     setBody('')
     setRefusals(0)
     setOffered([])
@@ -108,48 +113,59 @@ export default function CaptureView({
 
   const commit = useCallback(
     async (text: string) => {
-      let note
+      if (submitting.current) return
+      submitting.current = true
+      const submittedShowing = showing.current
       try {
-        note = await (await journal).capture(text)
-      } catch (error) {
-        // A Capture that could not be stored must not vanish: leave the window
-        // open with the Body still in it rather than discarding the thought —
-        // and say so, since a window that merely stayed open reads as a missed
-        // keystroke.
-        console.error('could not commit the Note', error)
-        setRefusals((refused) => refused + 1)
-        return
-      }
+        let note
+        try {
+          note = await (await journal).capture(text)
+        } catch (error) {
+          // A Capture that could not be stored must not vanish: leave the window
+          // open with the Body still in it rather than discarding the thought —
+          // and say so, since a window that merely stayed open reads as a missed
+          // keystroke.
+          console.error('could not commit the Note', error)
+          if (showing.current === submittedShowing) {
+            setRefusals((refused) => refused + 1)
+          }
+          return
+        }
 
-      // Neither a Main Window on screen nor the tray count has any other
-      // way to learn of the Note, and the announcements have to leave before
-      // the window goes. Two of them because they say different things: one
-      // names the day a reader's Filter may want, the other only that a count
-      // taken before it is now stale. Made independently, so one that fails
-      // does not take the other down with it, and neither is the Capture's
-      // problem: the Note is stored either way.
-      if (note !== null) {
-        const announcements = await Promise.allSettled([
-          desktop.announceCapturedNote(note.journalDay),
-          desktop.announceJournalChanged(),
-        ])
-        for (const announcement of announcements) {
-          if (announcement.status === 'rejected') {
-            console.error('could not announce the Note', announcement.reason)
+        // Neither a Main Window on screen nor the tray count has any other
+        // way to learn of the Note, and the announcements have to leave before
+        // the window goes. Two of them because they say different things: one
+        // names the day a reader's Filter may want, the other only that a count
+        // taken before it is now stale. Made independently, so one that fails
+        // does not take the other down with it, and neither is the Capture's
+        // problem: the Note is stored either way.
+        if (note !== null) {
+          const announcements = await Promise.allSettled([
+            desktop.announceCapturedNote(note.journalDay),
+            desktop.announceJournalChanged(),
+          ])
+          for (const announcement of announcements) {
+            if (announcement.status === 'rejected') {
+              console.error('could not announce the Note', announcement.reason)
+            }
           }
         }
-      }
 
-      // An empty commit stores nothing, so for practice it ends the attempt
-      // as a cancellation; an ordinary empty commit just goes away.
-      const raised = practiceRaised.current
-      await endShowing(
-        !raised
-          ? null
-          : note === null
-            ? { outcome: 'cancelled' }
-            : { outcome: 'submitted', journalDay: note.journalDay },
-      )
+        if (showing.current !== submittedShowing) return
+
+        // An empty commit stores nothing, so for practice it ends the attempt
+        // as a cancellation; an ordinary empty commit just goes away.
+        const raised = practiceRaised.current
+        await endShowing(
+          !raised
+            ? null
+            : note === null
+              ? { outcome: 'cancelled' }
+              : { outcome: 'submitted', journalDay: note.journalDay },
+        )
+      } finally {
+        submitting.current = false
+      }
     },
     [desktop, journal, endShowing],
   )
@@ -186,6 +202,7 @@ export default function CaptureView({
     // announced, never dismissed, since the window has just been shown and
     // whatever is half-typed in it belongs to the ordinary showing now.
     const shown = desktop.onCaptureShown((practice) => {
+      showing.current += 1
       if (!practice && practiceRaised.current) {
         practiceRaised.current = false
         void desktop.announcePracticeEnded({ outcome: 'cancelled' })
@@ -210,6 +227,7 @@ export default function CaptureView({
     })
 
     return () => {
+      showing.current += 1
       document.body.classList.remove('capture-window')
       void shown.then((stop) => stop())
       void blurred.then((stop) => stop())
