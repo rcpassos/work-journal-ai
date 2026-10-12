@@ -624,6 +624,10 @@ export interface Journal {
    * written, because reopening is what makes a schedule changeable again — and
    * reopening preserves the former one, which may make the Task Overdue the
    * moment it comes back.
+   *
+   * Wording saves return the stored Task even if completion raced them.
+   * Timing edits reject with TransactionGuardMiss if the Task or its Open
+   * occurrence moved since the read; the transaction then writes nothing.
    */
   editTask(
     id: string,
@@ -889,20 +893,24 @@ const SELECT_ALL_TASKS_FOR_EXPORT = `
   ORDER BY created_at ASC, id ASC
 `
 
-/**
- * What an edit may change, and the whole of it: the wording and both halves of
- * Scheduled For, in one statement. `created_at` is never in an UPDATE anywhere
- * in the app, and `completed_at` moves only through completing and reopening —
- * which are states, not edits.
- *
- * Both halves of the schedule move together, always: a time is never written
- * without a date, and clearing the date clears the time in the same statement
- * rather than leaving an orphan behind.
- */
+/** Rewording never writes schedule or recurrence fields from an earlier read. */
+const UPDATE_TASK_WORDING = `
+  UPDATE tasks SET description = ?, details = ? WHERE id = ?
+`
+
+/** Timing edits must still be acting on the state and cadence they read. */
+const TASK_EDIT_GUARD = `
+  WHERE id = ? AND completed_at IS ?
+    AND scheduled_date IS ? AND scheduled_time IS ?
+    AND recurrence_unit IS ? AND recurrence_interval IS ?
+    AND recurrence_weekdays IS ? AND recurrence_anchor_date IS ?
+`
+
+/** Both halves of Scheduled For change together, without changing completion. */
 const UPDATE_TASK = `
   UPDATE tasks
   SET description = ?, details = ?, scheduled_date = ?, scheduled_time = ?
-  WHERE id = ?
+  ${TASK_EDIT_GUARD}
 `
 
 /**
@@ -922,7 +930,7 @@ const UPDATE_TASK_WITH_RECURRENCE = `
     recurrence_interval = ?,
     recurrence_weekdays = ?,
     recurrence_anchor_date = ?
-  WHERE id = ?
+  ${TASK_EDIT_GUARD}
 `
 
 /** Completion compares the Task state read before any asynchronous write. */
@@ -1110,9 +1118,11 @@ const REOPEN_TASK_OCCURRENCE = `
     )
 `
 
-/** The Open occurrence of a series that is no longer one. History stays. */
+/** Remove only the Open occurrence the edit read. History stays. */
 const DELETE_OPEN_OCCURRENCE = `
-  DELETE FROM task_occurrences WHERE task_id = ? AND completed_at IS NULL
+  DELETE FROM task_occurrences
+  WHERE task_id = ? AND id = ? AND completed_at IS NULL
+    AND scheduled_date = ? AND scheduled_time IS ?
 `
 
 /** Permanent deletion takes the whole history with it, in one transaction. */
@@ -1870,17 +1880,25 @@ export function createJournal({
         )
       }
 
+      // Wording never writes timing copied from an earlier read. Completion
+      // may have advanced the series or kept an ordinary Task in the meantime.
+      const ruleChanged = !sameRecurrence(task.recurrence, cadence)
+      const dateChanged = date !== task.scheduledDate
+      const timeChanged = time !== task.scheduledTime
+      if (!ruleChanged && !dateChanged && !timeChanged) {
+        await driver.execute(UPDATE_TASK_WORDING, [said, supporting, id])
+        return readTask(driver, id)
+      }
+
       if (cadence === null) {
         // Nothing to stop, so this is the ordinary edit it has always been.
         if (task.recurrence === null) {
-          await driver.execute(UPDATE_TASK, [said, supporting, date, time, id])
-          return {
-            ...task,
-            description: said,
-            details: supporting,
-            scheduledDate: date,
-            scheduledTime: time,
-          }
+          await driver.transaction([{
+            sql: UPDATE_TASK,
+            params: [said, supporting, date, time, ...editGuardParams(task)],
+            expectedRows: 1,
+          }])
+          return readTask(driver, id)
         }
 
         return stopRecurring(driver, task, {
@@ -1889,21 +1907,6 @@ export function createJournal({
           date,
           time,
         })
-      }
-
-      // What this edit actually changed about when the Task comes round. The
-      // three are asked once and answered twice below, because whether the
-      // series moves and what it is counted from afterwards are the same
-      // question read two ways.
-      const ruleChanged = !sameRecurrence(task.recurrence, cadence)
-      const dateChanged = date !== task.scheduledDate
-      const timeChanged = time !== task.scheduledTime
-
-      // Rewording alone leaves the series exactly where it stands, because
-      // what a Task says is not part of when it repeats.
-      if (!ruleChanged && !dateChanged && !timeChanged) {
-        await driver.execute(UPDATE_TASK, [said, supporting, date, time, id])
-        return { ...task, description: said, details: supporting }
       }
 
       const now = clock.now()
@@ -1929,6 +1932,7 @@ export function createJournal({
       // forward to today. The floor is against kept occurrences only, never
       // against the current Open one, so an overdue series with nothing
       // completed may still collapse forward.
+      const open = task.recurrence === null ? null : await readOpenOccurrence(driver, task)
       const occurrences = await readOccurrences(driver, id)
       let newestKept: string | null = null
       for (const occurrence of occurrences) {
@@ -1971,14 +1975,15 @@ export function createJournal({
             opening,
             time,
             ...recurrenceParams(cadence, anchor),
-            id,
+            ...editGuardParams(task),
           ],
+          expectedRows: 1,
         },
-        { sql: DELETE_OPEN_OCCURRENCE, params: [id] },
-        opensOccurrence(reanchored, now, null),
+        ...(open === null ? [] : [removesOpenOccurrence(open)]),
+        { ...opensOccurrence(reanchored, now, null), expectedRows: 1 },
       ])
 
-      return reanchored
+      return readTask(driver, id)
     },
 
     async completeTask(id) {
@@ -3734,6 +3739,7 @@ async function stopRecurring(
   task: Task,
   left: { description: string; details: string | null; date: string | null; time: string | null },
 ): Promise<Task> {
+  const open = await readOpenOccurrence(driver, task)
   await driver.transaction([
     {
       sql: UPDATE_TASK_WITH_RECURRENCE,
@@ -3743,20 +3749,21 @@ async function stopRecurring(
         left.date,
         left.time,
         ...recurrenceParams(null, null),
-        task.id,
+        ...editGuardParams(task),
       ],
+      expectedRows: 1,
     },
-    { sql: DELETE_OPEN_OCCURRENCE, params: [task.id] },
+    removesOpenOccurrence(open),
   ])
 
+  return readTask(driver, task.id)
+}
+
+function removesOpenOccurrence(open: TaskOccurrence): SqlStatement {
   return {
-    ...task,
-    description: left.description,
-    details: left.details,
-    scheduledDate: left.date,
-    scheduledTime: left.time,
-    recurrence: null,
-    recurrenceAnchor: null,
+    sql: DELETE_OPEN_OCCURRENCE,
+    params: [open.taskId, open.id, open.scheduledDate, open.scheduledTime],
+    expectedRows: 1,
   }
 }
 
@@ -3928,6 +3935,16 @@ function completionGuardParams(task: Task): unknown[] {
     ...recurrenceParams(task.recurrence, task.recurrenceAnchor),
     task.description,
     task.details,
+  ]
+}
+
+function editGuardParams(task: Task): unknown[] {
+  return [
+    task.id,
+    task.completedAt,
+    task.scheduledDate,
+    task.scheduledTime,
+    ...recurrenceParams(task.recurrence, task.recurrenceAnchor),
   ]
 }
 
