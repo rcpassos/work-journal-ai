@@ -243,8 +243,8 @@ pub fn rollback_file_name(instant: SystemTime) -> String {
 }
 
 /// The previous journal's resting place after a restore, beside the live one.
-pub fn rollback_path(config_dir: &Path, now: SystemTime) -> PathBuf {
-    config_dir.join(rollback_file_name(now))
+pub fn rollback_path(config_dir: &Path, instant: SystemTime) -> PathBuf {
+    config_dir.join(rollback_file_name(instant))
 }
 
 /// What applying a staged file did: nothing to do on an ordinary launch, or
@@ -650,35 +650,51 @@ where
 /// rollback file in place. The restored file has its own history, and the old
 /// journal's WAL applied to it is the corruption case, so no sidecar ever
 /// outlives the journal it belonged to: sidecars travel with the rollback
-/// when there is one, and orphans of a missing live journal — a WAL without
-/// its main file is unrecoverable — are removed before the staged file takes
-/// the live path. Applying is renames only; staging takes a `VACUUM INTO`
+/// when there is one, including a rollback already moved by an interrupted
+/// attempt. The staged file's modification instant names the rollback, so
+/// retries find the same one. Only sidecars with neither a live journal nor
+/// that rollback are removed before the staged file takes the live path.
+/// Applying is renames only; staging takes a `VACUUM INTO`
 /// snapshot through a temp sibling validated before an atomic rename onto the
 /// staged path, so a half-written journal never occupies the staged path and
 /// is never the live one. An absent staged file is the ordinary path and costs
-/// nothing, as are missing sidecars. If any step fails, every rename already
-/// made is undone, the journal is left as it was, and the failure is answered
-/// as an error for the caller to log.
-pub fn apply_staged_restore(
-    config_dir: &Path,
-    now: SystemTime,
-) -> Result<ApplyOutcome, String> {
+/// nothing, as are missing sidecars. If any step fails, every rename made by
+/// this attempt is undone, files are left as they were, and the failure is
+/// answered as an error for the caller to log.
+pub fn apply_staged_restore(config_dir: &Path) -> Result<ApplyOutcome, String> {
     let staged = staged_restore_path(config_dir);
     if !staged.is_file() {
         return Ok(ApplyOutcome::Absent);
     }
     let live = live_database_path(config_dir);
+    let instant = std::fs::metadata(&staged)
+        .and_then(|metadata| metadata.modified())
+        .map_err(|error| {
+            format!("the staged restore's modification instant could not be read: {error}")
+        })?;
+    let rollback = rollback_path(config_dir, instant);
+    let had_live = live.is_file();
 
     // The previous journal, kept before the live path is touched. Absent on a
-    // first run with a staged file — then there is nothing to keep.
-    let rollback = if live.is_file() {
-        let rollback = rollback_path(config_dir, now);
-        std::fs::rename(&live, &rollback)
-            .map_err(|error| format!("the live journal could not be kept as a rollback: {error}"))?;
+    // first run with a staged file; present after an interrupted main move.
+    let rollback = if had_live {
+        if rollback.exists() {
+            return Err(format!(
+                "the rollback path is already taken: {}",
+                rollback.display()
+            ));
+        }
+        std::fs::rename(&live, &rollback).map_err(|error| {
+            format!("the live journal could not be kept as a rollback: {error}")
+        })?;
+        Some(rollback)
+    } else if rollback.is_file() {
         Some(rollback)
     } else {
         None
     };
+    // Undo only this attempt's main move, never a prior attempt's.
+    let moved_journal = rollback.as_deref().filter(|_| had_live);
 
     // Each sidecar moved, so a later failure can move every one back.
     let mut moved_sidecars: Vec<(PathBuf, PathBuf)> = Vec::new();
@@ -692,7 +708,7 @@ pub fn apply_staged_restore(
                     // A journal in rollback-journal mode leaves none behind.
                     Err(error) if error.kind() == io::ErrorKind::NotFound => {}
                     Err(error) => {
-                        undo_restore(&live, rollback, &moved_sidecars);
+                        undo_restore(&live, moved_journal, &moved_sidecars);
                         return Err(format!(
                             "the stale {} sidecar could not be kept with its journal: {error}",
                             from.display()
@@ -701,7 +717,7 @@ pub fn apply_staged_restore(
                 }
             }
         }
-        // No live journal, so no rollback — but orphans must not survive to
+        // No live journal or matching rollback, so orphans must not survive to
         // meet the staged file: a stale WAL replaying onto it restores the
         // old data under a healthy `quick_check`. A WAL without its main
         // file is unrecoverable, so removing loses nothing.
@@ -725,9 +741,7 @@ pub fn apply_staged_restore(
     if let Err(error) = std::fs::rename(&staged, &live) {
         // The staged file is still where it was; put the live journal — and
         // any sidecar already moved — back where each was too.
-        if let Some(rollback) = rollback.as_ref() {
-            undo_restore(&live, rollback, &moved_sidecars);
-        }
+        undo_restore(&live, moved_journal, &moved_sidecars);
         return Err(format!(
             "the staged backup could not replace the journal: {error}"
         ));
@@ -740,11 +754,13 @@ pub fn apply_staged_restore(
 /// journal itself. Best effort — renames that already succeeded once are
 /// expected to succeed again — and deliberately silent, since it only runs on
 /// a path that is already answering an error.
-fn undo_restore(live: &Path, rollback: &Path, moved_sidecars: &[(PathBuf, PathBuf)]) {
+fn undo_restore(live: &Path, moved_journal: Option<&Path>, moved_sidecars: &[(PathBuf, PathBuf)]) {
     for (from, to) in moved_sidecars.iter().rev() {
         let _ = std::fs::rename(to, from);
     }
-    let _ = std::fs::rename(rollback, live);
+    if let Some(rollback) = moved_journal {
+        let _ = std::fs::rename(rollback, live);
+    }
 }
 
 /// `work-journal.db` plus `-wal` or `-shm`: the sidecars a WAL-mode journal
@@ -2072,7 +2088,7 @@ mod tests {
         }
 
         assert!(matches!(
-            apply_staged_restore(&config.path, SystemTime::now()).unwrap(),
+            apply_staged_restore(&config.path).unwrap(),
             ApplyOutcome::Restored { .. }
         ));
         let options = sqlx::sqlite::SqliteConnectOptions::new()
@@ -2168,7 +2184,7 @@ mod tests {
         write_journal_file(&live, SUPPORTED_MIGRATION_VERSION, "the live journal").await;
         let live_before = std::fs::read(&live).unwrap();
 
-        let outcome = apply_staged_restore(&config.path, SystemTime::now())
+        let outcome = apply_staged_restore(&config.path)
             .expect("an absent staged file must not fail");
 
         assert!(matches!(outcome, ApplyOutcome::Absent));
@@ -2189,7 +2205,13 @@ mod tests {
         let staged_bytes = std::fs::read(&staged).unwrap();
 
         let now = UNIX_EPOCH + Duration::from_secs(1_788_425_100);
-        let outcome = apply_staged_restore(&config.path, now).expect("apply must succeed");
+        std::fs::File::options()
+            .write(true)
+            .open(&staged)
+            .unwrap()
+            .set_modified(now)
+            .unwrap();
+        let outcome = apply_staged_restore(&config.path).expect("apply must succeed");
         let rollback = match outcome {
             ApplyOutcome::Restored { rollback } => rollback.expect("a live journal must be kept"),
             ApplyOutcome::Absent => panic!("a staged file was present"),
@@ -2205,7 +2227,7 @@ mod tests {
             "work-journal-rollback-20260903T084500.db"
         );
         assert!(!staged_restore_path(&config.path).exists());
-        let again = apply_staged_restore(&config.path, SystemTime::now()).expect("second apply");
+        let again = apply_staged_restore(&config.path).expect("second apply");
         assert!(matches!(again, ApplyOutcome::Absent));
         assert!(rollback.exists());
     });
@@ -2229,8 +2251,7 @@ mod tests {
             .expect("staging must succeed");
         let staged_bytes = std::fs::read(&staged).unwrap();
 
-        let now = UNIX_EPOCH + Duration::from_secs(1_788_425_100);
-        let outcome = apply_staged_restore(&config.path, now).expect("apply must succeed");
+        let outcome = apply_staged_restore(&config.path).expect("apply must succeed");
         let rollback = match outcome {
             ApplyOutcome::Restored { rollback } => rollback.expect("a live journal must be kept"),
             ApplyOutcome::Absent => panic!("a staged file was present"),
@@ -2247,6 +2268,249 @@ mod tests {
         assert_eq!(std::fs::read(&rollback_wal).unwrap(), b"stale wal");
         assert_eq!(std::fs::read(&rollback_shm).unwrap(), b"stale shm");
     });
+
+    #[test]
+    fn unclean_wal_journal_fixture() {
+        let Some(path) = std::env::var_os("WORK_JOURNAL_TEST_WAL_PATH") else {
+            return;
+        };
+        tauri::async_runtime::block_on(async {
+            let path = PathBuf::from(path);
+            let options = sqlx::sqlite::SqliteConnectOptions::new()
+                .filename(&path)
+                .create_if_missing(true)
+                .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal)
+                .pragma("wal_autocheckpoint", "0");
+            let pool = sqlx::sqlite::SqlitePoolOptions::new()
+                .max_connections(1)
+                .connect_with(options)
+                .await
+                .unwrap();
+            seed_real_schema(&pool, SUPPORTED_MIGRATION_VERSION, "checkpointed Note").await;
+            sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
+                .execute(&pool)
+                .await
+                .unwrap();
+            let main_before = std::fs::read(&path).unwrap();
+            sqlx::query(
+                "INSERT INTO notes (id, body, captured_at, journal_day)
+                 VALUES ('n2', 'WAL-only Note', '2026-09-03T09:00:00Z', '2026-09-03')",
+            )
+            .execute(&pool)
+            .await
+            .unwrap();
+            assert_eq!(std::fs::read(&path).unwrap(), main_before);
+            assert!(std::fs::metadata(sidecar_path(&path, "wal")).unwrap().len() > 0);
+            // Exit without dropping SQLite: a clean close would checkpoint
+            // the Note and remove the interruption this fixture exercises.
+            std::process::exit(0);
+        });
+    }
+
+    async fn assert_interrupted_restore_keeps_committed_notes(moved_files: usize) {
+        let config = TempDir::new("restore-interrupted");
+        let live = live_database_path(&config.path);
+        let fixture = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "backup::tests::unclean_wal_journal_fixture",
+                "--nocapture",
+            ])
+            .env("WORK_JOURNAL_TEST_WAL_PATH", &live)
+            .output()
+            .unwrap();
+        assert!(fixture.status.success(), "fixture failed: {fixture:?}");
+        assert!(sidecar_path(&live, "wal").is_file());
+        assert!(sidecar_path(&live, "shm").is_file());
+
+        let staged = staged_restore_path(&config.path);
+        write_journal_file(&staged, SUPPORTED_MIGRATION_VERSION, "restored Note").await;
+        let staged_bytes = std::fs::read(&staged).unwrap();
+        let instant = std::fs::metadata(&staged).unwrap().modified().unwrap();
+        let rollback = rollback_path(&config.path, instant);
+        std::fs::rename(&live, &rollback).unwrap();
+        for kind in ["wal", "shm"].iter().take(moved_files - 1) {
+            std::fs::rename(sidecar_path(&live, kind), sidecar_path(&rollback, kind)).unwrap();
+        }
+        if moved_files == 4 {
+            std::fs::rename(&staged, &live).unwrap();
+        }
+
+        // A later launch must complete the rollback belonging to this staged
+        // file, regardless of when the retry happens.
+        let outcome = apply_staged_restore(&config.path).unwrap();
+        assert_eq!(std::fs::read(&live).unwrap(), staged_bytes);
+        assert!(!staged.exists());
+        for kind in ["wal", "shm"] {
+            assert!(!sidecar_path(&live, kind).exists());
+        }
+        let options = sqlx::sqlite::SqliteConnectOptions::new()
+            .filename(&live)
+            .read_only(true);
+        let mut restored = sqlx::sqlite::SqliteConnection::connect_with(&options)
+            .await
+            .unwrap();
+        let notes: Vec<String> = sqlx::query_scalar("SELECT body FROM notes ORDER BY id")
+            .fetch_all(&mut restored)
+            .await
+            .unwrap();
+        assert_eq!(notes, ["restored Note"]);
+        restored.close().await.unwrap();
+        let options = sqlx::sqlite::SqliteConnectOptions::new()
+            .filename(&rollback)
+            .read_only(true);
+        let mut previous = sqlx::sqlite::SqliteConnection::connect_with(&options)
+            .await
+            .unwrap();
+        let notes: Vec<String> = sqlx::query_scalar("SELECT body FROM notes ORDER BY id")
+            .fetch_all(&mut previous)
+            .await
+            .unwrap();
+        assert_eq!(notes, ["checkpointed Note", "WAL-only Note"]);
+        previous.close().await.unwrap();
+        match outcome {
+            ApplyOutcome::Restored { rollback: kept } => assert_eq!(kept, Some(rollback)),
+            ApplyOutcome::Absent => assert_eq!(moved_files, 4),
+        }
+    }
+
+    async_test!(an_interruption_after_the_main_move_keeps_committed_notes, {
+        assert_interrupted_restore_keeps_committed_notes(1).await;
+    });
+
+    async_test!(an_interruption_after_the_wal_move_keeps_committed_notes, {
+        assert_interrupted_restore_keeps_committed_notes(2).await;
+    });
+
+    async_test!(an_interruption_after_the_shm_move_keeps_committed_notes, {
+        assert_interrupted_restore_keeps_committed_notes(3).await;
+    });
+
+    async_test!(
+        an_interruption_after_the_staged_move_keeps_committed_notes,
+        {
+            assert_interrupted_restore_keeps_committed_notes(4).await;
+        }
+    );
+
+    async_test!(an_existing_rollback_is_never_overwritten, {
+        let config = TempDir::new("restore-collision");
+        let live = live_database_path(&config.path);
+        let staged = staged_restore_path(&config.path);
+        write_journal_file(&live, SUPPORTED_MIGRATION_VERSION, "current Note").await;
+        write_journal_file(&staged, SUPPORTED_MIGRATION_VERSION, "restored Note").await;
+        let instant = std::fs::metadata(&staged).unwrap().modified().unwrap();
+        let rollback = rollback_path(&config.path, instant);
+        write_journal_file(
+            &rollback,
+            SUPPORTED_MIGRATION_VERSION,
+            "previous rollback Note",
+        )
+        .await;
+        let live_before = std::fs::read(&live).unwrap();
+        let staged_before = std::fs::read(&staged).unwrap();
+        let rollback_before = std::fs::read(&rollback).unwrap();
+        for kind in ["wal", "shm"] {
+            std::fs::write(sidecar_path(&live, kind), format!("live {kind}")).unwrap();
+            std::fs::write(sidecar_path(&rollback, kind), format!("rollback {kind}")).unwrap();
+        }
+
+        let failure =
+            apply_staged_restore(&config.path).expect_err("a rollback must never be overwritten");
+        assert!(failure.contains("rollback"), "{failure}");
+        assert_eq!(std::fs::read(&live).unwrap(), live_before);
+        assert_eq!(std::fs::read(&staged).unwrap(), staged_before);
+        assert_eq!(std::fs::read(&rollback).unwrap(), rollback_before);
+        for kind in ["wal", "shm"] {
+            assert_eq!(
+                std::fs::read(sidecar_path(&live, kind)).unwrap(),
+                format!("live {kind}").as_bytes()
+            );
+            assert_eq!(
+                std::fs::read(sidecar_path(&rollback, kind)).unwrap(),
+                format!("rollback {kind}").as_bytes()
+            );
+        }
+    });
+
+    async_test!(
+        a_failed_retry_preserves_prior_moves_and_retries_the_same_rollback,
+        {
+            for moved_sidecars in 0..=1 {
+                let config = TempDir::new("restore-retry-error");
+                let live = live_database_path(&config.path);
+                let staged = staged_restore_path(&config.path);
+                write_journal_file(&live, SUPPORTED_MIGRATION_VERSION, "current Note").await;
+                write_journal_file(&staged, SUPPORTED_MIGRATION_VERSION, "restored Note").await;
+                let live_before = std::fs::read(&live).unwrap();
+                let staged_before = std::fs::read(&staged).unwrap();
+                let instant = UNIX_EPOCH + Duration::from_secs(1_788_425_100);
+                std::fs::File::options()
+                    .write(true)
+                    .open(&staged)
+                    .unwrap()
+                    .set_modified(instant)
+                    .unwrap();
+                let rollback = config.path.join("work-journal-rollback-20260903T084500.db");
+                std::fs::rename(&live, &rollback).unwrap();
+                let wal_home = if moved_sidecars == 0 {
+                    &live
+                } else {
+                    &rollback
+                };
+                std::fs::write(sidecar_path(wal_home, "wal"), "committed wal").unwrap();
+                std::fs::write(sidecar_path(&live, "shm"), "shared memory").unwrap();
+                let obstruction = sidecar_path(&rollback, "shm");
+                std::fs::create_dir(&obstruction).unwrap();
+                std::fs::write(obstruction.join("keep"), "obstruction").unwrap();
+
+                let failure = apply_staged_restore(&config.path).expect_err("the shm move must fail");
+                assert!(failure.contains("sidecar"), "{failure}");
+                assert!(!live.exists(), "a retry must not undo a prior main move");
+                assert_eq!(std::fs::read(&rollback).unwrap(), live_before);
+                assert_eq!(
+                    std::fs::read(sidecar_path(wal_home, "wal")).unwrap(),
+                    b"committed wal"
+                );
+                assert!(!sidecar_path(
+                    if moved_sidecars == 0 {
+                        &rollback
+                    } else {
+                        &live
+                    },
+                    "wal"
+                )
+                .exists());
+                assert_eq!(
+                    std::fs::read(sidecar_path(&live, "shm")).unwrap(),
+                    b"shared memory"
+                );
+                assert_eq!(std::fs::read(&staged).unwrap(), staged_before);
+                assert_eq!(
+                    std::fs::metadata(&staged).unwrap().modified().unwrap(),
+                    instant
+                );
+
+                std::fs::remove_dir_all(obstruction).unwrap();
+                match apply_staged_restore(&config.path).unwrap() {
+                    ApplyOutcome::Restored { rollback: kept } => {
+                        assert_eq!(kept, Some(rollback.clone()))
+                    }
+                    ApplyOutcome::Absent => panic!("the staged restore was not applied"),
+                }
+                assert_eq!(std::fs::read(&live).unwrap(), staged_before);
+                assert_eq!(
+                    std::fs::read(sidecar_path(&rollback, "wal")).unwrap(),
+                    b"committed wal"
+                );
+                assert_eq!(
+                    std::fs::read(sidecar_path(&rollback, "shm")).unwrap(),
+                    b"shared memory"
+                );
+                assert!(!staged.exists());
+            }
+        }
+    );
 
     async_test!(a_failed_sidecar_move_leaves_the_journal_as_it_was, {
         let config = TempDir::new("restore-sidecar-failure");
@@ -2268,6 +2532,12 @@ mod tests {
         // A non-empty directory where the rollback `-shm` has to go makes
         // that rename fail after the `-wal` already moved.
         let now = UNIX_EPOCH + Duration::from_secs(1_788_425_100);
+        std::fs::File::options()
+            .write(true)
+            .open(&staged)
+            .unwrap()
+            .set_modified(now)
+            .unwrap();
         let rollback_shm = PathBuf::from(format!(
             "{}-shm",
             rollback_path(&config.path, now).display()
@@ -2275,7 +2545,7 @@ mod tests {
         std::fs::create_dir_all(&rollback_shm).unwrap();
         std::fs::write(rollback_shm.join("junk"), "someone else's file").unwrap();
 
-        let failure = apply_staged_restore(&config.path, now)
+        let failure = apply_staged_restore(&config.path)
             .expect_err("a failed sidecar move must not restore");
 
         assert!(
@@ -2311,7 +2581,7 @@ mod tests {
             .expect("staging must succeed");
         let staged_bytes = std::fs::read(&staged).unwrap();
 
-        let outcome = apply_staged_restore(&config.path, SystemTime::now())
+        let outcome = apply_staged_restore(&config.path)
             .expect("apply must succeed");
         let rollback = match outcome {
             ApplyOutcome::Restored { rollback } => rollback,
@@ -2337,7 +2607,7 @@ mod tests {
         stage_restore(&candidate, &config.path)
             .await
             .expect("an older snapshot must stage");
-        apply_staged_restore(&config.path, SystemTime::now()).expect("apply must succeed");
+        apply_staged_restore(&config.path).expect("apply must succeed");
 
         // The existing immutable list brings the restored file forward: the
         // DDL of every version the snapshot predates — the same files
@@ -2393,7 +2663,7 @@ mod tests {
         assert_eq!(validate_restore_candidate(&candidate).await.unwrap(), 9);
         let config = TempDir::new("restore-v9-config");
         stage_restore(&candidate, &config.path).await.unwrap();
-        apply_staged_restore(&config.path, SystemTime::now()).unwrap();
+        apply_staged_restore(&config.path).unwrap();
         let live = live_database_path(&config.path);
         let url = format!("sqlite:{}?mode=rwc", live.display());
         let restored = SqlitePool::connect(&url).await.unwrap();
@@ -2536,8 +2806,7 @@ mod tests {
             .expect("the snapshot must stage");
         let staged_bytes = std::fs::read(&staged).unwrap();
         assert_eq!(std::fs::read(&snapshot).unwrap(), snapshot_bytes);
-        let now = UNIX_EPOCH + Duration::from_secs(1_788_425_100);
-        let outcome = apply_staged_restore(&config.path, now).expect("apply must succeed");
+        let outcome = apply_staged_restore(&config.path).expect("apply must succeed");
         let rollback = match outcome {
             ApplyOutcome::Restored { rollback } => rollback.expect("a live journal must be kept"),
             ApplyOutcome::Absent => panic!("a staged file was present"),
@@ -2615,7 +2884,7 @@ mod tests {
         );
         assert_eq!(std::fs::read(&live).unwrap(), live_before);
 
-        let outcome = apply_staged_restore(&config.path, SystemTime::now())
+        let outcome = apply_staged_restore(&config.path)
             .expect("apply with nothing staged must not fail");
         assert!(matches!(outcome, ApplyOutcome::Absent));
         assert_eq!(std::fs::read(&live).unwrap(), live_before);

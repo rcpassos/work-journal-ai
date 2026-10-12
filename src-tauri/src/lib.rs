@@ -477,10 +477,7 @@ pub fn run() {
                             return Ok(());
                         }
                     };
-                    match backup::apply_staged_restore(
-                        &config_dir,
-                        std::time::SystemTime::now(),
-                    ) {
+                    match backup::apply_staged_restore(&config_dir) {
                         Ok(backup::ApplyOutcome::Absent) => {}
                         Ok(backup::ApplyOutcome::Restored { rollback }) => match rollback {
                             Some(path) => log::info!(
