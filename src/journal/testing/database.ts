@@ -5,6 +5,7 @@ import { join } from 'node:path'
 // production the driver is plugin-sql.
 import { DatabaseSync } from 'node:sqlite'
 import type { Clock, Journal, SqlDriver, TaskOccurrence } from '../journal'
+import { TransactionGuardMiss } from '../journal'
 
 const MIGRATIONS_DIR = join(import.meta.dirname, '../../../src-tauri/migrations')
 
@@ -41,8 +42,11 @@ export async function openTestDatabase(): Promise<{
     async transaction(statements) {
       database.exec('BEGIN')
       try {
-        for (const { sql, params } of statements) {
-          database.prepare(sql).run(...params.map(bindable))
+        for (const { sql, params, expectedRows } of statements) {
+          const { changes } = database.prepare(sql).run(...params.map(bindable))
+          if (expectedRows !== undefined && changes !== expectedRows) {
+            throw new TransactionGuardMiss()
+          }
         }
         database.exec('COMMIT')
       } catch (error) {

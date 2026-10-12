@@ -5,6 +5,7 @@ What changed in each released version, newest first. Every `vX.Y.Z` section here
 ## Unreleased
 
 - Restoring a rollback or journal with recent committed Notes still in its SQLite WAL now preserves those Notes.
+- Completing an old Task Alert no longer completes a commitment that another window rescheduled while the action was being processed.
 
 ## 0.17.0 — 2026-10-04
 
