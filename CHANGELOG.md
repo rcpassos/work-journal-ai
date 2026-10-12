@@ -4,6 +4,8 @@ What changed in each released version, newest first. Every `vX.Y.Z` section here
 
 ## Unreleased
 
+- Restoring a rollback or journal with recent committed Notes still in its SQLite WAL now preserves those Notes.
+
 ## 0.17.0 — 2026-10-04
 
 - Settings is split into five tabs along the top, General, Sources, Intelligence, Data and About, and Check for Updates… in the menu bar opens the About tab.
