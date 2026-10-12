@@ -39,6 +39,7 @@ import {
   THEME_KEY,
 } from './desktop'
 import { backupFileName } from './tauri-desktop'
+import { TRANSACTION_GUARD_MISS } from '@/journal/journal'
 import { SUGGESTION_LOOKBACK } from './testing/desktop'
 
 const TEST_FILE = 'src/platform/desktop-rust.test.ts'
@@ -74,6 +75,7 @@ const desktop = read(DESKTOP_FILE)
 
 /** Every shared string, under the name the Rust side declares it by. */
 const shared: Record<string, string> = {
+  TRANSACTION_GUARD_MISS,
   CAPTURE_WINDOW,
   TASK_CREATION_WINDOW,
   MAIN_WINDOW,
@@ -973,7 +975,7 @@ function tsUnionKinds(source: string, name: string): string[] {
 /** The field names of one TypeScript interface, as written. */
 function tsFieldNames(source: string, name: string): string[] {
   const body = source.match(new RegExp(`export interface ${name} \\{([\\s\\S]*?)\\n\\}`))?.[1] ?? ''
-  return [...body.matchAll(/^\s{2}([a-z][A-Za-z]*):/gm)].map(([, field]) => field)
+  return [...body.matchAll(/^\s{2}([a-z][A-Za-z]*)\??:/gm)].map(([, field]) => field)
 }
 
 /** `ModelAccess` to `model-access`, the serde rule the Rust side declares. */
@@ -1053,7 +1055,7 @@ describe('the data that crosses the command boundary', () => {
 
   /** A Rust record and the TypeScript interface it is read as. */
   const structs = [
-    { ts: 'SqlStatement', tsSource: journalTs, rust: 'Statement', rustSource, fields: ['sql', 'params'] },
+    { ts: 'SqlStatement', tsSource: journalTs, rust: 'Statement', rustSource, fields: ['sql', 'params', 'expectedRows'] },
     { ts: 'TaskAlert', tsSource: journalTs, rust: 'TaskAlert', rustSource: alerts, fields: ['id', 'description', 'year', 'month', 'day', 'hour', 'minute'] },
     { ts: 'TaskAlertCompletion', tsSource: desktop, rust: 'TaskAlertCompletion', rustSource: alerts, fields: ['alertId', 'date', 'time'] },
     { ts: 'CalendarInfo', tsSource: desktop, rust: 'CalendarInfo', rustSource: calendar, fields: ['id', 'title', 'source'] },

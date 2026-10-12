@@ -1,13 +1,41 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { check, downloadAndInstall } = vi.hoisted(() => ({
+const { check, downloadAndInstall, invoke, loadDatabase } = vi.hoisted(() => ({
   check: vi.fn(),
   downloadAndInstall: vi.fn(),
+  invoke: vi.fn(),
+  loadDatabase: vi.fn(),
 }))
 
 vi.mock('@tauri-apps/plugin-updater', () => ({ check }))
+vi.mock('@tauri-apps/api/core', () => ({ invoke }))
+vi.mock('@tauri-apps/plugin-sql', () => ({ default: { load: loadDatabase } }))
 
 import { createTauriDesktop } from './tauri-desktop'
+import { TRANSACTION_GUARD_MISS, TransactionGuardMiss } from '@/journal/journal'
+
+describe('the journal transaction driver', () => {
+  beforeEach(() => {
+    invoke.mockReset()
+    loadDatabase.mockResolvedValue({})
+  })
+
+  it('translates the Rust guard miss into the journal contract', async () => {
+    invoke.mockRejectedValue(TRANSACTION_GUARD_MISS)
+    const driver = await createTauriDesktop().openJournalDatabase()
+
+    await expect(driver.transaction([
+      { sql: 'UPDATE tasks SET completed_at = ? WHERE id = ?', params: ['now', 'missing'], expectedRows: 1 },
+    ])).rejects.toBeInstanceOf(TransactionGuardMiss)
+  })
+
+  it('preserves unrelated storage failures', async () => {
+    invoke.mockRejectedValue('database is locked')
+    const driver = await createTauriDesktop().openJournalDatabase()
+
+    await expect(driver.transaction([])).rejects.toBe('database is locked')
+  })
+})
 
 describe('the updater', () => {
   beforeEach(() => {

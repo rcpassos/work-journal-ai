@@ -31,6 +31,7 @@ import {
   taskAlertId,
   taskAlerts,
   taskIdOfAlert,
+  TransactionGuardMiss,
   msUntilNextJournalDay,
   groupByJournalDay,
   journalDayFor,
@@ -3389,6 +3390,231 @@ describe('completeTask and reopenTask', () => {
 })
 
 describe('completeTaskAt', () => {
+  /** Another window gets one turn after all reads, before the transaction. */
+  function beforeWrite(clock: Parameters<typeof createJournal>[0]['clock'], driver: SqlDriver, action: () => Promise<void>) {
+    let pending = true
+    return createJournal({ clock, driver: {
+      ...driver,
+      async transaction(statements) {
+        if (pending) {
+          pending = false
+          await action()
+        }
+        await driver.transaction(statements)
+      },
+    } })
+  }
+
+  it.each([false, true])('refuses rescheduling after every completion read (recurring: %s)', async (recurring) => {
+    const { journal: editor, clock, driver } = await journalAt('2026-03-10T10:00:00')
+    const slot = { date: '2026-03-10', time: '09:00' }
+    const task = await editor.createTask('renew the certificate', slot,
+      recurring ? { unit: 'day', interval: 1, weekdays: [] } : null)
+    let rescheduled: Task | null = null
+    const alerted = beforeWrite(clock, driver, async () => {
+      rescheduled = await editor.editTask(task.id, {
+        description: 'renew the certificate',
+        schedule: { date: '2026-03-20', time: '17:00' },
+      })
+    })
+
+    expect(await alerted.completeTaskAt(task.id, slot)).toEqual({ outcome: 'stale', task: rescheduled })
+    expect(await editor.openTasks()).toEqual([rescheduled])
+    expect((await occurrencesOf(editor, task.id)).filter(one => one.completedAt !== null)).toEqual([])
+  })
+
+  it.each([false, true])('refuses completion by another window before the alert write (recurring: %s)', async (recurring) => {
+    const { journal: editor, clock, driver } = await journalAt('2026-03-10T10:00:00')
+    const slot = { date: '2026-03-10', time: '09:00' }
+    const task = await editor.createTask('renew the certificate', slot,
+      recurring ? { unit: 'day', interval: 1, weekdays: [] } : null)
+    let completed: Task | null = null
+    const alerted = beforeWrite(clock, driver, async () => {
+      completed = await editor.completeTask(task.id)
+      clock.set(local('2026-03-10T11:00:00'))
+    })
+
+    expect(await alerted.completeTaskAt(task.id, slot)).toEqual({ outcome: 'stale', task: completed })
+    if (recurring) {
+      expect((await occurrencesOf(editor, task.id)).map(one =>
+        `${formatSlot(slotOf(one))} ${one.completedAt === null ? 'open' : 'kept'}`
+      )).toEqual(['2026-03-11 09:00 open', '2026-03-10 09:00 kept'])
+    } else {
+      expect(await editor.completedTasks()).toEqual([completed])
+    }
+  })
+
+  it('refuses a replaced occurrence even when the Task still has the same slot and cadence', async () => {
+    const { journal: editor, clock, driver } = await journalAt('2026-03-10T10:00:00')
+    const slot = { date: '2026-03-10', time: '09:00' }
+    const task = await editor.createTask('renew the certificate', slot,
+      { unit: 'day', interval: 1, weekdays: [] })
+    const [original] = await occurrencesOf(editor, task.id)
+    const alerted = beforeWrite(clock, driver, async () => {
+      await editor.editTask(task.id, {
+        description: task.description,
+        schedule: { date: '2026-03-20', time: '17:00' },
+      })
+      await editor.editTask(task.id, { description: task.description, schedule: slot })
+    })
+
+    expect(await alerted.completeTaskAt(task.id, slot)).toEqual({ outcome: 'stale', task })
+    const occurrences = await occurrencesOf(editor, task.id)
+    expect(occurrences).toHaveLength(1)
+    expect(occurrences[0].id).not.toBe(original.id)
+    expect(occurrences[0].completedAt).toBeNull()
+    expect(await editor.openTasks()).toEqual([task])
+  })
+
+  it('rolls back keeping and advancing when the Task head guard misses', async () => {
+    const { journal: editor, clock, driver } = await journalAt('2026-03-10T10:00:00')
+    const slot = { date: '2026-03-10', time: '09:00' }
+    const task = await editor.createTask('renew the certificate', slot,
+      { unit: 'day', interval: 1, weekdays: [] })
+    const original = await occurrencesOf(editor, task.id)
+    let reworded: Task | null = null
+    const alerted = beforeWrite(clock, driver, async () => {
+      reworded = await editor.editTask(task.id, { description: 'renew the TLS certificate', schedule: slot })
+    })
+
+    expect(await alerted.completeTaskAt(task.id, slot)).toEqual({ outcome: 'stale', task: reworded })
+    expect(await occurrencesOf(editor, task.id)).toEqual(original)
+    expect(await editor.openTasks()).toEqual([reworded])
+  })
+
+  it.each([false, true])('deduplicates repeated completion alerts (recurring: %s)', async (recurring) => {
+    const { journal } = await journalAt('2026-03-10T10:00:00')
+    const slot = { date: '2026-03-10', time: '09:00' }
+    const task = await journal.createTask('renew the certificate', slot,
+      recurring ? { unit: 'day', interval: 1, weekdays: [] } : null)
+    const first = await journal.completeTaskAt(task.id, slot)
+    expect(first.outcome).toBe('completed')
+    expect(await journal.completeTaskAt(task.id, slot)).toEqual({ outcome: 'stale', task: first.task })
+  })
+
+  it('checkbox completion preserves a competing ordinary completion', async () => {
+    const { journal: editor, clock, driver } = await journalAt('2026-03-10T10:00:00')
+    const task = await editor.createTask('renew the certificate')
+    let completed: Task | null = null
+    const checkbox = beforeWrite(clock, driver, async () => {
+      completed = await editor.completeTask(task.id)
+      clock.set(local('2026-03-10T11:00:00'))
+    })
+
+    expect(await checkbox.completeTask(task.id)).toEqual(completed)
+    expect(await editor.completedTasks()).toEqual([completed])
+  })
+
+  it('bounds checkbox retries when the Task keeps changing', async () => {
+    const { journal: editor, clock, driver } = await journalAt('2026-03-10T10:00:00')
+    const task = await editor.createTask('renew the certificate')
+    const transaction = vi.fn(async () => { throw new TransactionGuardMiss() })
+    const checkbox = createJournal({ clock, driver: { ...driver, transaction } })
+
+    await expect(checkbox.completeTask(task.id)).rejects.toBeInstanceOf(TransactionGuardMiss)
+    expect(transaction).toHaveBeenCalledTimes(3)
+    expect(await editor.openTasks()).toEqual([task])
+  })
+
+  it('does not treat a storage failure as a stale alert or retry it', async () => {
+    const { journal: editor, clock, driver } = await journalAt('2026-03-10T10:00:00')
+    const slot = { date: '2026-03-10', time: '09:00' }
+    const task = await editor.createTask('renew the certificate', slot)
+    const failure = new Error('database is unavailable')
+    const transaction = vi.fn(async () => { throw failure })
+    const alerted = createJournal({ clock, driver: { ...driver, transaction } })
+
+    await expect(alerted.completeTaskAt(task.id, slot)).rejects.toBe(failure)
+    await expect(alerted.completeTask(task.id)).rejects.toBe(failure)
+    expect(transaction).toHaveBeenCalledTimes(2)
+    expect(await editor.openTasks()).toEqual([task])
+  })
+
+  it.each([false, true])('checkbox completion retries a Task rescheduled after its read (recurring: %s)', async (recurring) => {
+    const { journal: editor, clock, driver } = await journalAt('2026-03-10T10:00:00')
+    const task = await editor.createTask('renew the certificate',
+      { date: '2026-03-10', time: '09:00' },
+      recurring ? { unit: 'day', interval: 1, weekdays: [] } : null)
+    let rescheduled = false
+    const checkbox = createJournal({ clock, driver: {
+      ...driver,
+      async select<Row>(sql: string, params: unknown[]) {
+        const rows = await driver.select<Row>(sql, params)
+        if (!rescheduled) {
+          rescheduled = true
+          await editor.editTask(task.id, {
+            description: 'renew the certificate',
+            schedule: { date: '2026-03-20', time: '17:00' },
+          })
+        }
+        return rows
+      },
+    } })
+
+    const completed = await checkbox.completeTask(task.id)
+    expect(completed.scheduledDate).toBe(recurring ? '2026-03-21' : '2026-03-20')
+    expect(completed.scheduledTime).toBe('17:00')
+    if (recurring) {
+      expect((await occurrencesOf(editor, task.id)).map(one =>
+        `${formatSlot(slotOf(one))} ${one.completedAt === null ? 'open' : 'kept'}`
+      )).toEqual(['2026-03-21 17:00 open', '2026-03-20 17:00 kept'])
+    } else {
+      expect(await editor.completedTasks()).toEqual([completed])
+    }
+  })
+
+  it.each([false, true])('refuses a Task rescheduled after the alert read (recurring: %s)', async (recurring) => {
+    const { journal: editor, clock, driver } = await journalAt('2026-03-10T10:00:00')
+    const slot = { date: '2026-03-10', time: '09:00' }
+    const task = await editor.createTask('renew the certificate', slot,
+      recurring ? { unit: 'day', interval: 1, weekdays: [] } : null)
+    let rescheduled: Task | null = null
+    const alerted = createJournal({ clock, driver: {
+      ...driver,
+      async select<Row>(sql: string, params: unknown[]) {
+        const rows = await driver.select<Row>(sql, params)
+        if (rescheduled === null) {
+          rescheduled = await editor.editTask(task.id, {
+            description: 'renew the certificate',
+            schedule: { date: '2026-03-20', time: '17:00' },
+          })
+        }
+        return rows
+      },
+    } })
+
+    expect(await alerted.completeTaskAt(task.id, slot)).toEqual({
+      outcome: 'stale', task: rescheduled,
+    })
+    expect(await editor.openTasks()).toEqual([rescheduled])
+    expect(await editor.completedTasks()).toEqual([])
+    expect((await occurrencesOf(editor, task.id)).filter(one => one.completedAt !== null)).toEqual([])
+  })
+
+  it.each([false, true])('answers stale when another window deletes the Task after the alert read (recurring: %s)', async (recurring) => {
+    const { journal: editor, clock, driver } = await journalAt('2026-03-10T10:00:00')
+    const slot = { date: '2026-03-10', time: '09:00' }
+    const task = await editor.createTask('renew the certificate', slot,
+      recurring ? { unit: 'day', interval: 1, weekdays: [] } : null)
+    let deleted = false
+    const alerted = createJournal({ clock, driver: {
+      ...driver,
+      async select<Row>(sql: string, params: unknown[]) {
+        const rows = await driver.select<Row>(sql, params)
+        if (!deleted) {
+          deleted = true
+          await editor.deleteTask(task.id)
+        }
+        return rows
+      },
+    } })
+
+    expect(await alerted.completeTaskAt(task.id, slot)).toEqual({ outcome: 'stale', task: null })
+    expect(await editor.openTasks()).toEqual([])
+    expect(await editor.completedTasks()).toEqual([])
+    expect(await occurrencesOf(editor, task.id)).toEqual([])
+  })
+
   it('completes an ordinary Task delivered for the slot it still holds', async () => {
     const { journal, clock } = await journalAt('2026-03-09T08:00:00')
     const task = await journal.createTask('renew the certificate', {

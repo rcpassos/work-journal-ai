@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { openTestDatabase } from './database'
+import { TransactionGuardMiss } from '../journal'
 
 /**
  * The test driver's `transaction` stands in for Rust's `journal_transaction`,
@@ -33,6 +34,18 @@ describe('the test driver transaction', () => {
     expect(await driver.select('SELECT count(*) AS n FROM cell', [])).toEqual([
       { n: 4 },
     ])
+  })
+
+  it('rolls back the whole transaction when an exact row-count guard misses', async () => {
+    const driver = await open()
+
+    await expect(driver.transaction([
+      { sql: 'INSERT INTO cell VALUES (?)', params: ['before'], expectedRows: 1 },
+      { sql: 'UPDATE cell SET value = ? WHERE value = ?', params: ['after', 'missing'], expectedRows: 1 },
+      { sql: 'INSERT INTO cell VALUES (?)', params: ['after'], expectedRows: 1 },
+    ])).rejects.toBeInstanceOf(TransactionGuardMiss)
+
+    expect(await driver.select('SELECT value FROM cell', [])).toEqual([])
   })
 
   it.each([

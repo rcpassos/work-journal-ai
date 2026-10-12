@@ -54,7 +54,7 @@ pub const DATABASE_FILE_NAME: &str = "work-journal.db";
 /// this.
 pub const SUPPORTED_MIGRATION_VERSION: i64 = 10;
 
-/// The staged file a validated candidate is copied to, beside the live
+/// The staged snapshot of a validated candidate, beside the live
 /// journal. Not a snapshot name, so pruning never touches it, and never
 /// opened by plugin-sql — it becomes the live journal only when the startup
 /// hook renames it into place.
@@ -343,7 +343,7 @@ pub fn staged_restore_path(config_dir: &Path) -> PathBuf {
     config_dir.join(STAGED_FILE_NAME)
 }
 
-/// The temp sibling a stage copies through, beside the staged path. The same
+/// The temp sibling a stage snapshots into, beside the staged path. The same
 /// directory, so the final rename is atomic — a partial file can never occupy
 /// the staged path. Not a snapshot name, so pruning never touches it, and
 /// never opened by plugin-sql.
@@ -675,31 +675,45 @@ fn same_file(first: &Path, second: &Path) -> bool {
 
 /// Stages a validated candidate beside the live journal. Validates first, so
 /// a refusal stages nothing and touches neither the staged path nor the live
-/// database. A candidate that is the staged file itself is refused before the
-/// copy — copying a file onto itself truncates it to zero bytes, and
-/// validation passes first, on the intact file — as is one that is the live
-/// journal, which there is nothing to restore from. The copy goes to a temp
-/// sibling, which is validated before an atomic rename onto the staged path,
-/// so a copy that fails partway leaves no truncated file where the next
-/// launch would apply it. Answers with the staged path.
+/// database. Refuses the staged file, temp sibling and live journal as
+/// candidates. A read-only `VACUUM INTO` snapshot folds in committed WAL
+/// transactions, leaving the candidate unchanged. The temp sibling is
+/// validated before an atomic rename onto the staged path, so a snapshot
+/// that fails partway leaves no truncated file for the next launch to apply.
+/// Answers with the staged path.
 pub async fn stage_restore(candidate: &Path, config_dir: &Path) -> Result<PathBuf, String> {
-    stage_restore_with_copy(candidate, config_dir, copy_candidate).await
+    stage_restore_with_snapshot(candidate, config_dir, snapshot_candidate).await
 }
 
-/// The file copy staging goes through, so the seam above can swap it in
-/// tests.
-fn copy_candidate(candidate: &Path, temp: &Path) -> io::Result<u64> {
-    std::fs::copy(candidate, temp)
+/// Takes a self-contained snapshot without writing to the chosen candidate.
+async fn snapshot_candidate(candidate: PathBuf, temp: PathBuf) -> Result<(), String> {
+    let options = sqlx::sqlite::SqliteConnectOptions::new()
+        .filename(candidate)
+        .read_only(true)
+        .create_if_missing(false);
+    let mut connection = sqlx::sqlite::SqliteConnection::connect_with(&options)
+        .await
+        .map_err(|error| error.to_string())?;
+    sqlx::query("VACUUM INTO ?")
+        .bind(temp.to_string_lossy().into_owned())
+        .execute(&mut connection)
+        .await
+        .map_err(|error| error.to_string())?;
+    connection.close().await.map_err(|error| error.to_string())
 }
 
-/// The staging body with the file copy as a seam: production passes
-/// `std::fs::copy`, tests pass a copy that fails partway to prove the staged
+/// The staging body with the snapshot step as a seam: production passes
+/// `snapshot_candidate`, tests fail partway through writing to prove the staged
 /// path is never left truncated.
-async fn stage_restore_with_copy(
+async fn stage_restore_with_snapshot<F, Fut>(
     candidate: &Path,
     config_dir: &Path,
-    copy: fn(&Path, &Path) -> io::Result<u64>,
-) -> Result<PathBuf, String> {
+    snapshot: F,
+) -> Result<PathBuf, String>
+where
+    F: FnOnce(PathBuf, PathBuf) -> Fut,
+    Fut: std::future::Future<Output = Result<(), String>>,
+{
     validate_restore_candidate(candidate).await?;
 
     let staged = staged_restore_path(config_dir);
@@ -726,7 +740,14 @@ async fn stage_restore_with_copy(
         std::fs::create_dir_all(parent)
             .map_err(|error| format!("the staged restore could not be prepared: {error}"))?;
     }
-    if let Err(error) = copy(candidate, &temp) {
+    // An interrupted stage can leave a nonempty temp file, which VACUUM
+    // INTO refuses. The candidate cannot be this file: that check is above.
+    match std::fs::remove_file(&temp) {
+        Ok(()) => {}
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => return Err(format!("the backup could not be staged: {error}")),
+    }
+    if let Err(error) = snapshot(candidate.to_path_buf(), temp.clone()).await {
         let _ = std::fs::remove_file(&temp);
         return Err(format!("the backup could not be staged: {error}"));
     }
@@ -751,8 +772,8 @@ async fn stage_restore_with_copy(
 /// outlives the journal it belonged to: sidecars travel with the rollback
 /// when there is one, and orphans of a missing live journal — a WAL without
 /// its main file is unrecoverable — are removed before the staged file takes
-/// the live path. Applying is renames only, no copies; staging is the one
-/// copy, through a temp sibling validated before an atomic rename onto the
+/// the live path. Applying is renames only; staging takes a `VACUUM INTO`
+/// snapshot through a temp sibling validated before an atomic rename onto the
 /// staged path, so a half-written journal never occupies the staged path and
 /// is never the live one. An absent staged file is the ordinary path and costs
 /// nothing, as are missing sidecars. If any step fails, every rename already
@@ -2312,7 +2333,99 @@ mod tests {
         assert!(!staged_restore_path(&config.path).exists());
     });
 
-    async_test!(a_validated_candidate_stages_byte_identical, {
+    async_test!(a_wal_candidate_keeps_uncheckpointed_notes_through_restore, {
+        let config = TempDir::new("restore-wal's");
+        let elsewhere = TempDir::new("restore-wal-candidate");
+        let candidate = elsewhere.path.join("candidate.db");
+        let options = sqlx::sqlite::SqliteConnectOptions::new()
+            .filename(&candidate)
+            .create_if_missing(true)
+            .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal)
+            .pragma("wal_autocheckpoint", "0");
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(options)
+            .await
+            .unwrap();
+        seed_real_schema(&pool, SUPPORTED_MIGRATION_VERSION, "checkpointed Note").await;
+        sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let before = candidate_bytes(&candidate);
+        sqlx::query(
+            "INSERT INTO notes (id, body, captured_at, journal_day)
+             VALUES ('n2', 'WAL-only Note', '2026-09-03T09:00:00Z', '2026-09-03')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // Keep the writer open: closing it would checkpoint away the bug.
+        assert!(std::fs::metadata(sidecar_path(&candidate, "wal")).unwrap().len() > 0);
+        assert_eq!(candidate_bytes(&candidate), before);
+        assert_eq!(
+            validate_restore_candidate(&candidate).await.unwrap(),
+            SUPPORTED_MIGRATION_VERSION
+        );
+        let staged = stage_restore(&candidate, &config.path).await.unwrap();
+        assert_eq!(candidate_bytes(&candidate), before);
+        for kind in ["wal", "shm"] {
+            assert!(!sidecar_path(&staged, kind).exists());
+        }
+
+        let options = sqlx::sqlite::SqliteConnectOptions::new()
+            .filename(&staged)
+            .read_only(true);
+        let mut snapshot = sqlx::sqlite::SqliteConnection::connect_with(&options)
+            .await
+            .unwrap();
+        let notes: Vec<String> = sqlx::query_scalar("SELECT body FROM notes ORDER BY id")
+            .fetch_all(&mut snapshot)
+            .await
+            .unwrap();
+        assert_eq!(notes, ["checkpointed Note", "WAL-only Note"]);
+        snapshot.close().await.unwrap();
+        for kind in ["wal", "shm"] {
+            assert!(!sidecar_path(&staged, kind).exists());
+        }
+
+        assert!(matches!(
+            apply_staged_restore(&config.path, SystemTime::now()).unwrap(),
+            ApplyOutcome::Restored { .. }
+        ));
+        let options = sqlx::sqlite::SqliteConnectOptions::new()
+            .filename(live_database_path(&config.path))
+            .read_only(true);
+        let mut restored = sqlx::sqlite::SqliteConnection::connect_with(&options)
+            .await
+            .unwrap();
+        let notes: Vec<String> = sqlx::query_scalar("SELECT body FROM notes ORDER BY id")
+            .fetch_all(&mut restored)
+            .await
+            .unwrap();
+        assert_eq!(notes, ["checkpointed Note", "WAL-only Note"]);
+        restored.close().await.unwrap();
+        pool.close().await;
+    });
+
+    async_test!(a_stage_replaces_a_temp_file_left_by_an_interrupted_stage, {
+        let config = TempDir::new("restore-stale-temp");
+        let elsewhere = TempDir::new("restore-stale-temp-candidate");
+        let candidate = healthy_candidate(&elsewhere, "candidate.db", "the journal").await;
+        let temp = staged_temp_path(&staged_restore_path(&config.path));
+        std::fs::write(&temp, b"an interrupted snapshot").unwrap();
+
+        let staged = stage_restore(&candidate, &config.path).await.unwrap();
+
+        assert_eq!(
+            validate_restore_candidate(&staged).await.unwrap(),
+            SUPPORTED_MIGRATION_VERSION
+        );
+        assert!(!temp.exists());
+    });
+
+    async_test!(a_validated_candidate_stages_a_snapshot_without_changing_the_candidate, {
         let config = TempDir::new("restore-stage");
         let elsewhere = TempDir::new("restore-stage-candidate");
         let candidate = healthy_candidate(&elsewhere, "candidate.db", "the journal").await;
@@ -2323,7 +2436,22 @@ mod tests {
             .expect("a healthy candidate must stage");
 
         assert_eq!(staged, staged_restore_path(&config.path));
-        assert_eq!(std::fs::read(&staged).unwrap(), candidate_before);
+        assert_eq!(
+            validate_restore_candidate(&staged).await.unwrap(),
+            SUPPORTED_MIGRATION_VERSION
+        );
+        let options = sqlx::sqlite::SqliteConnectOptions::new()
+            .filename(&staged)
+            .read_only(true);
+        let mut snapshot = sqlx::sqlite::SqliteConnection::connect_with(&options)
+            .await
+            .unwrap();
+        let body: String = sqlx::query_scalar("SELECT body FROM notes WHERE id = 'n1'")
+            .fetch_one(&mut snapshot)
+            .await
+            .unwrap();
+        assert_eq!(body, "the journal");
+        snapshot.close().await.unwrap();
         // The candidate itself is left alone.
         assert_eq!(candidate_bytes(&candidate), candidate_before);
     });
@@ -2374,10 +2502,10 @@ mod tests {
 
         let elsewhere = TempDir::new("restore-replace-candidate");
         let candidate = healthy_candidate(&elsewhere, "candidate.db", "the earlier journal").await;
-        let candidate_bytes = candidate_bytes(&candidate);
-        stage_restore(&candidate, &config.path)
+        let staged = stage_restore(&candidate, &config.path)
             .await
             .expect("staging must succeed");
+        let staged_bytes = std::fs::read(&staged).unwrap();
 
         let now = UNIX_EPOCH + Duration::from_secs(1_788_425_100);
         let outcome = apply_staged_restore(&config.path, now).expect("apply must succeed");
@@ -2386,8 +2514,8 @@ mod tests {
             ApplyOutcome::Absent => panic!("a staged file was present"),
         };
 
-        // Byte-identical: the live journal is the candidate, whole.
-        assert_eq!(std::fs::read(&live).unwrap(), candidate_bytes);
+        // Applying moves the staged snapshot intact into the live path.
+        assert_eq!(std::fs::read(&live).unwrap(), staged_bytes);
         // The previous journal survives, whole, and is never deleted by a
         // second apply with nothing staged.
         assert_eq!(std::fs::read(&rollback).unwrap(), live_before);
@@ -2415,10 +2543,10 @@ mod tests {
 
         let elsewhere = TempDir::new("restore-sidecars-candidate");
         let candidate = healthy_candidate(&elsewhere, "candidate.db", "the earlier journal").await;
-        let candidate_bytes = candidate_bytes(&candidate);
-        stage_restore(&candidate, &config.path)
+        let staged = stage_restore(&candidate, &config.path)
             .await
             .expect("staging must succeed");
+        let staged_bytes = std::fs::read(&staged).unwrap();
 
         let now = UNIX_EPOCH + Duration::from_secs(1_788_425_100);
         let outcome = apply_staged_restore(&config.path, now).expect("apply must succeed");
@@ -2430,7 +2558,7 @@ mod tests {
         // The live path holds the restored journal with no stale sidecars
         // beside it — applying the old journal's WAL to it is the corruption
         // case — while the rollback keeps its own history whole.
-        assert_eq!(std::fs::read(&live).unwrap(), candidate_bytes);
+        assert_eq!(std::fs::read(&live).unwrap(), staged_bytes);
         assert!(!wal.exists(), "the stale -wal must not outlive its journal");
         assert!(!shm.exists(), "the stale -shm must not outlive its journal");
         let rollback_wal = PathBuf::from(format!("{}-wal", rollback.display()));
@@ -2497,10 +2625,10 @@ mod tests {
 
         let elsewhere = TempDir::new("restore-orphans-candidate");
         let candidate = healthy_candidate(&elsewhere, "candidate.db", "the earlier journal").await;
-        let candidate_bytes = candidate_bytes(&candidate);
-        stage_restore(&candidate, &config.path)
+        let staged = stage_restore(&candidate, &config.path)
             .await
             .expect("staging must succeed");
+        let staged_bytes = std::fs::read(&staged).unwrap();
 
         let outcome = apply_staged_restore(&config.path, SystemTime::now())
             .expect("apply must succeed");
@@ -2514,7 +2642,7 @@ mod tests {
         assert!(rollback.is_none());
         assert!(!wal.exists(), "the orphan -wal must be gone");
         assert!(!shm.exists(), "the orphan -shm must be gone");
-        assert_eq!(std::fs::read(&live).unwrap(), candidate_bytes);
+        assert_eq!(std::fs::read(&live).unwrap(), staged_bytes);
     });
 
     async_test!(an_older_snapshot_is_migrated_forward_after_replacement, {
@@ -2605,9 +2733,8 @@ mod tests {
         let staged_before = std::fs::read(&staged).unwrap();
         assert!(!staged_before.is_empty());
 
-        // Copying a file onto itself truncates it to zero bytes — validation
-        // passes first, on the intact file, so the guard must come before
-        // the copy.
+        // The staged snapshot is not a restore source for itself: refuse it
+        // before preparing a replacement.
         let refusal = stage_restore(&staged, &config.path)
             .await
             .expect_err("staging the staged file onto itself must not succeed");
@@ -2635,6 +2762,20 @@ mod tests {
         );
         assert_eq!(std::fs::read(&live).unwrap(), live_before);
         assert!(!staged_restore_path(&config.path).exists());
+    });
+
+    async_test!(a_candidate_equal_to_the_temp_path_is_refused_without_deleting_it, {
+        let config = TempDir::new("restore-temp-as-candidate");
+        let staged = staged_restore_path(&config.path);
+        let candidate = staged_temp_path(&staged);
+        write_journal_file(&candidate, SUPPORTED_MIGRATION_VERSION, "the journal").await;
+        let before = candidate_bytes(&candidate);
+
+        let refusal = stage_restore(&candidate, &config.path).await.unwrap_err();
+
+        assert!(refusal.contains("staged"));
+        assert_eq!(candidate_bytes(&candidate), before);
+        assert!(!staged.exists());
     });
 
     #[test]
@@ -2674,9 +2815,9 @@ mod tests {
         );
     });
 
-    async_test!(a_snapshot_round_trips_byte_identical_through_validate_stage_apply, {
-        // Done criterion: a backup taken by the snapshot path restores to a
-        // byte-identical journal — through the real schema, not hand DDL.
+    async_test!(a_snapshot_round_trips_its_contents_through_validate_stage_apply, {
+        // A backup taken by the snapshot path restores every journal record
+        // through the real schema, not hand DDL.
         let source = TempDir::new("round-trip-source");
         let source_path = source.path.join("work-journal.db");
         let url = format!("sqlite:{}?mode=rwc", source_path.display());
@@ -2709,9 +2850,11 @@ mod tests {
         write_journal_file(&live, SUPPORTED_MIGRATION_VERSION, "the live journal").await;
         let live_before = std::fs::read(&live).unwrap();
 
-        stage_restore(&snapshot, &config.path)
+        let staged = stage_restore(&snapshot, &config.path)
             .await
             .expect("the snapshot must stage");
+        let staged_bytes = std::fs::read(&staged).unwrap();
+        assert_eq!(std::fs::read(&snapshot).unwrap(), snapshot_bytes);
         let now = UNIX_EPOCH + Duration::from_secs(1_788_425_100);
         let outcome = apply_staged_restore(&config.path, now).expect("apply must succeed");
         let rollback = match outcome {
@@ -2719,7 +2862,7 @@ mod tests {
             ApplyOutcome::Absent => panic!("a staged file was present"),
         };
 
-        assert_eq!(std::fs::read(&live).unwrap(), snapshot_bytes);
+        assert_eq!(std::fs::read(&live).unwrap(), staged_bytes);
         assert_eq!(std::fs::read(&rollback).unwrap(), live_before);
 
         // The restored journal opens standalone with the snapshot's rows.
@@ -2758,8 +2901,8 @@ mod tests {
         restored.close().await;
     });
 
-    async_test!(a_copy_failure_mid_stage_leaves_no_staged_file_and_apply_is_a_noop, {
-        // A copy that fails partway must never leave a truncated file at the
+    async_test!(a_snapshot_failure_mid_stage_leaves_no_staged_file_and_apply_is_a_noop, {
+        // A snapshot that fails partway must never leave a truncated file at the
         // staged path: the next ordinary launch must find nothing to apply
         // and leave the live journal exactly as it was.
         let config = TempDir::new("restore-partial-stage");
@@ -2770,12 +2913,12 @@ mod tests {
         let elsewhere = TempDir::new("restore-partial-candidate");
         let candidate = healthy_candidate(&elsewhere, "candidate.db", "the journal").await;
 
-        let failure = stage_restore_with_copy(&candidate, &config.path, |_from, to| {
-            std::fs::write(to, b"partial")?;
-            Err(io::Error::other("injected copy failure"))
+        let failure = stage_restore_with_snapshot(&candidate, &config.path, |_from, to| async move {
+            std::fs::write(to, b"partial").map_err(|error| error.to_string())?;
+            Err("injected snapshot failure".to_string())
         })
         .await
-        .expect_err("a copy failure must not stage");
+        .expect_err("a snapshot failure must not stage");
 
         assert!(
             failure.contains("could not be staged"),
@@ -2783,11 +2926,11 @@ mod tests {
         );
         assert!(
             !staged_restore_path(&config.path).exists(),
-            "a partial copy must never occupy the staged path"
+            "a partial snapshot must never occupy the staged path"
         );
         assert!(
             !staged_temp_path(&staged_restore_path(&config.path)).exists(),
-            "a partial copy must not linger as a temp file"
+            "a partial snapshot must not linger as a temp file"
         );
         assert_eq!(std::fs::read(&live).unwrap(), live_before);
 
@@ -2814,12 +2957,12 @@ mod tests {
 
         let second_dir = TempDir::new("restore-partial-second-candidate");
         let second = healthy_candidate(&second_dir, "second.db", "the second journal").await;
-        let failure = stage_restore_with_copy(&second, &config.path, |_from, to| {
-            std::fs::write(to, b"partial")?;
-            Err(io::Error::other("injected copy failure"))
+        let failure = stage_restore_with_snapshot(&second, &config.path, |_from, to| async move {
+            std::fs::write(to, b"partial").map_err(|error| error.to_string())?;
+            Err("injected snapshot failure".to_string())
         })
         .await
-        .expect_err("a copy failure must not stage");
+        .expect_err("a snapshot failure must not stage");
 
         assert!(
             failure.contains("could not be staged"),
@@ -2830,5 +2973,6 @@ mod tests {
             staged_before,
             "a failed stage must leave the previous staged file whole"
         );
+        assert!(!staged_temp_path(&staged).exists());
     });
 }

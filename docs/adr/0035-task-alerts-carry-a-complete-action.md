@@ -6,6 +6,14 @@ The delivered notification carries the Alert's identifier plus the exact Schedul
 
 For a Recurring Task, a successful Complete uses the existing atomic complete-and-advance transaction, so an older banner can never complete the successor occurrence. The same response arriving twice — written down for a cold launch and announced to a window already listening — is processed once. The action carries no foreground option, so choosing it never brings the app forward: a success opens nothing, and anything else — a stale Task, or a completion that failed — opens Tasks View on it for review.
 
+## Completion guards survive concurrent writes
+
+A read before completion is not enough: another window can reschedule, complete or delete the commitment before the write. Completion therefore compares the Task state it read inside the mutation's transaction: still Open, with the same schedule, recurrence rule, anchor, description and details. For a series, the specific Open occurrence read must also still be Open at that slot. Keeping the occurrence, opening its successor and moving the Task head commit together; a miss at any step writes nothing.
+
+The storage contract supports this with optional `SqlStatement.expectedRows`. `SqlDriver.transaction` checks each statement's affected-row count against that exact expectation, including zero when specified, and rolls the whole transaction back on a mismatch. Rust's `journal_transaction` returns the distinct `journal transaction guard missed` rejection, which the Desktop driver translates into `TransactionGuardMiss`; the SQLite test driver follows the same contract. Other storage errors retain their existing failure behavior.
+
+`completeTaskAt` never retries a guard miss: it answers `stale` with a freshly read Task, or null after deletion. The checkbox's `completeTask` means the Task rather than one delivered slot, so it re-reads and retries up to three completion attempts. If another window has completed the Task, it returns that Task unchanged; if all attempts miss while the Task remains Open, it reports the guard miss. Undo Completion retains its existing behavior.
+
 ## Considered options
 
 - **Interpolating the slot into the request identifier** (`task:ID:DATE:TIME`), so staleness falls out of identifier mismatch. Rejected: the identifier is what makes re-registering replace rather than duplicate, and a Recurring Task advancing would orphan its own request.
