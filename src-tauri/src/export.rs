@@ -65,7 +65,7 @@ fn plain_file_name(file_name: &str) -> io::Result<PathBuf> {
 pub(crate) fn free_path(directory: &Path, file_name: &Path) -> io::Result<PathBuf> {
     let first = directory.join(file_name);
 
-    if !first.exists() {
+    if !occupied(&first)? {
         return Ok(first);
     }
 
@@ -83,7 +83,7 @@ pub(crate) fn free_path(directory: &Path, file_name: &Path) -> io::Result<PathBu
     // one of the exports already sitting there.
     for attempt in 2..1000 {
         let next = directory.join(format!("{stem}-{attempt}{extension}"));
-        if !next.exists() {
+        if !occupied(&next)? {
             return Ok(next);
         }
     }
@@ -92,6 +92,16 @@ pub(crate) fn free_path(directory: &Path, file_name: &Path) -> io::Result<PathBu
         io::ErrorKind::AlreadyExists,
         format!("there is nowhere left to export to beside {}", first.display()),
     ))
+}
+
+/// A directory entry owns its name even when it is a dangling symlink.
+/// Metadata errors other than an absent entry cannot establish a free name.
+fn occupied(path: &Path) -> io::Result<bool> {
+    match std::fs::symlink_metadata(path) {
+        Ok(_) => Ok(true),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error),
+    }
 }
 
 #[cfg(test)]

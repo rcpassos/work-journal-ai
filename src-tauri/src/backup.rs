@@ -1186,6 +1186,47 @@ mod tests {
         assert_eq!(std::fs::read_dir(&directory.path).unwrap().count(), 3);
     });
 
+    #[cfg(unix)]
+    async_test!(a_manual_backup_settles_beside_a_dangling_symlink, {
+        let (_source, pool) = seeded_journal("wal").await;
+        let directory = TempDir::new("manual-dangling-symlink");
+        let chosen = directory.path.join("backup.db");
+        let missing = directory.path.join("missing.db");
+        std::os::unix::fs::symlink(&missing, &chosen).unwrap();
+
+        let published = take_manual_snapshot(&chosen, &pool).await.unwrap();
+
+        assert_eq!(published, directory.path.join("backup-2.db"));
+        assert_eq!(std::fs::read_link(&chosen).unwrap(), missing);
+        assert!(!missing.exists());
+        assert_healthy_snapshot(&published).await;
+        assert_eq!(std::fs::read_dir(&directory.path).unwrap().count(), 2);
+    });
+
+    #[cfg(unix)]
+    async_test!(a_manual_snapshot_skips_a_sibling_claimed_by_a_dangling_symlink_during_the_write, {
+        let directory = TempDir::new("manual-symlink-publication-race");
+        let chosen = directory.path.join("backup.db");
+        let second = directory.path.join("backup-2.db");
+        let missing = directory.path.join("missing.db");
+        std::fs::write(&chosen, "original backup").unwrap();
+        let claimed = second.clone();
+        let target = missing.clone();
+
+        let published = take_snapshot_with(&chosen, SnapshotDestination::FreeSibling, |path| async move {
+            std::fs::write(path, "completed snapshot").unwrap();
+            std::os::unix::fs::symlink(target, claimed).unwrap();
+            Ok(())
+        }).await.expect("a dangling symlink occupies its name");
+
+        assert_eq!(published, directory.path.join("backup-3.db"));
+        assert_eq!(std::fs::read_to_string(&chosen).unwrap(), "original backup");
+        assert_eq!(std::fs::read_link(&second).unwrap(), missing);
+        assert!(!missing.exists());
+        assert_eq!(std::fs::read_to_string(published).unwrap(), "completed snapshot");
+        assert_eq!(std::fs::read_dir(&directory.path).unwrap().count(), 3);
+    });
+
     async_test!(a_failed_snapshot_preserves_valid_backups_without_pruning, {
         let (_source, pool) = seeded_journal("delete").await;
         let directory = TempDir::new("failure-preserves-backups");
