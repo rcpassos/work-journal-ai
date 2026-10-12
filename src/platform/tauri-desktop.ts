@@ -24,6 +24,7 @@ import Database from '@tauri-apps/plugin-sql'
 import { load } from '@tauri-apps/plugin-store'
 import { check, type Update } from '@tauri-apps/plugin-updater'
 import type { CalendarEvent, TaskAlert } from '@/journal/journal'
+import { TRANSACTION_GUARD_MISS, TransactionGuardMiss } from '@/journal/journal'
 import type { HotkeyAction, HotkeyStatuses } from '@/settings/hotkey'
 import type { Theme } from '@/settings/theme'
 import {
@@ -151,7 +152,14 @@ export function createTauriDesktop(): Desktop {
         // would not be on the connection that opened the transaction. The
         // Rust side runs the whole list through one of its own instead — see
         // docs/adr/0020-recurring-task-transitions-are-transactional.md.
-        transaction: (statements) => invoke('journal_transaction', { statements }),
+        async transaction(statements) {
+          try {
+            await invoke('journal_transaction', { statements })
+          } catch (error) {
+            if (error === TRANSACTION_GUARD_MISS) throw new TransactionGuardMiss()
+            throw error
+          }
+        },
       }
     },
 

@@ -20,6 +20,19 @@ export const systemClock: Clock = { now: () => new Date() }
 export interface SqlStatement {
   sql: string
   params: unknown[]
+  /** A different affected-row count must roll the whole transaction back. */
+  expectedRows?: number
+}
+
+/** The Rust command's guard-miss rejection, translated by the Desktop driver. */
+export const TRANSACTION_GUARD_MISS = 'journal transaction guard missed'
+
+/** A record moved since it was read; callers may re-read rather than fail. */
+export class TransactionGuardMiss extends Error {
+  constructor() {
+    super(TRANSACTION_GUARD_MISS)
+    this.name = 'TransactionGuardMiss'
+  }
 }
 
 /** The whole of the app's storage surface: statements, and a real transaction. */
@@ -38,6 +51,8 @@ export interface SqlDriver {
    * over rows already read, and the statements that write it carry their own
    * guards so a record that moved underneath them refuses rather than
    * overwrites.
+   * An `expectedRows` mismatch rolls back and rejects with
+   * `TransactionGuardMiss`, distinct from other storage failures.
    */
   transaction(statements: SqlStatement[]): Promise<void>
 }
@@ -910,9 +925,22 @@ const UPDATE_TASK_WITH_RECURRENCE = `
   WHERE id = ?
 `
 
+/** Completion compares the Task state read before any asynchronous write. */
+const TASK_COMPLETION_GUARD = `
+  WHERE id = ? AND completed_at IS NULL
+    AND scheduled_date IS ? AND scheduled_time IS ?
+    AND recurrence_unit IS ? AND recurrence_interval IS ?
+    AND recurrence_weekdays IS ? AND recurrence_anchor_date IS ?
+    AND description = ? AND details IS ?
+`
+
+const COMPLETE_TASK = `
+  UPDATE tasks SET completed_at = ? ${TASK_COMPLETION_GUARD}
+`
+
 /** Where the series now stands: the slot its one Open occurrence asks for. */
-const UPDATE_TASK_SCHEDULE = `
-  UPDATE tasks SET scheduled_date = ?, scheduled_time = ? WHERE id = ?
+const ADVANCE_TASK = `
+  UPDATE tasks SET scheduled_date = ?, scheduled_time = ? ${TASK_COMPLETION_GUARD}
 `
 
 /**
@@ -1042,15 +1070,14 @@ interface CompletedOccurrenceRow extends TaskOccurrenceRow {
 }
 
 /**
- * Keeps the commitment this occurrence stands for, and only while it is still
- * the Open one: a second window that completed it first leaves this a no-op,
- * and the insert that follows then collides with the one-Open index and takes
- * the whole transaction down rather than opening a second occurrence.
+ * Keeps the specific Open occurrence read at this slot. An affected-row guard
+ * refuses a replacement before any successor can be inserted.
  */
 const COMPLETE_TASK_OCCURRENCE = `
   UPDATE task_occurrences
   SET completed_at = ?
-  WHERE id = ? AND completed_at IS NULL
+  WHERE id = ? AND task_id = ? AND completed_at IS NULL
+    AND scheduled_date = ? AND scheduled_time IS ?
 `
 
 /**
@@ -1442,14 +1469,20 @@ export function createJournal({
 
     if (task.recurrence === null || task.recurrenceAnchor === null) {
       const completedAt = now.toISOString()
-      await driver.execute(UPDATE_TASK_COMPLETED_AT, [completedAt, task.id])
+      await driver.transaction([
+        {
+          sql: COMPLETE_TASK,
+          params: [completedAt, ...completionGuardParams(task)],
+          expectedRows: 1,
+        },
+      ])
       return { ...task, completedAt }
     }
 
     // A Recurring Task is never itself Completed: the occurrence is kept,
     // stays in the Task's own history, and the Task carries on asking for
     // the next slot that is still ahead.
-    const open = await readOpenOccurrence(driver, task.id)
+    const open = await readOpenOccurrence(driver, task)
     const next = advancedSlot(
       task.recurrenceAnchor,
       task.recurrence,
@@ -1464,11 +1497,19 @@ export function createJournal({
     }
 
     await driver.transaction([
-      { sql: COMPLETE_TASK_OCCURRENCE, params: [now.toISOString(), open.id] },
-      opensOccurrence(advanced, now, open.id),
       {
-        sql: UPDATE_TASK_SCHEDULE,
-        params: [next, open.scheduledTime, task.id],
+        sql: COMPLETE_TASK_OCCURRENCE,
+        params: [
+          now.toISOString(), open.id, task.id,
+          open.scheduledDate, open.scheduledTime,
+        ],
+        expectedRows: 1,
+      },
+      { ...opensOccurrence(advanced, now, open.id), expectedRows: 1 },
+      {
+        sql: ADVANCE_TASK,
+        params: [next, open.scheduledTime, ...completionGuardParams(task)],
+        expectedRows: 1,
       },
     ])
 
@@ -1941,15 +1982,21 @@ export function createJournal({
     },
 
     async completeTask(id) {
-      const task = await readTask(driver, id)
-
-      // Completing what is already completed must not move the instant it was
-      // completed at: the Completed list is ordered by it.
-      if (!isOpen(task)) {
-        return task
+      // A checkbox means this Task, so retry a changed commitment. An alert
+      // means its exact slot and never retries. Bound retries across windows.
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const task = await readTask(driver, id)
+        if (!isOpen(task)) return task
+        try {
+          return await completeOpen(task)
+        } catch (error) {
+          if (!(error instanceof TransactionGuardMiss)) throw error
+        }
       }
 
-      return completeOpen(task)
+      const task = await readTask(driver, id)
+      if (!isOpen(task)) return task
+      throw new TransactionGuardMiss()
     },
 
 
@@ -1973,7 +2020,12 @@ export function createJournal({
         return { outcome: 'stale', task }
       }
 
-      return { outcome: 'completed', task: await completeOpen(task) }
+      try {
+        return { outcome: 'completed', task: await completeOpen(task) }
+      } catch (error) {
+        if (!(error instanceof TransactionGuardMiss)) throw error
+        return { outcome: 'stale', task: await findTask(driver, id) }
+      }
     },
 
     async reopenTask(id) {
@@ -3627,18 +3679,21 @@ async function readOccurrences(
 }
 
 /**
- * The one Open Task Occurrence a Recurring Task always has. Its absence is a
- * broken invariant rather than an empty result, so it fails loudly instead of
- * quietly opening a second one.
+ * The Open occurrence at the head completion read. A replacement or deletion
+ * between the two reads is a guard miss, just as it is during the write.
  */
 async function readOpenOccurrence(
   driver: SqlDriver,
-  taskId: string,
+  task: Task,
 ): Promise<TaskOccurrence> {
-  const open = openOccurrence(await readOccurrences(driver, taskId))
+  const open = openOccurrence(await readOccurrences(driver, task.id))
 
-  if (open === null) {
-    throw new Error(`That Recurring Task has no Open Task Occurrence: ${taskId}.`)
+  if (
+    open === null ||
+    open.scheduledDate !== task.scheduledDate ||
+    open.scheduledTime !== task.scheduledTime
+  ) {
+    throw new TransactionGuardMiss()
   }
 
   return open
@@ -3861,6 +3916,18 @@ function recurrenceParams(
     recurrence?.interval ?? null,
     weekdaysColumn(recurrence),
     recurrence === null ? null : anchor,
+  ]
+}
+
+/** The Task state completion was judged against, including nullable slots. */
+function completionGuardParams(task: Task): unknown[] {
+  return [
+    task.id,
+    task.scheduledDate,
+    task.scheduledTime,
+    ...recurrenceParams(task.recurrence, task.recurrenceAnchor),
+    task.description,
+    task.details,
   ]
 }
 

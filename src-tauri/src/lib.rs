@@ -2239,10 +2239,14 @@ fn watch_for_wake(app: &tauri::AppHandle) {
 /// One statement of a transaction, exactly as the journal's storage seam hands
 /// it over. Must match `SqlStatement` in `src/journal/journal.ts`.
 #[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct Statement {
     sql: String,
     params: Vec<serde_json::Value>,
+    expected_rows: Option<u64>,
 }
+
+const TRANSACTION_GUARD_MISS: &str = "journal transaction guard missed";
 
 /// Every statement, or none — the journal's transaction seam; see
 /// docs/adr/0020-recurring-task-transitions-are-transactional.md.
@@ -2274,6 +2278,13 @@ async fn journal_transaction(
         _ => return Err("the journal database is not SQLite".to_string()),
     };
 
+    run_journal_transaction(pool, statements).await
+}
+
+async fn run_journal_transaction(
+    pool: &sqlx::SqlitePool,
+    statements: Vec<Statement>,
+) -> Result<(), String> {
     let mut transaction = pool.begin().await.map_err(|error| error.to_string())?;
 
     for statement in statements {
@@ -2296,10 +2307,20 @@ async fn journal_transaction(
 
         // The first refusal ends the transaction: dropping it without a commit
         // rolls back everything before it.
-        query
+        let result = query
             .execute(&mut *transaction)
             .await
             .map_err(|error| error.to_string())?;
+        if statement
+            .expected_rows
+            .is_some_and(|expected| result.rows_affected() != expected)
+        {
+            transaction
+                .rollback()
+                .await
+                .map_err(|error| error.to_string())?;
+            return Err(TRANSACTION_GUARD_MISS.to_string());
+        }
     }
 
     transaction.commit().await.map_err(|error| error.to_string())
@@ -2808,6 +2829,51 @@ fn build_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn journal_transaction_guards_roll_back_every_write() {
+        tauri::async_runtime::block_on(async {
+            let pool = sqlx::sqlite::SqlitePoolOptions::new()
+                .max_connections(1)
+                .connect("sqlite::memory:")
+                .await
+                .unwrap();
+            sqlx::query("CREATE TABLE cell (value TEXT)")
+                .execute(&pool)
+                .await
+                .unwrap();
+
+            for expected in [0, 2] {
+                let statements: Vec<Statement> = serde_json::from_value(serde_json::json!([
+                    {"sql": "INSERT INTO cell VALUES (?)", "params": ["before"]},
+                    {"sql": "INSERT INTO cell VALUES (?)", "params": ["guarded"], "expectedRows": expected},
+                    {"sql": "INSERT INTO cell VALUES (?)", "params": ["after"]}
+                ])).unwrap();
+                assert_eq!(
+                    run_journal_transaction(&pool, statements).await,
+                    Err(TRANSACTION_GUARD_MISS.to_string())
+                );
+                let count: (i64,) = sqlx::query_as("SELECT count(*) FROM cell")
+                    .fetch_one(&pool)
+                    .await
+                    .unwrap();
+                assert_eq!(count.0, 0);
+            }
+
+            let statements = serde_json::from_value(serde_json::json!([
+                {"sql": "INSERT INTO cell VALUES (?)", "params": ["kept"], "expectedRows": 1},
+                {"sql": "UPDATE cell SET value = ? WHERE value = ?", "params": ["unused", "missing"], "expectedRows": 0},
+                {"sql": "INSERT INTO cell VALUES (?)", "params": ["unguarded"]}
+            ])).unwrap();
+            run_journal_transaction(&pool, statements).await.unwrap();
+            let values: Vec<(String,)> = sqlx::query_as("SELECT value FROM cell ORDER BY value")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+            assert_eq!(values, vec![("kept".into(),), ("unguarded".into(),)]);
+            pool.close().await;
+        });
+    }
 
     /// The database path is named once: the URL plugin-sql opens must stay
     /// the `sqlite:` scheme plus `backup::DATABASE_FILE_NAME`, which the
