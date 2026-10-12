@@ -4,6 +4,8 @@ What changed in each released version, newest first. Every `vX.Y.Z` section here
 
 ## Unreleased
 
+- A failed backup no longer appears as a successful snapshot or delays the next automatic attempt, and existing backups are preserved.
+
 ## 0.17.0 — 2026-10-04
 
 - Settings is split into five tabs along the top, General, Sources, Intelligence, Data and About, and Check for Updates… in the menu bar opens the About tab.

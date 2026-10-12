@@ -54,6 +54,12 @@ snapshot is #161's problem; nothing here renames, replaces or deletes
 
 ## Consequences
 
+- **A snapshot is published by rename only after a successful write.**
+  `VACUUM INTO` writes to a temporary sibling excluded from discovery and
+  retention; failure removes it, and the next automatic pass removes only
+  abandoned snapshot temporary files. Publication never overwrites an existing
+  file, including a manual destination taken while the snapshot was writing.
+
 - **Automatic snapshots live in `app_config_dir()/backups/`, beside the
   journal, and are therefore not disaster recovery.** Same disk, same directory
   tree: they do not survive a failed disk, and nothing in the app may claim

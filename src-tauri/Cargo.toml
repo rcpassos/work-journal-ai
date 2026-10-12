@@ -44,6 +44,9 @@ keyring = "4.2.0"
 reqwest = { version = "0.13", default-features = false, features = ["json", "native-tls"] }
 # The save dialog behind the manual backup — and #161's open dialog after it.
 tauri-plugin-dialog = { version = "~2.7.3" }
+# Temporary snapshot siblings, cleanup on failure, and no-overwrite publication.
+# Already in the dependency tree through Tauri.
+tempfile = "3.27"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
