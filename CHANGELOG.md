@@ -5,8 +5,11 @@ What changed in each released version, newest first. Every `vX.Y.Z` section here
 ## Unreleased
 
 - An interrupted restore now keeps the previous journal’s committed Notes recoverable in its rollback.
+- Repeated submissions while a Note or Task is saving now create one record, and a pending save no longer discards a newer draft.
+- A failed backup no longer appears as a successful snapshot or delays the next automatic attempt, and existing backups are preserved.
 - Restoring a rollback or journal with recent committed Notes still in its SQLite WAL now preserves those Notes.
 - Completing an old Task Alert no longer completes a commitment that another window rescheduled while the action was being processed.
+- Editing a Task's wording preserves concurrent completions, and conflicting schedule edits keep your draft for another save.
 
 ## 0.17.0 — 2026-10-04
 

@@ -44,7 +44,7 @@ async function showTasks(
     <TasksView desktop={desktop} journal={Promise.resolve(core)} clock={clock} />,
   )
 
-  return { desktop, core, clock, created }
+  return { desktop, core, clock, created, driver }
 }
 
 /**
@@ -1090,6 +1090,48 @@ it('retains both edited fields after a failed save for correction and retry', as
   fireEvent.click(screen.getByRole('button', { name: 'Save' }))
   await expect.poll(() => screen.queryByRole('dialog')).toBeNull()
   expect((await core.openTasks())[0]).toMatchObject({ description: 'corrected', details: 'retained\ncontext' })
+})
+
+it('keeps the whole draft when completion conflicts with a schedule save, then permits retry', async () => {
+  const { core, clock, created, driver, desktop } = await showTasks(['proposal'])
+  const task = await core.editTask(created[0].id, {
+    description: 'proposal', schedule: { date: '2026-03-09', time: '09:00' },
+    recurrence: { unit: 'day', interval: 1, weekdays: [] },
+  })
+  await openEditorFor(desktop, 'proposal', 'Overdue')
+  fireEvent.change(screen.getByLabelText('Task Description'), { target: { value: 'edited proposal' } })
+  fireEvent.change(screen.getByLabelText('Task Details (optional)'), { target: { value: 'retained\ncontext' } })
+  setTime('12:00')
+
+  let completed = false
+  core.editTask = createJournal({ clock, driver: {
+    ...driver,
+    async transaction(statements) {
+      if (!completed) {
+        completed = true
+        await core.completeTask(task.id)
+      }
+      await driver.transaction(statements)
+    },
+  } }).editTask
+  fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+  await screen.findByText('That Task could not be saved.')
+  expect(screen.getByRole('dialog', { name: 'Edit Task' })).toBeTruthy()
+  expect((screen.getByLabelText('Task Description') as HTMLInputElement).value).toBe('edited proposal')
+  expect((screen.getByLabelText('Task Details (optional)') as HTMLTextAreaElement).value).toBe('retained\ncontext')
+  expect((screen.getByLabelText('Time') as HTMLInputElement).value).toBe('12:00')
+  expect((await core.openTasks())[0]).toMatchObject({
+    description: 'proposal', details: null, scheduledDate: '2026-03-10', scheduledTime: '09:00',
+  })
+  expect((await occurrencesOf(core, task.id)).filter(one => one.completedAt === null)).toHaveLength(1)
+
+  fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+  await expect.poll(() => screen.queryByRole('dialog')).toBeNull()
+  expect((await core.openTasks())[0]).toMatchObject({
+    description: 'edited proposal', details: 'retained\ncontext',
+    scheduledDate: '2026-03-10', scheduledTime: '12:00',
+  })
 })
 
 it.each([false, true])('locks editor fields during a pending save (failure: %s)', async (fails) => {

@@ -61,8 +61,13 @@ export default function TaskCreationView({
   // silence it replaced.
   const [refusals, setRefusals] = useState(0)
   const field = useRef<HTMLInputElement>(null)
+  // Synchronous across Enter and Create, through announcements and dismissal.
+  // A new showing can keep its Draft while an older save finishes.
+  const submitting = useRef(false)
+  const showing = useRef(0)
 
   const dismiss = useCallback(async () => {
+    showing.current += 1
     // The next Task Creation starts empty, whether this one committed or not —
     // and empty means Unscheduled too, not the last date that happened to be
     // chosen.
@@ -84,46 +89,55 @@ export default function TaskCreationView({
       // nothing yet, exactly as it is during a Capture.
       if (said.trim() === '') return
 
+      if (submitting.current) return
+      submitting.current = true
+      const submittedShowing = showing.current
       try {
-        await (await journal).createTask(said, scheduledFor, repeats, details)
-      } catch (error) {
-        // A Task that could not be stored must not vanish: leave the window
-        // open with the description still in it, and say so, since a window
-        // that merely stayed open reads as a missed keystroke.
-        console.error('could not commit the Task', error)
-        setRefusals((refused) => refused + 1)
-        return
-      }
-
-      // A Tasks View already on screen has no other way to learn of it, and the
-      // announcement has to leave before the window goes — dismissing hides the
-      // whole app. It is not the Task Creation's problem either way: the Task
-      // is stored regardless.
-      try {
-        await desktop.announceTasksChanged()
-      } catch (error) {
-        console.error('could not announce the Task', error)
-      }
-
-      await dismiss()
-
-      // Asked after the window has gone, and never waited on: the prompt is
-      // the system's and belongs in front of whatever the user is doing, not
-      // behind a panel held open for it. The Task is stored either way — see
-      // docs/adr/0017-the-os-schedules-task-alerts.md.
-      //
-      // The answer is deliberately not shown here: by the time it arrives this
-      // window is gone, and there is nowhere honest to put it. A refusal is
-      // the user's own answer to a prompt they just saw, and Settings › Task
-      // Alerts is where it stays sayable afterwards. A grant announces, so the
-      // window that registers the Alerts hears it — and if that registration
-      // fails, an open Tasks View says so.
-      if (scheduledFor !== null && scheduledFor.time !== null) {
-        void askAboutTaskAlerts(desktop).then((answer) => {
-          if (answer !== 'granted') {
-            console.warn('the first timed Task got no Task Alert:', answer)
+        try {
+          await (await journal).createTask(said, scheduledFor, repeats, details)
+        } catch (error) {
+          // A Task that could not be stored must not vanish: leave the window
+          // open with the description still in it, and say so, since a window
+          // that merely stayed open reads as a missed keystroke.
+          console.error('could not commit the Task', error)
+          if (showing.current === submittedShowing) {
+            setRefusals((refused) => refused + 1)
           }
-        })
+          return
+        }
+
+        // A Tasks View already on screen has no other way to learn of it, and the
+        // announcement has to leave before the window goes — dismissing hides the
+        // whole app. It is not the Task Creation's problem either way: the Task
+        // is stored regardless.
+        try {
+          await desktop.announceTasksChanged()
+        } catch (error) {
+          console.error('could not announce the Task', error)
+        }
+
+        if (showing.current === submittedShowing) await dismiss()
+
+        // Asked after this Task Creation ends, even if a newer showing is up,
+        // and never waited on: permission belongs to the Task already saved.
+        // The system prompt belongs in front of whatever the user is doing, not
+        // behind a panel held open for it. The Task is stored either way — see
+        // docs/adr/0017-the-os-schedules-task-alerts.md.
+        //
+        // The answer is deliberately not shown against any newer draft. A
+        // refusal is the user's own answer to a prompt they just saw; Settings › Task
+        // Alerts is where it stays sayable afterwards. A grant announces, so the
+        // window that registers the Alerts hears it — and if that registration
+        // fails, an open Tasks View says so.
+        if (scheduledFor !== null && scheduledFor.time !== null) {
+          void askAboutTaskAlerts(desktop).then((answer) => {
+            if (answer !== 'granted') {
+              console.warn('the first timed Task got no Task Alert:', answer)
+            }
+          })
+        }
+      } finally {
+        submitting.current = false
       }
     },
     [desktop, journal, dismiss, details],
@@ -140,7 +154,10 @@ export default function TaskCreationView({
     // else. A window is put away either by a dismiss, which has already
     // cleared it, or by the other Entry Point being invoked, which must leave
     // the half-typed description exactly where the user left it.
-    const shown = desktop.onTaskCreationShown(() => field.current?.focus())
+    const shown = desktop.onTaskCreationShown(() => {
+      showing.current += 1
+      field.current?.focus()
+    })
     // Clicking away is an abandon, not a Task Creation left floating over the
     // screen. Unless the window is already gone: another Work Journal window
     // was invoked — the other resident panel, or the Main Window — the Rust
@@ -153,6 +170,7 @@ export default function TaskCreationView({
     })
 
     return () => {
+      showing.current += 1
       document.body.classList.remove('capture-window')
       void shown.then((stop) => stop())
       void blurred.then((stop) => stop())

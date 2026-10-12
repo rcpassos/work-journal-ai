@@ -477,20 +477,7 @@ pub fn run() {
                             return Ok(());
                         }
                     };
-                    match backup::apply_staged_restore(&config_dir) {
-                        Ok(backup::ApplyOutcome::Absent) => {}
-                        Ok(backup::ApplyOutcome::Restored { rollback }) => match rollback {
-                            Some(path) => log::info!(
-                                "restored the journal from a staged backup, previous journal kept as {}",
-                                path.display()
-                            ),
-                            None => log::info!("restored the journal from a staged backup"),
-                        },
-                        Err(error) => {
-                            log::error!("the staged restore could not be applied: {error}")
-                        }
-                    }
-                    Ok(())
+                    apply_restore_before_sql(&config_dir)
                 })
                 .build(),
         )
@@ -1777,18 +1764,16 @@ async fn backup_journal(
 
     let pool = journal_pool(databases).await?;
 
-    // Settle after the pool, before the write: the first free sibling of the
-    // chosen name in the chosen directory. In the common case the name is
-    // free and this is a no-op.
     let directory = chosen
         .parent()
         .ok_or_else(|| "the destination has no directory".to_string())?;
-    let destination = backup::settle_destination(directory, &file_name)
-        .map_err(|error| error.to_string())?;
-    if let Some(parent) = destination.parent() {
-        std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-    }
-    backup::take_snapshot(&destination, &pool).await?;
+    // Revalidate the name and create the directory before preparing the
+    // temporary sibling. Publication owns settlement, including a collision
+    // that appears while VACUUM is writing.
+    backup::plain_destination(&file_name)
+        .ok_or_else(|| "the destination is not a plain file name".to_string())?;
+    std::fs::create_dir_all(directory).map_err(|error| error.to_string())?;
+    let destination = backup::take_manual_snapshot(chosen, &pool).await?;
 
     Ok(BackupResult {
         path: destination.to_string_lossy().into_owned(),
@@ -2820,6 +2805,27 @@ fn build_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
     // buttons go through the mouseUp handler above instead.
     let _ = tray.with_inner_tray_icon(|inner| inner.set_show_menu_on_right_click(false));
 
+    Ok(())
+}
+
+/// Apply before SQL preload can create or open the live journal.
+fn apply_restore_before_sql(config_dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    match backup::apply_staged_restore(config_dir) {
+        Ok(backup::ApplyOutcome::Absent) => {}
+        Ok(backup::ApplyOutcome::Restored { rollback }) => match rollback {
+            Some(path) => log::info!(
+                "restored the journal from a staged backup, previous journal kept as {}",
+                path.display()
+            ),
+            None => log::info!("restored the journal from a staged backup"),
+        },
+        Err(error) => {
+            log::error!("the staged restore could not be applied: {error}");
+            if !backup::live_database_path(config_dir).is_file() {
+                return Err(error.into());
+            }
+        }
+    }
     Ok(())
 }
 

@@ -24,8 +24,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 /// nothing and asks nothing of the user.
 pub const SNAPSHOT_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
 
-/// How many snapshots are kept. Oldest pruned past this, and nothing else in
-/// the directory is ever touched.
+/// How many snapshots are kept. Retention prunes the oldest past this and
+/// leaves everything outside the snapshot namespace alone.
 pub const RETAINED_SNAPSHOTS: usize = 30;
 
 /// The stem every snapshot is named with, and the only name pruning will
@@ -36,6 +36,12 @@ const FILE_STEM: &str = "work-journal";
 /// The extension a snapshot carries: a backup is a SQLite file, not a
 /// document.
 const FILE_EXTENSION: &str = "db";
+
+// A separate namespace from snapshots and restore staging, also recognized
+// when the next automatic pass removes abandoned snapshot writes.
+const SNAPSHOT_TEMP_PREFIX: &str = ".work-journal-snapshot-";
+const SNAPSHOT_TEMP_SUFFIX: &str = ".tmp";
+const SNAPSHOT_TEMP_RANDOM_LEN: usize = 6;
 
 /// The live journal's file name, named once here. `DATABASE_URL` in `lib.rs`
 /// is `sqlite:` plus this, and every restore path below is built from it, so
@@ -145,10 +151,11 @@ pub struct Automatic {
 }
 
 /// Decides, from the directory's listing and a clock, whether a snapshot is
-/// due and what the automatic backups look like right now. Unrelated files
-/// are invisible to this: they are not snapshots, so they neither delay one
-/// nor count as one.
+/// due and what the automatic backups look like right now. Abandoned snapshot
+/// temporary files are removed first, even when no new snapshot is due.
+/// Unrelated files neither delay a snapshot nor count as one, and are untouched.
 pub fn automatic(directory: &Path, now: SystemTime) -> Automatic {
+    remove_snapshot_temps(directory);
     let snapshots = listed_snapshots(directory);
     let status = status_of(&snapshots);
 
@@ -165,6 +172,34 @@ pub fn automatic(directory: &Path, now: SystemTime) -> Automatic {
     };
 
     Automatic { due, status }
+}
+
+fn remove_snapshot_temps(directory: &Path) {
+    let Ok(entries) = std::fs::read_dir(directory) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(random) = name
+            .to_str()
+            .and_then(|name| name.strip_prefix(SNAPSHOT_TEMP_PREFIX))
+            .and_then(|name| name.strip_suffix(SNAPSHOT_TEMP_SUFFIX))
+        else {
+            continue;
+        };
+        if random.len() != SNAPSHOT_TEMP_RANDOM_LEN
+            || !random.bytes().all(|byte| byte.is_ascii_alphanumeric())
+            || !entry.file_type().is_ok_and(|kind| kind.is_file())
+        {
+            continue;
+        }
+        if let Err(error) = std::fs::remove_file(entry.path()) {
+            log::warn!(
+                "could not remove abandoned snapshot {}: {error}",
+                entry.path().display()
+            );
+        }
+    }
 }
 
 /// Which snapshots to prune once a new one is safely on disk: all but the
@@ -200,14 +235,99 @@ pub fn prunable(directory: &Path) -> Vec<PathBuf> {
 /// The destination is bound, never interpolated: `VACUUM INTO ?`. A snapshot
 /// opens, passes `quick_check`, and carries every journal table including
 /// `_sqlx_migrations`, whether the source runs WAL or rollback-journal.
+/// Only a completed write is published, by a no-overwrite rename of its
+/// temporary sibling. A failed attempt never creates the destination.
 pub async fn take_snapshot(destination: &Path, pool: &SqlitePool) -> Result<(), String> {
-    let destination = destination.to_string_lossy().into_owned();
+    take_snapshot_with(destination, SnapshotDestination::Exact, |path| {
+        vacuum_into(path, pool)
+    })
+    .await
+    .map(|_| ())
+}
+
+/// Takes a manual snapshot beside any taken name, including one claimed while
+/// VACUUM was writing. Returns the published path for the command's toast.
+pub async fn take_manual_snapshot(
+    destination: &Path,
+    pool: &SqlitePool,
+) -> Result<PathBuf, String> {
+    take_snapshot_with(destination, SnapshotDestination::FreeSibling, |path| {
+        vacuum_into(path, pool)
+    })
+    .await
+}
+
+async fn vacuum_into(destination: PathBuf, pool: &SqlitePool) -> Result<(), String> {
     sqlx::query("VACUUM INTO ?")
-        .bind(destination)
+        .bind(destination.to_string_lossy().into_owned())
         .execute(pool)
         .await
         .map_err(|error| format!("the snapshot could not be written: {error}"))?;
     Ok(())
+}
+
+#[derive(Clone, Copy)]
+enum SnapshotDestination {
+    Exact,
+    FreeSibling,
+}
+
+async fn take_snapshot_with<F, W>(
+    destination: &Path,
+    publication: SnapshotDestination,
+    write: W,
+) -> Result<PathBuf, String>
+where
+    W: FnOnce(PathBuf) -> F,
+    F: std::future::Future<Output = Result<(), String>>,
+{
+    let directory = destination
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let file_name = destination
+        .file_name()
+        .ok_or_else(|| "the snapshot destination has no file name".to_string())?
+        .to_string_lossy();
+    let mut published = match publication {
+        SnapshotDestination::Exact => destination.to_path_buf(),
+        SnapshotDestination::FreeSibling => {
+            settle_destination(directory, &file_name).map_err(|error| error.to_string())?
+        }
+    };
+    let mut temporary = tempfile::Builder::new()
+        .prefix(SNAPSHOT_TEMP_PREFIX)
+        .suffix(SNAPSHOT_TEMP_SUFFIX)
+        .rand_bytes(SNAPSHOT_TEMP_RANDOM_LEN)
+        .tempfile_in(directory)
+        .map_err(|error| format!("the snapshot temporary file could not be created: {error}"))?
+        .into_temp_path();
+
+    // The guard owns cleanup on any write or publication failure. An empty
+    // reserved file is a valid VACUUM target; no other writer can claim it.
+    write(temporary.to_path_buf()).await?;
+    // Retry publication of the same completed snapshot, rather than rerunning
+    // VACUUM, if a manual destination was claimed during the write.
+    for _ in 0..1000 {
+        match temporary.persist_noclobber(&published) {
+            Ok(()) => return Ok(published),
+            Err(error)
+                if error.error.kind() == io::ErrorKind::AlreadyExists
+                    && matches!(publication, SnapshotDestination::FreeSibling) =>
+            {
+                temporary = error.path;
+                published =
+                    settle_destination(directory, &file_name).map_err(|error| error.to_string())?;
+            }
+            Err(error) => {
+                return Err(format!(
+                    "the snapshot could not be published: {}",
+                    error.error
+                ))
+            }
+        }
+    }
+    Err("the snapshot could not be published: destinations kept being claimed".to_string())
 }
 
 /// The live journal plugin-sql opens, resolved from the config directory it
@@ -1064,6 +1184,163 @@ mod tests {
         assert_healthy_snapshot(&destination).await;
     });
 
+    async_test!(a_partial_snapshot_failure_leaves_no_backup_and_the_next_launch_retries, {
+        let directory = TempDir::new("partial-snapshot");
+        let now = UNIX_EPOCH + Duration::from_secs(1_788_425_100);
+        let destination = directory.path.join(snapshot_file_name(now));
+
+        let result = take_snapshot_with(&destination, SnapshotDestination::Exact, |path| async move {
+            std::fs::write(path, b"partial SQLite output").unwrap();
+            Err("injected VACUUM disk I/O error".to_string())
+        }).await;
+
+        assert_eq!(result.unwrap_err(), "injected VACUUM disk I/O error");
+        assert!(!destination.exists());
+        assert_eq!(std::fs::read_dir(&directory.path).unwrap().count(), 0);
+        let retry = automatic(&directory.path, now + Duration::from_secs(3600));
+        assert!(retry.due);
+        assert_eq!(retry.status.count, 0);
+        assert!(prunable(&directory.path).is_empty());
+    });
+
+    async_test!(a_manual_snapshot_settles_past_a_name_claimed_during_the_write, {
+        let directory = TempDir::new("manual-publication-race");
+        let chosen = directory.path.join("backup.db");
+        let second = directory.path.join("backup-2.db");
+        std::fs::write(&chosen, "original backup").unwrap();
+        let claimed = second.clone();
+
+        let published = take_snapshot_with(&chosen, SnapshotDestination::FreeSibling, |path| async move {
+            std::fs::write(path, "completed snapshot").unwrap();
+            std::fs::write(claimed, "claimed during VACUUM").unwrap();
+            Ok(())
+        }).await.expect("a publication collision must settle beside it");
+
+        assert_eq!(published, directory.path.join("backup-3.db"));
+        assert_eq!(std::fs::read_to_string(&chosen).unwrap(), "original backup");
+        assert_eq!(std::fs::read_to_string(&second).unwrap(), "claimed during VACUUM");
+        assert_eq!(std::fs::read_to_string(published).unwrap(), "completed snapshot");
+        assert_eq!(std::fs::read_dir(&directory.path).unwrap().count(), 3);
+    });
+
+    #[cfg(unix)]
+    async_test!(a_manual_backup_settles_beside_a_dangling_symlink, {
+        let (_source, pool) = seeded_journal("wal").await;
+        let directory = TempDir::new("manual-dangling-symlink");
+        let chosen = directory.path.join("backup.db");
+        let missing = directory.path.join("missing.db");
+        std::os::unix::fs::symlink(&missing, &chosen).unwrap();
+
+        let published = take_manual_snapshot(&chosen, &pool).await.unwrap();
+
+        assert_eq!(published, directory.path.join("backup-2.db"));
+        assert_eq!(std::fs::read_link(&chosen).unwrap(), missing);
+        assert!(!missing.exists());
+        assert_healthy_snapshot(&published).await;
+        assert_eq!(std::fs::read_dir(&directory.path).unwrap().count(), 2);
+    });
+
+    #[cfg(unix)]
+    async_test!(a_manual_snapshot_skips_a_sibling_claimed_by_a_dangling_symlink_during_the_write, {
+        let directory = TempDir::new("manual-symlink-publication-race");
+        let chosen = directory.path.join("backup.db");
+        let second = directory.path.join("backup-2.db");
+        let missing = directory.path.join("missing.db");
+        std::fs::write(&chosen, "original backup").unwrap();
+        let claimed = second.clone();
+        let target = missing.clone();
+
+        let published = take_snapshot_with(&chosen, SnapshotDestination::FreeSibling, |path| async move {
+            std::fs::write(path, "completed snapshot").unwrap();
+            std::os::unix::fs::symlink(target, claimed).unwrap();
+            Ok(())
+        }).await.expect("a dangling symlink occupies its name");
+
+        assert_eq!(published, directory.path.join("backup-3.db"));
+        assert_eq!(std::fs::read_to_string(&chosen).unwrap(), "original backup");
+        assert_eq!(std::fs::read_link(&second).unwrap(), missing);
+        assert!(!missing.exists());
+        assert_eq!(std::fs::read_to_string(published).unwrap(), "completed snapshot");
+        assert_eq!(std::fs::read_dir(&directory.path).unwrap().count(), 3);
+    });
+
+    async_test!(a_failed_snapshot_preserves_valid_backups_without_pruning, {
+        let (_source, pool) = seeded_journal("delete").await;
+        let directory = TempDir::new("failure-preserves-backups");
+        let now = UNIX_EPOCH + Duration::from_secs(1_788_425_100);
+        let oldest = now - SNAPSHOT_INTERVAL - Duration::from_secs(100);
+        let first = directory.path.join(snapshot_file_name(oldest));
+        take_snapshot(&first, &pool).await.unwrap();
+        let bytes = std::fs::read(&first).unwrap();
+        let mut existing = vec![first];
+        for seconds in 1..=RETAINED_SNAPSHOTS {
+            let path = directory.path.join(snapshot_file_name(oldest + Duration::from_secs(seconds as u64)));
+            std::fs::write(&path, &bytes).unwrap();
+            existing.push(path);
+        }
+        let before = prunable(&directory.path);
+        assert_eq!(before.len(), 1);
+        let destination = directory.path.join(snapshot_file_name(now));
+
+        let result = take_snapshot_with(&destination, SnapshotDestination::Exact, |path| async move {
+            assert_eq!(snapshot_instant(path.file_name().unwrap().to_str().unwrap()), None);
+            std::fs::write(path, "partial output").unwrap();
+            Err("injected VACUUM failure".to_string())
+        }).await;
+
+        assert!(result.is_err());
+        let retry = automatic(&directory.path, now + Duration::from_secs(3600));
+        assert!(retry.due);
+        assert_eq!(retry.status.count, 31);
+        assert_eq!(prunable(&directory.path), before);
+        assert_eq!(std::fs::read_dir(&directory.path).unwrap().count(), 31);
+        for path in &existing {
+            assert_eq!(std::fs::read(path).unwrap(), bytes);
+        }
+
+        // Successful publication is the point at which the caller may prune.
+        take_snapshot(&destination, &pool).await.unwrap();
+        assert_healthy_snapshot(&destination).await;
+        let pruned = prunable(&directory.path);
+        assert_eq!(pruned.len(), 2);
+        for path in pruned {
+            std::fs::remove_file(path).unwrap();
+        }
+        assert_eq!(automatic_backups(&directory.path).count, 30);
+        assert!(destination.exists());
+    });
+
+    async_test!(an_exact_snapshot_never_replaces_a_destination_claimed_during_the_write, {
+        let directory = TempDir::new("exact-publication-race");
+        let destination = directory.path.join("backup.db");
+        let claimed = destination.clone();
+
+        let result = take_snapshot_with(&destination, SnapshotDestination::Exact, |path| async move {
+            std::fs::write(path, "completed snapshot").unwrap();
+            std::fs::write(claimed, "another writer's file").unwrap();
+            Ok(())
+        }).await;
+
+        assert!(result.is_err());
+        assert_eq!(std::fs::read_to_string(&destination).unwrap(), "another writer's file");
+        assert_eq!(std::fs::read_dir(&directory.path).unwrap().count(), 1);
+    });
+
+    async_test!(a_manual_backup_publishes_a_healthy_snapshot_beside_an_existing_file, {
+        let (_source, pool) = seeded_journal("wal").await;
+        let directory = TempDir::new("manual-healthy");
+        let chosen = directory.path.join("backup.db");
+        take_snapshot(&chosen, &pool).await.unwrap();
+        let original = std::fs::read(&chosen).unwrap();
+
+        let published = take_manual_snapshot(&chosen, &pool).await.unwrap();
+
+        assert_eq!(published, directory.path.join("backup-2.db"));
+        assert_eq!(std::fs::read(&chosen).unwrap(), original);
+        assert_healthy_snapshot(&published).await;
+        assert_eq!(std::fs::read_dir(&directory.path).unwrap().count(), 2);
+    });
+
     async_test!(a_snapshot_taken_while_a_write_transaction_is_open_is_consistent, {
         let (_source, pool) = seeded_journal("delete").await;
         let mut transaction = pool.begin().await.expect("could not begin");
@@ -1252,6 +1529,48 @@ mod tests {
         .unwrap();
 
         assert!(!automatic(&directory.path, now).due);
+    }
+
+    #[test]
+    fn the_automatic_pass_removes_only_abandoned_snapshot_temporary_files() {
+        let directory = TempDir::new("abandoned-snapshots");
+        let now = UNIX_EPOCH + Duration::from_secs(1_788_425_100);
+        let completed = directory.path.join(snapshot_file_name(now));
+        std::fs::write(&completed, "completed snapshot").unwrap();
+        let temporary = directory.path.join(".work-journal-snapshot-Ab123Z.tmp");
+        std::fs::write(&temporary, "interrupted output").unwrap();
+        let unrelated = [
+            "keep-me.tmp",
+            "work-journal-restore-staged.db.tmp",
+            ".work-journal-snapshot-other.tmp",
+            ".work-journal-snapshot-Ab123Z.db",
+        ];
+        for name in unrelated {
+            std::fs::write(directory.path.join(name), "keep me").unwrap();
+        }
+        let neighbour_directory = directory.path.join(".work-journal-snapshot-Xyz789.tmp");
+        std::fs::create_dir(&neighbour_directory).unwrap();
+
+        assert_eq!(
+            snapshot_instant(temporary.file_name().unwrap().to_str().unwrap()),
+            None
+        );
+        assert_eq!(automatic_backups(&directory.path).count, 1);
+        assert!(prunable(&directory.path).is_empty());
+        assert!(
+            temporary.exists(),
+            "discovery and retention do not remove files"
+        );
+
+        let decision = automatic(&directory.path, now + Duration::from_secs(3600));
+        assert!(!decision.due, "cleanup also runs when no snapshot is due");
+        assert_eq!(decision.status.count, 1);
+        assert!(!temporary.exists());
+        assert!(completed.exists());
+        for name in unrelated {
+            assert!(directory.path.join(name).exists());
+        }
+        assert!(neighbour_directory.is_dir());
     }
 
     #[test]
@@ -2307,21 +2626,25 @@ mod tests {
         });
     }
 
-    async fn assert_interrupted_restore_keeps_committed_notes(moved_files: usize) {
-        let config = TempDir::new("restore-interrupted");
-        let live = live_database_path(&config.path);
+    fn leave_unclean_wal_journal(live: &Path) {
         let fixture = std::process::Command::new(std::env::current_exe().unwrap())
             .args([
                 "--exact",
                 "backup::tests::unclean_wal_journal_fixture",
                 "--nocapture",
             ])
-            .env("WORK_JOURNAL_TEST_WAL_PATH", &live)
+            .env("WORK_JOURNAL_TEST_WAL_PATH", live)
             .output()
             .unwrap();
         assert!(fixture.status.success(), "fixture failed: {fixture:?}");
-        assert!(sidecar_path(&live, "wal").is_file());
-        assert!(sidecar_path(&live, "shm").is_file());
+        assert!(sidecar_path(live, "wal").is_file());
+        assert!(sidecar_path(live, "shm").is_file());
+    }
+
+    async fn assert_interrupted_restore_keeps_committed_notes(moved_files: usize) {
+        let config = TempDir::new("restore-interrupted");
+        let live = live_database_path(&config.path);
+        leave_unclean_wal_journal(&live);
 
         let staged = staged_restore_path(&config.path);
         write_journal_file(&staged, SUPPORTED_MIGRATION_VERSION, "restored Note").await;
@@ -2393,6 +2716,62 @@ mod tests {
         }
     );
 
+    async_test!(a_failed_restore_retry_stops_sql_preload_and_can_retry, {
+        use sqlx::migrate::MigrateDatabase;
+
+        let config = TempDir::new("restore-startup-error");
+        let live = live_database_path(&config.path);
+        leave_unclean_wal_journal(&live);
+        let staged = staged_restore_path(&config.path);
+        write_journal_file(&staged, SUPPORTED_MIGRATION_VERSION, "restored Note").await;
+        let instant = std::fs::metadata(&staged).unwrap().modified().unwrap();
+        let rollback = rollback_path(&config.path, instant);
+        std::fs::rename(&live, &rollback).unwrap();
+        let obstruction = sidecar_path(&rollback, "shm");
+        std::fs::create_dir(&obstruction).unwrap();
+        std::fs::write(obstruction.join("keep"), "obstruction").unwrap();
+
+        // The actual startup gate, followed by plugin-sql's SQLite preload
+        // sequence only when startup is allowed to continue.
+        let startup = crate::apply_restore_before_sql(&config.path);
+        if startup.is_ok() {
+            let url = format!("sqlite:{}", live.display());
+            if !sqlx::Sqlite::database_exists(&url).await.unwrap() {
+                sqlx::Sqlite::create_database(&url).await.unwrap();
+            }
+            let pool = SqlitePool::connect(&url).await.unwrap();
+            pool.close().await;
+        }
+        assert!(
+            startup.is_err(),
+            "SQL preload must not consume a rollback-owned WAL"
+        );
+        assert!(!live.exists());
+        assert!(staged.is_file());
+        assert!(sidecar_path(&live, "wal").is_file());
+
+        std::fs::remove_dir_all(obstruction).unwrap();
+        crate::apply_restore_before_sql(&config.path).unwrap();
+        assert!(!staged.exists());
+        for (path, expected) in [
+            (&live, vec!["restored Note"]),
+            (&rollback, vec!["checkpointed Note", "WAL-only Note"]),
+        ] {
+            let options = sqlx::sqlite::SqliteConnectOptions::new()
+                .filename(path)
+                .read_only(true);
+            let mut connection = sqlx::sqlite::SqliteConnection::connect_with(&options)
+                .await
+                .unwrap();
+            let notes: Vec<String> = sqlx::query_scalar("SELECT body FROM notes ORDER BY id")
+                .fetch_all(&mut connection)
+                .await
+                .unwrap();
+            assert_eq!(notes, expected);
+            connection.close().await.unwrap();
+        }
+    });
+
     async_test!(an_existing_rollback_is_never_overwritten, {
         let config = TempDir::new("restore-collision");
         let live = live_database_path(&config.path);
@@ -2418,6 +2797,8 @@ mod tests {
         let failure =
             apply_staged_restore(&config.path).expect_err("a rollback must never be overwritten");
         assert!(failure.contains("rollback"), "{failure}");
+        assert!(crate::apply_restore_before_sql(&config.path).is_ok(),
+            "an intact live journal can still start after a refused restore");
         assert_eq!(std::fs::read(&live).unwrap(), live_before);
         assert_eq!(std::fs::read(&staged).unwrap(), staged_before);
         assert_eq!(std::fs::read(&rollback).unwrap(), rollback_before);

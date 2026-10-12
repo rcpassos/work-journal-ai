@@ -638,7 +638,7 @@ describe('the manual backup settles beside rather than refuses', () => {
 
   it('settles the destination instead of refusing what the dialog confirmed', () => {
     const body = commandBody()
-    expect(body).toContain('settle_destination')
+    expect(body).toContain('take_manual_snapshot')
     // The refusal this replaces: a taken path answered with an error after
     // the dialog had already asked the user about it.
     expect(body).not.toContain('.exists()')
@@ -744,6 +744,9 @@ describe('the restore from a backup', () => {
       'the restore hook must be registered before plugin-sql',
     ).toBeLessThan(sqlAt)
     expect(rustSource).toContain('apply_staged_restore')
+    expect(rustSource.slice(restoreAt, sqlAt)).toContain(
+      'apply_restore_before_sql(&config_dir)',
+    )
   })
 
   it('registers the logger in every build, before the staged apply', () => {
