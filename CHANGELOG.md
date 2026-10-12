@@ -4,6 +4,8 @@ What changed in each released version, newest first. Every `vX.Y.Z` section here
 
 ## Unreleased
 
+- Completing an old Task Alert no longer completes a commitment that another window rescheduled while the action was being processed.
+
 ## 0.17.0 — 2026-10-04
 
 - Settings is split into five tabs along the top, General, Sources, Intelligence, Data and About, and Check for Updates… in the menu bar opens the About tab.
