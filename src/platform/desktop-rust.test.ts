@@ -638,7 +638,7 @@ describe('the manual backup settles beside rather than refuses', () => {
 
   it('settles the destination instead of refusing what the dialog confirmed', () => {
     const body = commandBody()
-    expect(body).toContain('settle_destination')
+    expect(body).toContain('take_manual_snapshot')
     // The refusal this replaces: a taken path answered with an error after
     // the dialog had already asked the user about it.
     expect(body).not.toContain('.exists()')

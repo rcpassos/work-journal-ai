@@ -1780,18 +1780,16 @@ async fn backup_journal(
 
     let pool = journal_pool(databases).await?;
 
-    // Settle after the pool, before the write: the first free sibling of the
-    // chosen name in the chosen directory. In the common case the name is
-    // free and this is a no-op.
     let directory = chosen
         .parent()
         .ok_or_else(|| "the destination has no directory".to_string())?;
-    let destination = backup::settle_destination(directory, &file_name)
-        .map_err(|error| error.to_string())?;
-    if let Some(parent) = destination.parent() {
-        std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-    }
-    backup::take_snapshot(&destination, &pool).await?;
+    // Revalidate the name and create the directory before preparing the
+    // temporary sibling. Publication owns settlement, including a collision
+    // that appears while VACUUM is writing.
+    backup::plain_destination(&file_name)
+        .ok_or_else(|| "the destination is not a plain file name".to_string())?;
+    std::fs::create_dir_all(directory).map_err(|error| error.to_string())?;
+    let destination = backup::take_manual_snapshot(chosen, &pool).await?;
 
     Ok(BackupResult {
         path: destination.to_string_lossy().into_owned(),
