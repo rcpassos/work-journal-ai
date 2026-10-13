@@ -4,6 +4,9 @@ What changed in each released version, newest first. Every `vX.Y.Z` section here
 
 ## Unreleased
 
+- Each repository can observe several selected branches, or all branches when the selection is empty, so development work can arrive before it reaches the default branch.
+- Existing repositories keep observing their default branch until you change the selection; missing selected branches are explained and shared commits are added only once.
+
 - A Pause or Resume now survives concurrent Observing changes made in another window.
 - Restoring a backup with altered table or index definitions is now refused before it can break journal writes or remove data constraints.
 - Pausing Observing during a commit sweep now keeps work authored during the Pause out of the journal, and disabling Observing or removing a repository takes effect during that sweep.

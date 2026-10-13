@@ -13,27 +13,22 @@
 //! config touched; the tests below snapshot every fixture before and after to
 //! hold that.
 //!
-//! **Which ref.** The default branch, and only that: each remote's `HEAD`,
-//! `main` and `master` as this machine has them, `origin` first and the
-//! others after it, then the local `main` and `master`, and `HEAD` when there
-//! is none of them. A fetch advances the remote-tracking
-//! branch without advancing the local one, so reading the local branch could
-//! miss for good work a fetch had already brought here. `origin/HEAD` is set
-//! by a clone, and by a fetch from git 2.48 on, so a remote added by hand and
-//! only pushed to falls through to the branch names. Never the checked-out
-//! branch while a default one is here: an amend, a rebase or a force-push
-//! gives unmerged work a new hash, and a squash-merge gives it another, and
-//! each would be a Note of its own. A default branch with some other name is
-//! not known as one: a repository with a `main` beside it — a git-flow
-//! `develop` — is read on `main`, and one without is read on `HEAD`. Both are
-//! accepted.
+//! **Which refs.** Explicit selections are exact refs from `refs/heads/` or
+//! `refs/remotes/`. An empty selection walks all those branch tips together,
+//! so shared commits are read once. Symbolic remote HEAD aliases and tags are
+//! not branch choices. Missing selected refs never widen the selection.
 //!
-//! **First-parent.** On a squash-merge workflow that is one commit per merged
-//! pull request, and the branch commits behind it are never read. It follows
-//! ancestry, though, and knows nothing of pull requests: a branch merged by
+//! Older settings without a selection retain the default-branch policy:
+//! each remote's HEAD, main and master, origin first; then local main/master
+//! and finally HEAD. This is kept until the user changes the selector, so an
+//! update does not unexpectedly record all their unfinished branch work.
+//!
+//! **First-parent.** A squash-merged pull request is one commit on its target
+//! branch. Its original commits are also read when that branch is selected.
+//! The walk follows ancestry and knows nothing of pull requests: a branch merged by
 //! fast-forward or rebase puts every one of its commits on first-parent, and
 //! each is read. A merge commit authored by somebody else is filtered out by
-//! authorship, so the user's work behind it is not read at all. Both are what
+//! authorship, so the user's work behind it is read only from another selected tip. Both are what
 //! the history says happened, and both are accepted rather than corrected for.
 //!
 //! **Authorship is a set** of addresses, matched on the address alone and
@@ -132,10 +127,47 @@ pub enum IdentitiesRead {
 }
 
 /// The commits `identities` authored at or after `since` (milliseconds since
-/// the epoch), along first-parent of the ref this machine has the latest of.
+/// the epoch), along first-parent of selected branch refs. Empty is all;
+/// absent retains the legacy default-branch policy.
 /// No identities is nobody's commits, not everybody's.
-pub fn read(path: &Path, identities: &[String], since: f64) -> CommitsRead {
-    Git::SYSTEM.read(path, identities, since)
+pub fn read(
+    path: &Path,
+    identities: &[String],
+    since: f64,
+    branches: Option<&[String]>,
+) -> CommitsRead {
+    Git::SYSTEM.read(path, identities, since, branches)
+}
+
+/// Branches available on this machine, without a network lookup.
+#[derive(Debug, Serialize)]
+#[serde(tag = "state", rename_all = "kebab-case")]
+pub enum BranchesRead {
+    Read {
+        branches: Vec<String>,
+        #[serde(rename = "defaultBranch")]
+        default_branch: Option<String>,
+    },
+    Unreadable {
+        reason: RepositoryUnreadable,
+    },
+}
+
+pub fn branches(path: &Path) -> BranchesRead {
+    let answer = (|| {
+        Git::SYSTEM.repository(path)?;
+        Ok::<_, RepositoryUnreadable>((
+            Git::SYSTEM.branch_refs(path)?,
+            Git::SYSTEM.default_branch(path)?,
+        ))
+    })();
+    match answer {
+        Ok((branches, default_branch)) => BranchesRead::Read {
+            branches,
+            default_branch,
+        },
+        Err(reason) => BranchesRead::Unreadable { reason },
+    }
 }
 
 /// How far back suggestions look for authors. Must match
@@ -158,8 +190,14 @@ struct Git {
 impl Git {
     const SYSTEM: Git = Git { program: "git" };
 
-    fn read(&self, path: &Path, identities: &[String], since: f64) -> CommitsRead {
-        match self.commits(path, identities, since) {
+    fn read(
+        &self,
+        path: &Path,
+        identities: &[String],
+        since: f64,
+        branches: Option<&[String]>,
+    ) -> CommitsRead {
+        match self.commits(path, identities, since, branches) {
             Ok(commits) => CommitsRead::Read { commits },
             Err(reason) => CommitsRead::Unreadable { reason },
         }
@@ -181,9 +219,22 @@ impl Git {
         path: &Path,
         identities: &[String],
         since: f64,
+        branches: Option<&[String]>,
     ) -> Result<Vec<Commit>, RepositoryUnreadable> {
         let repository = self.repository(path)?;
-        let tip = self.tip(path)?.ok_or(RepositoryUnreadable::NoHead)?;
+        let tips = match branches {
+            None => vec![self.tip(path)?.ok_or(RepositoryUnreadable::NoHead)?],
+            Some(selected) => {
+                let available = self.branch_refs(path)?;
+                available
+                    .into_iter()
+                    .filter(|reference| selected.is_empty() || selected.contains(reference))
+                    .collect()
+            }
+        };
+        if tips.is_empty() {
+            return Err(RepositoryUnreadable::NoHead);
+        }
         // Without an `--author`, `git log` answers with everybody's.
         if identities.is_empty() {
             return Ok(Vec::new());
@@ -207,7 +258,8 @@ impl Git {
             "--format=%H%x00%at%x00%s",
         ];
         args.extend(authors.iter().map(String::as_str));
-        args.extend([tip.as_str(), "--"]);
+        args.extend(tips.iter().map(String::as_str));
+        args.push("--");
 
         let log = self.succeed(path, &args)?;
         records(&log, 3)
@@ -327,11 +379,31 @@ impl Git {
         Ok(common.display().to_string())
     }
 
-    /// The commit to walk back from: the default branch as each remote has
-    /// it, `origin` first, then as this machine has it, then `HEAD` — the
-    /// first that resolves to a commit, as a hash. None when not one of them
-    /// can be.
-    fn tip(&self, path: &Path) -> Result<Option<String>, RepositoryUnreadable> {
+    /// Exact refs keep local and remote branches unambiguous. Symbolic remote
+    /// HEADs are aliases, not another branch; tags and non-commit refs are omitted.
+    fn branch_refs(&self, path: &Path) -> Result<Vec<String>, RepositoryUnreadable> {
+        let refs = self.succeed(
+            path,
+            &[
+                "for-each-ref",
+                "--format=%(refname)%09%(objecttype)%09%(symref)",
+                "refs/heads/",
+                "refs/remotes/",
+            ],
+        )?;
+        Ok(refs
+            .lines()
+            .filter_map(|line| {
+                let fields: Vec<_> = line.split('\t').collect();
+                (fields.len() == 3 && fields[1] == "commit" && fields[2].is_empty())
+                    .then(|| fields[0].to_string())
+            })
+            .collect())
+    }
+
+    /// The legacy default branch ref: remotes first, origin preferred, then
+    /// local main/master and HEAD. Symbolic aliases resolve to their named ref.
+    fn default_branch(&self, path: &Path) -> Result<Option<String>, RepositoryUnreadable> {
         let mut remotes: Vec<String> = self
             .succeed(path, &["remote"])?
             .lines()
@@ -353,12 +425,26 @@ impl Git {
             let target = format!("{candidate}^{{commit}}");
             let output = self.run(path, &["rev-parse", "--verify", "--quiet", &target])?;
             if output.status.success() {
-                return Ok(Some(
-                    String::from_utf8_lossy(&output.stdout).trim().to_string(),
-                ));
+                let symbolic = self.run(path, &["symbolic-ref", "--quiet", &candidate])?;
+                return Ok(Some(if symbolic.status.success() {
+                    String::from_utf8_lossy(&symbolic.stdout).trim().to_string()
+                } else {
+                    candidate
+                }));
             }
         }
         Ok(None)
+    }
+
+    fn tip(&self, path: &Path) -> Result<Option<String>, RepositoryUnreadable> {
+        let Some(reference) = self.default_branch(path)? else {
+            return Ok(None);
+        };
+        self.succeed(
+            path,
+            &["rev-parse", "--verify", &format!("{reference}^{{commit}}")],
+        )
+        .map(|hash| Some(hash.trim().to_string()))
     }
 
     /// Runs one read-only `git` call in `path`, answering with what it said
@@ -523,7 +609,106 @@ mod tests {
 
     fn read_by(path: &Path, identities: &[&str], since: f64) -> CommitsRead {
         let identities: Vec<String> = identities.iter().map(|i| i.to_string()).collect();
-        read(path, &identities, since)
+        read(path, &identities, since, None)
+    }
+
+    #[test]
+    fn selecting_develop_reads_work_missing_from_main() {
+        let root = TempDir::new("selected-develop");
+        init(&root.path);
+        commit(&root.path, ME, 1, "Shared history");
+        git(&root.path, &["switch", "--quiet", "-c", "develop"]);
+        commit(&root.path, ME, 25, "Account setup");
+        commit(&root.path, ME, 49, "Fix import");
+        git(&root.path, &["switch", "--quiet", "main"]);
+        commit(&root.path, ME, 50, "Main only");
+        let before = snapshot(&root.path);
+        let selected = vec!["refs/heads/develop".to_string()];
+        let answer = read(&root.path, &[ME.to_string()], at(24), Some(&selected));
+        assert_eq!(subjects(&answer), ["Fix import", "Account setup"]);
+        assert_eq!(snapshot(&root.path), before);
+    }
+
+    #[test]
+    fn multiple_and_empty_selections_read_shared_commits_once() {
+        let root = TempDir::new("selected-shared");
+        init(&root.path);
+        commit(&root.path, ME, 1, "Shared");
+        git(&root.path, &["switch", "--quiet", "-c", "develop"]);
+        commit(&root.path, ME, 2, "Develop");
+        git(
+            &root.path,
+            &["update-ref", "refs/remotes/origin/develop", "HEAD"],
+        );
+        git(&root.path, &["switch", "--quiet", "main"]);
+        commit(&root.path, ME, 3, "Main");
+        git(&root.path, &["tag", "not-a-branch"]);
+        git(
+            &root.path,
+            &["remote", "add", "origin", "/tmp/unused-branch-test-remote"],
+        );
+        git(
+            &root.path,
+            &[
+                "symbolic-ref",
+                "refs/remotes/origin/HEAD",
+                "refs/remotes/origin/develop",
+            ],
+        );
+        let selected: Vec<String> = [
+            "refs/heads/main",
+            "refs/heads/develop",
+            "refs/remotes/origin/develop",
+        ]
+        .into_iter()
+        .map(str::to_string)
+        .collect();
+        for selection in [&selected[..], &[][..]] {
+            let before = snapshot(&root.path);
+            let answer = read(&root.path, &[ME.to_string()], at(0), Some(selection));
+            assert_eq!(subjects(&answer), ["Main", "Develop", "Shared"]);
+            assert_eq!(snapshot(&root.path), before);
+        }
+        match branches(&root.path) {
+            BranchesRead::Read {
+                branches,
+                default_branch,
+            } => {
+                assert_eq!(
+                    branches,
+                    [
+                        "refs/heads/develop",
+                        "refs/heads/main",
+                        "refs/remotes/origin/develop"
+                    ]
+                );
+                assert_eq!(
+                    default_branch.as_deref(),
+                    Some("refs/remotes/origin/develop")
+                );
+            }
+            answer => panic!("unexpected: {answer:?}"),
+        }
+    }
+
+    #[test]
+    fn missing_selected_branches_never_fall_back_to_all_or_default() {
+        let root = TempDir::new("selected-missing");
+        init(&root.path);
+        commit(&root.path, ME, 1, "Main");
+        let selected = vec!["refs/heads/develop".to_string()];
+        assert_eq!(
+            reason(&read(&root.path, &[ME.to_string()], at(0), Some(&selected))),
+            RepositoryUnreadable::NoHead
+        );
+        let selected = vec![
+            "refs/heads/develop".to_string(),
+            "refs/heads/main".to_string(),
+        ];
+        assert_eq!(
+            subjects(&read(&root.path, &[ME.to_string()], at(0), Some(&selected))),
+            ["Main"]
+        );
     }
 
     fn identities_since(path: &Path, since: f64) -> IdentitiesRead {
@@ -1065,9 +1250,7 @@ mod tests {
         git(&root.path, &["config", "user.email", ME]);
 
         let IdentitiesRead::Read {
-            identities,
-            reason,
-            ..
+            identities, reason, ..
         } = identities_since(&root.path, at(0))
         else {
             panic!("unreadable")
@@ -1186,7 +1369,7 @@ mod tests {
         };
 
         assert!(matches!(
-            absent.read(&root.path, &[ME.to_string()], at(0)),
+            absent.read(&root.path, &[ME.to_string()], at(0), None),
             CommitsRead::Unreadable {
                 reason: RepositoryUnreadable::GitUnavailable
             }
@@ -1267,6 +1450,14 @@ mod tests {
                 format!(r#"{{"state":"unreadable","reason":"{name}"}}"#),
             );
         }
+        assert_eq!(
+            serde_json::to_string(&BranchesRead::Read {
+                branches: vec!["refs/heads/develop".into()],
+                default_branch: Some("refs/heads/main".into()),
+            })
+            .unwrap(),
+            r#"{"state":"read","branches":["refs/heads/develop"],"defaultBranch":"refs/heads/main"}"#,
+        );
         assert_eq!(
             serde_json::to_string(&IdentitiesRead::Read {
                 repository: "/r/.git".into(),

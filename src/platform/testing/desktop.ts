@@ -13,6 +13,7 @@ import type {
   CaptureFit,
   Commit,
   CommitsRead,
+  BranchesRead,
   Desktop,
   ExportedFile,
   IdentitiesRead,
@@ -50,6 +51,9 @@ export interface FakeRepository {
   configuredEmail?: string
   commits: FakeCommit[]
   noHead?: boolean
+  /** Each branch ref maps to the commit hashes on its first-parent history. */
+  branches?: Record<string, string[]>
+  defaultBranch?: string
 }
 
 /**
@@ -578,7 +582,7 @@ export function fakeDesktop({
     todaysCalendarEvents: async () =>
       desktop.access === 'granted' ? desktop.events : [],
 
-    repositoryCommits: async (path, identities, since): Promise<CommitsRead> => {
+    repositoryCommits: async (path, identities, since, branches): Promise<CommitsRead> => {
       const found = desktop.repositories[path] ?? 'missing'
       if (typeof found === 'string') return { state: 'unreadable', reason: found }
       // Nothing resolvable at any ref: the reason the reader gives, and no
@@ -587,12 +591,17 @@ export function fakeDesktop({
 
       // Matched on the whole address regardless of case, as the reader does.
       const named = new Set(identities.map((identity) => identity.toLowerCase()))
+      const histories = found.branches ?? { 'refs/heads/main': found.commits.map(({ hash }) => hash) }
+      const selected = branches ?? [found.defaultBranch ?? 'refs/heads/main']
+      const refs = Object.keys(histories).filter((ref) => selected.length === 0 || selected.includes(ref))
+      if (refs.length === 0) return { state: 'unreadable', reason: 'no-head' }
+      const hashes = new Set(refs.flatMap((ref) => histories[ref]))
       return {
         state: 'read',
         commits: found.commits
           .filter(
-            ({ author, authoredAt }) =>
-              named.has(author.toLowerCase()) && authoredAt >= since,
+            ({ hash, author, authoredAt }) =>
+              hashes.has(hash) && named.has(author.toLowerCase()) && authoredAt >= since,
           )
           .map(({ hash, subject, authoredAt }) => ({
             hash,
@@ -600,6 +609,15 @@ export function fakeDesktop({
             authoredAt,
             repository: found.repository,
           })),
+      }
+    },
+    repositoryBranches: async (path): Promise<BranchesRead> => {
+      const found = desktop.repositories[path] ?? 'missing'
+      if (typeof found === 'string') return { state: 'unreadable', reason: found }
+      return {
+        state: 'read',
+        branches: found.noHead ? [] : Object.keys(found.branches ?? { 'refs/heads/main': [] }),
+        defaultBranch: found.noHead ? null : (found.defaultBranch ?? 'refs/heads/main'),
       }
     },
     repositoryIdentities: async (path): Promise<IdentitiesRead> => {

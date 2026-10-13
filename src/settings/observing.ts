@@ -48,6 +48,8 @@ export interface ObservedRepository {
   identities: string[]
   /** Subject prefixes whose commits become nothing. Empty by default. */
   ignoredPrefixes: string[]
+  /** Exact local/remote refs. Empty is all; absent preserves legacy default-branch observation. */
+  branches?: string[]
 }
 
 /**
@@ -333,6 +335,18 @@ export function setIdentities(
   return changeRepository(observing, repository, { identities })
 }
 
+/** Branches selected for one repository. An empty selection observes all branches. */
+export function setBranches(observing: Observing, repository: string, branches: string[]): Observing {
+  return changeRepository(observing, repository, { branches: [...new Set(branches)] })
+}
+
+/** A ref's readable name, with its source explicit even when names overlap. */
+export function branchName(reference: string): string {
+  if (reference.startsWith('refs/heads/')) return `${reference.slice(11)} (local)`
+  if (reference.startsWith('refs/remotes/')) return `${reference.slice(13)} (remote)`
+  return reference
+}
+
 /**
  * The prefixes one repository skips. An empty prefix would skip every commit,
  * and nobody types one on purpose, so it is dropped.
@@ -359,13 +373,15 @@ export function readObserving(stored: unknown): Observing {
     ? stored.repositories.flatMap((each): ObservedRepository[] =>
         isRecord(each) &&
         typeof each.path === 'string' &&
-        typeof each.repository === 'string'
+        typeof each.repository === 'string' &&
+        (each.branches === undefined || (Array.isArray(each.branches) && each.branches.every((branch) => typeof branch === 'string' && branch !== '')))
           ? [
               {
                 path: each.path,
                 repository: each.repository,
                 identities: strings(each.identities),
                 ignoredPrefixes: strings(each.ignoredPrefixes),
+                ...(each.branches === undefined ? {} : { branches: strings(each.branches) }),
               },
             ]
           : [],
@@ -461,7 +477,7 @@ function prune(observing: Observing, now: number): Observing {
 function changeRepository(
   observing: Observing,
   repository: string,
-  changes: Partial<Pick<ObservedRepository, 'identities' | 'ignoredPrefixes'>>,
+  changes: Partial<Pick<ObservedRepository, 'identities' | 'ignoredPrefixes' | 'branches'>>,
 ): Observing {
   return {
     ...observing,

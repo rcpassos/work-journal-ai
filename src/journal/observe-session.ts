@@ -141,6 +141,7 @@ export function createObserveSession({
             listed.path,
             listed.identities,
             since,
+            listed.branches,
           )
           const reads = read.state === 'read' ? 'read' : read.reason
           if (listed.path in readAs && readAs[listed.path] !== reads) moved = true
@@ -155,6 +156,8 @@ export function createObserveSession({
             ({ repository }) => repository === listed.repository,
           )
           if (!observing.enabled || !current) continue
+          // A narrowed selection must not import a result read under the old branches.
+          if (JSON.stringify(current.branches) !== JSON.stringify(listed.branches)) continue
 
           const core = await journal
           // What this repository's Notes arrive filed under. Read here and

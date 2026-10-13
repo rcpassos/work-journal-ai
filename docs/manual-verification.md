@@ -246,6 +246,11 @@ Against a release build and a repository with commits of your own from today.
 - [ ] **Commits** reads off on a fresh install and offers no repositories until turned on; turning it on toasts.
 - [ ] **Add Repository…** opens a folder picker (no path field); the chosen repository appears by name with your addresses offered unticked.
 - [ ] The row carries a **Project** field, empty — Unfiled — and typing at it offers the repository's name first; nothing is mapped until one of the offered names is picked or a name is typed and Enter is pressed.
+- [ ] **Details → Branches** offers searchable local and remote branch choices; select `develop` alone, then add `main`, and confirm the choices survive a restart.
+- [ ] Clearing the selection with **All branches** or by removing the last chip observes all branches; the control explains this, and Escape never clears saved branch choices.
+- [ ] A commit reachable from multiple selected branches appears only once; an eligible commit authored yesterday still lands on yesterday when discovered today.
+- [ ] Removing a selected branch keeps its chip and explains that it is unavailable; commits from other selected branches continue to arrive, without falling back to all branches.
+- [ ] An existing repository from before branch selection keeps its default branch until the selector is changed; switching away from Sources closes an open branch popup.
 - [ ] Nothing arrives until an address is ticked; after ticking, a commit you make now appears in History within five minutes — muted, under the Project the row names, and hovering it says `Commit <short hash> · <repository>`.
 - [ ] A second repository left Unfiled produces Unfiled Observed Notes: no Project is ever guessed from a repository's name or path.
 - [ ] Renaming that Project in History rewrites the field in Settings with it — and refiling one Observed Note by hand changes only that Note: the next commit still arrives under the mapped Project.

@@ -1,3 +1,4 @@
+import BranchSelector from './BranchSelector'
 import { ChevronDownIcon } from 'lucide-react'
 import { useEffect, useId, useRef, useState } from 'react'
 import ProjectChip from '@/components/ProjectChip'
@@ -42,6 +43,7 @@ import type {
 import type { AppSettings } from '@/settings/app-settings'
 import {
   addRepository,
+  setBranches,
   pauseState,
   pauseObserving,
   removeRepository,
@@ -191,6 +193,7 @@ export default function ObservingSettings({
         repository: read.repository,
         identities: [],
         ignoredPrefixes: [],
+        branches: [],
       }
       // Whether it is already listed is the file's answer, not this view's:
       // the view may not have read the file yet.
@@ -342,6 +345,13 @@ export default function ObservingSettings({
                   couldNot: 'Could not save which addresses are you.',
                 })
               }
+              onBranches={(branches) =>
+                update((current) => setBranches(current, listed.repository, branches), {
+                  id: `observing-branches-${listed.repository}`,
+                  saved: branches.length === 0 ? 'All branches will be observed.' : 'Branches saved.',
+                  couldNot: 'Could not save which branches to observe.',
+                })
+              }
               onIgnoredPrefixes={(prefixes) =>
                 update((current) => setIgnoredPrefixes(current, listed.repository, prefixes), {
                   id: `observing-prefixes-${listed.repository}`,
@@ -382,6 +392,7 @@ function RepositoryEntry({
   listed,
   woke,
   onIdentities,
+  onBranches,
   onIgnoredPrefixes,
   onRemove,
 }: {
@@ -389,6 +400,7 @@ function RepositoryEntry({
   journal: Promise<Journal>
   listed: ObservedRepository
   woke: number
+  onBranches: (branches: string[]) => void
   onIdentities: (identities: string[]) => void
   onIgnoredPrefixes: (prefixes: string[]) => void
   onRemove: () => void
@@ -680,6 +692,7 @@ function RepositoryEntry({
           <ChevronDownIcon />
         </CollapsibleTrigger>
         <CollapsibleContent className="flex flex-col gap-2 pt-2">
+          <BranchSelector desktop={desktop} path={listed.path} value={listed.branches} onChange={onBranches} />
           <fieldset className="flex flex-col gap-2 pl-1">
             <legend className="type-meta text-muted-foreground">Addresses that are you</legend>
             {offered.length === 0 && (

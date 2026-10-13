@@ -58,6 +58,7 @@ import {
   type CalendarInfo,
   type CaptureShown,
   type CommitsRead,
+  type BranchesRead,
   type Desktop,
   type ExportedFile,
   type IdentitiesRead,
@@ -258,8 +259,9 @@ export function createTauriDesktop(): Desktop {
     calendars: () => invoke<CalendarInfo[]>('calendars'),
     todaysCalendarEvents: () => invoke<CalendarEvent[]>('todays_calendar_events'),
 
-    repositoryCommits: (path, identities, since) =>
-      invoke<CommitsRead>('repository_commits', { path, identities, since }),
+    repositoryCommits: (path, identities, since, branches) =>
+      invoke<CommitsRead>('repository_commits', { path, identities, since, branches }),
+    repositoryBranches: (path) => invoke<BranchesRead>('repository_branches', { path }),
     repositoryIdentities: (path) =>
       invoke<IdentitiesRead>('repository_identities', { path }),
 
