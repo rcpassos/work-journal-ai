@@ -618,6 +618,11 @@ export type CommitsRead =
   | { state: 'read'; commits: Commit[] }
   | { state: 'unreadable'; reason: RepositoryUnreadable }
 
+/** Available local and remote-tracking branch refs, plus the legacy default ref. */
+export type BranchesRead =
+  | { state: 'read'; branches: string[]; defaultBranch: string | null }
+  | { state: 'unreadable'; reason: RepositoryUnreadable }
+
 /**
  * Who might be the user in one repository, or why it could not be asked —
  * and, beside the suggestions, why nothing can be read from it yet when that
@@ -909,26 +914,28 @@ export interface Desktop {
   /**
    * The commits `identities` authored at or after `since` in the repository
    * at `path`, read and never written: no hook, no ref, no config, no fetch.
-   * Read along first-parent of the default branch as this machine has it —
-   * each remote's `HEAD`, `main` and `master`, `origin` first, then the local
-   * `main` and `master` — and of `HEAD` only when there is none of them. A squash-merged pull request is
-   * one commit and the branch behind it none; a branch merged by fast-forward
-   * or rebase is each of its own commits; a merge authored by somebody else
-   * is theirs, and hides the user's work behind it. No identities is nobody's
-   * commits. See `src-tauri/src/commits.rs`.
+   * Exact branch refs are walked together along first-parent, sharing commits
+   * once. Empty branches means all local/remote-tracking branches; absent
+   * preserves legacy default-branch observation. Missing selected refs never
+   * widen the selection. Rewritten commits with different hashes are distinct
+   * source events. No identities is nobody's commits.
    */
   repositoryCommits(
     path: string,
     identities: string[],
     since: number,
+    branches?: string[],
   ): Promise<CommitsRead>
   /**
    * The addresses that might be the user in the repository at `path`, for
    * Settings to offer: `git config user.email`, then the last ninety days'
-   * first-parent authors, most recent first. Suggestions only — none of them
+   * first-parent authors from the selected branches (empty means all, absent
+   * keeps the legacy default), most recent first. Suggestions only — none of them
    * counts until the user ticks it.
    */
-  repositoryIdentities(path: string): Promise<IdentitiesRead>
+  repositoryIdentities(path: string, branches?: string[]): Promise<IdentitiesRead>
+  /** Read branch refs from this machine; never fetch or alter a repository. */
+  repositoryBranches(path: string): Promise<BranchesRead>
   /**
    * The folder picker a repository is added through — a path is never typed.
    * Null when the user cancelled.

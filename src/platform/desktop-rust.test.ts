@@ -913,7 +913,7 @@ describe('the commit reader contract', () => {
   })
 
   it('spells both answers\' states the same on both sides', () => {
-    for (const name of ['CommitsRead', 'IdentitiesRead']) {
+    for (const name of ['CommitsRead', 'IdentitiesRead', 'BranchesRead']) {
       const rustStates = rustVariants(commitsSource, name).map(kebab)
 
       expect(rustStates, name).toEqual(['read', 'unreadable'])
@@ -946,18 +946,20 @@ describe('the commit reader contract', () => {
     )?.[1]
 
     expect(rustSource).toMatch(
-      /#\[tauri::command\(async\)\]\s*fn repository_commits\(path: String, identities: Vec<String>, since: f64\)/,
+      /#\[tauri::command\(async\)\]\s*fn repository_commits\(\s*path: String,\s*identities: Vec<String>,\s*since: f64,\s*branches: Option<Vec<String>>,?\s*\)/,
     )
     expect(rustSource).toMatch(
-      /#\[tauri::command\(async\)\]\s*fn repository_identities\(path: String\)/,
+      /#\[tauri::command\(async\)\]\s*fn repository_identities\(path: String, branches: Option<Vec<String>>\)/,
     )
     expect(handler).toContain('repository_commits')
     expect(handler).toContain('repository_identities')
+    expect(handler).toContain('repository_branches')
+    expect(tauriSource).toContain("invoke<BranchesRead>('repository_branches', { path })")
     expect(tauriSource).toContain(
-      "invoke<CommitsRead>('repository_commits', { path, identities, since })",
+      "invoke<CommitsRead>('repository_commits', { path, identities, since, branches })",
     )
     expect(tauriSource).toContain(
-      "invoke<IdentitiesRead>('repository_identities', { path })",
+      "invoke<IdentitiesRead>('repository_identities', { path, branches })",
     )
   })
 })

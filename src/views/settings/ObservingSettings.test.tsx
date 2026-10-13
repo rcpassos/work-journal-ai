@@ -176,6 +176,7 @@ describe('adding a repository', () => {
         repository: '/code/work-journal-ai/.git',
         identities: [],
         ignoredPrefixes: [],
+        branches: [],
       },
     ])
     // Listed while on, so consented from now.
@@ -398,7 +399,7 @@ describe('a repository that is not working', () => {
 
     expect(
       await screen.findByText(
-        'The default branch of that repository cannot be resolved. Its commits are not being added.',
+        'No commit can be resolved on the observed branches. Its commits are not being added.',
       ),
     ).toBeTruthy()
     // Not a dead entry: the addresses are still there to tick.
@@ -439,7 +440,7 @@ describe('a repository whose state moves on', () => {
     showSettings(desktop, journal)
     expect(
       await screen.findByText(
-        'The default branch of that repository cannot be resolved. Its commits are not being added.',
+        'No commit can be resolved on the observed branches. Its commits are not being added.',
       ),
     ).toBeTruthy()
 
@@ -1129,3 +1130,87 @@ function heldWrite() {
   held.catch(() => {})
   return { held, settle, unused: true }
 }
+
+
+describe('observed branches', () => {
+  it('selects develop beside main, persists the choice, and clearing accepts all branches', async () => {
+    const { desktop } = listedAt('/code/chronos', {
+      repository: '/code/chronos/.git', commits: [],
+      branches: { 'refs/heads/main': [], 'refs/heads/develop': [], 'refs/remotes/origin/develop': [] },
+    })
+    showSettings(desktop)
+    await openDetails()
+    const input = await screen.findByRole('combobox', { name: 'Branches' })
+    const user = userEvent.setup()
+    await user.click(input)
+    await user.type(input, 'develop')
+    await user.click(await screen.findByRole('option', { name: 'develop (local)' }))
+    await expect.poll(() => stored(desktop).repositories[0].branches).toEqual(['refs/heads/main', 'refs/heads/develop'])
+    await user.keyboard('{Escape}')
+    await user.click(await screen.findByRole('button', { name: 'Remove main (local)' }))
+    await expect.poll(() => stored(desktop).repositories[0].branches).toEqual(['refs/heads/develop'])
+    await user.click(screen.getByRole('button', { name: 'All branches' }))
+    await expect.poll(() => stored(desktop).repositories[0].branches).toEqual([])
+    expect(screen.getByText('No branches selected means all branches.')).toBeTruthy()
+    expect(await createAppSettings(desktop).load()).toMatchObject({ observing: { repositories: [{ branches: [] }] } })
+  })
+})
+
+
+it('keeps a missing selected branch visible without accepting all branches', async () => {
+  const { desktop } = listedAt('/code/chronos', { repository: '/code/chronos/.git', commits: [], branches: { 'refs/heads/main': [] } })
+  const observing = stored(desktop)
+  observing.repositories[0].branches = ['refs/heads/develop']
+  desktop.stored.observing = observing
+  showSettings(desktop)
+  await openDetails()
+  expect(await screen.findByText('Selected branches unavailable: develop (local). Their commits are not being added.')).toBeTruthy()
+  expect(stored(desktop).repositories[0].branches).toEqual(['refs/heads/develop'])
+})
+
+
+it('closes the branch popup when Settings goes off screen', async () => {
+  const { journal } = await journalWith()
+  const { desktop } = listedAt('/code/chronos', { repository: '/code/chronos/.git', commits: [], branches: { 'refs/heads/main': [], 'refs/heads/develop': [] } }, journal)
+  const screenControl = showSettingsOnScreen(desktop, journal)
+  await openDetails()
+  const input = await screen.findByRole('combobox', { name: 'Branches' })
+  const user = userEvent.setup()
+  await user.click(input)
+  await user.type(input, 'develop')
+  expect(await screen.findByRole('option', { name: 'develop (local)' })).toBeTruthy()
+  await act(async () => screenControl.hide())
+  expect(screen.queryByRole('option', { name: 'develop (local)' })).toBeNull()
+})
+
+
+it('offers the previous address on develop after branch selection and observes only after it is ticked', async () => {
+  const { journal, core } = await journalWith()
+  const { desktop } = listedAt('/code/chronos', {
+    repository: '/code/chronos/.git', configuredEmail: 'current@example.test',
+    commits: [{ hash: 'previous', subject: 'Previous address work', author: 'previous@example.test', authoredAt: Date.now() - 60_000 }],
+    branches: { 'refs/heads/main': [], 'refs/heads/develop': ['previous'] },
+  }, journal)
+  const observing = stored(desktop)
+  observing.repositories[0].identities = ['current@example.test']
+  desktop.stored.observing = observing
+  showSettings(desktop, journal)
+  await openDetails()
+  await screen.findByRole('checkbox', { name: 'current@example.test' })
+  expect(screen.queryByRole('checkbox', { name: 'previous@example.test' })).toBeNull()
+  const session = sweeping(desktop, journal)
+  await session.start()
+  try {
+    const user = userEvent.setup()
+    const input = await screen.findByRole('combobox', { name: 'Branches' })
+    await user.click(input)
+    await user.type(input, 'develop')
+    await user.click(await screen.findByRole('option', { name: 'develop (local)' }))
+    await user.keyboard('{Escape}')
+    const previous = await screen.findByRole('checkbox', { name: 'previous@example.test' })
+    expect(previous.getAttribute('aria-checked')).toBe('false')
+    expect(await core.lastCommitNote('/code/chronos/.git')).toBeNull()
+    await user.click(previous)
+    await expect.poll(async () => (await core.lastCommitNote('/code/chronos/.git'))?.body).toBe('Previous address work')
+  } finally { session.stop() }
+})

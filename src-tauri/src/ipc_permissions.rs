@@ -15,6 +15,10 @@ fn dismiss_capture() -> &'static str {
     "reached"
 }
 #[tauri::command]
+fn repository_branches() -> &'static str {
+    "reached"
+}
+#[tauri::command]
 fn repository_identities() -> &'static str {
     "reached"
 }
@@ -42,6 +46,7 @@ fn existing_desktop_commands_still_reach_their_handlers() {
             journal_transaction,
             dismiss_capture,
             repository_identities,
+            repository_branches,
             compare_and_set_observing
         ])
         .build(context)
@@ -54,6 +59,7 @@ fn existing_desktop_commands_still_reach_their_handlers() {
             "journal_transaction",
             "dismiss_capture",
             "repository_identities",
+            "repository_branches",
             "compare_and_set_observing",
         ] {
             let response = get_ipc_response(

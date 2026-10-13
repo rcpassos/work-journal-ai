@@ -5,7 +5,7 @@ import { DEFAULT_WORK_SUMMARY_PROMPT } from './settings'
 import { createAppSettings, type ModelAccessChange } from './app-settings'
 import {
   addRepository, NO_OBSERVING, observedAt, pauseObserving, pauseState,
-  removeRepository, resumeObserving, setIdentities, turnObserving, type Observing,
+  removeRepository, resumeObserving, setIdentities, setBranches, turnObserving, type Observing,
 } from './observing'
 
 // The settings as a running window has them: the core's rules over the
@@ -745,5 +745,25 @@ describe('Observing', () => {
     expect(
       (await settings.load()).observing.repositories.map(({ path }) => path),
     ).toEqual(['/code/a', '/code/b'])
+  })
+})
+
+
+describe('observed branch persistence', () => {
+  it('keeps multiple selected branches and distinguishes empty from legacy unset', async () => {
+    const desktop = fakeDesktop({ stored: { observing: {
+      enabled: true, consent: {}, pauses: {}, repositories: [
+        { path: '/code/chronos', repository: '/code/chronos/.git', identities: ['me@example.com'], ignoredPrefixes: [], branches: ['refs/heads/main', 'refs/heads/develop'] },
+        { path: '/code/all', repository: '/code/all/.git', identities: [], ignoredPrefixes: [], branches: [] },
+        { path: '/code/legacy', repository: '/code/legacy/.git', identities: [], ignoredPrefixes: [] },
+      ],
+    } } })
+    const settings = createAppSettings(desktop)
+    const loaded = await settings.load()
+    expect(loaded.observing.repositories.map((repository) => repository.branches)).toEqual([
+      ['refs/heads/main', 'refs/heads/develop'], [], undefined,
+    ])
+    await settings.updateObserving((current) => setBranches(current, '/code/chronos/.git', ['refs/heads/develop']))
+    expect((await createAppSettings(desktop).load()).observing.repositories[0].branches).toEqual(['refs/heads/develop'])
   })
 })

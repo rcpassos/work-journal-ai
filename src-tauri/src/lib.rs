@@ -548,6 +548,7 @@ pub fn run() {
             todays_calendar_events,
             repository_commits,
             repository_identities,
+            repository_branches,
             requested_section,
             opened_task_alert,
             focus_task_alert,
@@ -2021,16 +2022,27 @@ fn todays_calendar_events() -> Vec<CalendarEvent> {
 /// read, which is an answer about it and not a failure. Off the main thread:
 /// it waits on `git`.
 #[tauri::command(async)]
-fn repository_commits(path: String, identities: Vec<String>, since: f64) -> commits::CommitsRead {
-    commits::read(Path::new(&path), &identities, since)
+fn repository_commits(
+    path: String,
+    identities: Vec<String>,
+    since: f64,
+    branches: Option<Vec<String>>,
+) -> commits::CommitsRead {
+    commits::read(Path::new(&path), &identities, since, branches.as_deref())
+}
+
+/// Available branch refs and the legacy default, read without reaching a remote.
+#[tauri::command(async)]
+fn repository_branches(path: String) -> commits::BranchesRead {
+    commits::branches(Path::new(&path))
 }
 
 /// Who might be the user in one repository, for Settings to offer as
 /// suggestions: the configured address and the last ninety days' first-parent
-/// authors. None of them counts until the user ticks it.
+/// authors from the applicable branch histories. None of them counts until the user ticks it.
 #[tauri::command(async)]
-fn repository_identities(path: String) -> commits::IdentitiesRead {
-    commits::identities(Path::new(&path))
+fn repository_identities(path: String, branches: Option<Vec<String>>) -> commits::IdentitiesRead {
+    commits::identities(Path::new(&path), branches.as_deref())
 }
 
 /// What the OS allows the app to deliver as Task Alerts. Asked rather than

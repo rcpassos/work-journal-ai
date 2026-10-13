@@ -20,6 +20,7 @@ commands.allow = [
   "todays_calendar_events",
   "repository_commits",
   "repository_identities",
+  "repository_branches",
   "requested_section",
   "opened_task_alert",
   "focus_task_alert",

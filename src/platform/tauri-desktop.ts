@@ -58,6 +58,7 @@ import {
   type CalendarInfo,
   type CaptureShown,
   type CommitsRead,
+  type BranchesRead,
   type Desktop,
   type ExportedFile,
   type IdentitiesRead,
@@ -258,10 +259,11 @@ export function createTauriDesktop(): Desktop {
     calendars: () => invoke<CalendarInfo[]>('calendars'),
     todaysCalendarEvents: () => invoke<CalendarEvent[]>('todays_calendar_events'),
 
-    repositoryCommits: (path, identities, since) =>
-      invoke<CommitsRead>('repository_commits', { path, identities, since }),
-    repositoryIdentities: (path) =>
-      invoke<IdentitiesRead>('repository_identities', { path }),
+    repositoryCommits: (path, identities, since, branches) =>
+      invoke<CommitsRead>('repository_commits', { path, identities, since, branches }),
+    repositoryBranches: (path) => invoke<BranchesRead>('repository_branches', { path }),
+    repositoryIdentities: (path, branches) =>
+      invoke<IdentitiesRead>('repository_identities', { path, branches }),
 
     // Opened on this side, like the restore picker: a cancelled dialog is a
     // frontend outcome rather than an error.

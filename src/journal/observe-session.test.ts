@@ -20,6 +20,7 @@ import {
   removeRepository,
   resumeObserving,
   setIdentities,
+  setBranches,
   setIgnoredPrefixes,
   turnObserving,
 } from '../settings/observing'
@@ -577,7 +578,7 @@ describe('what is swept at all', () => {
     // that gains its first commit with nobody ticked moves on from "nothing
     // on its branches yet", and Settings has to hear that — while no commit
     // is read for anyone.
-    expect(read).toHaveBeenCalledWith('/code/work-journal-ai', [], expect.any(Number))
+    expect(read).toHaveBeenCalledWith('/code/work-journal-ai', [], expect.any(Number), undefined)
     expect(await bodiesOn(journal, '2026-03-09')).toEqual([])
   })
 })
@@ -1155,5 +1156,59 @@ describe('a repository that cannot be read', () => {
 
     await journal.capture('the migration landed')
     expect(await bodiesOn(journal, '2026-03-09')).toEqual(['the migration landed'])
+  })
+})
+
+
+describe('selected branch observation', () => {
+  it('recovers Chronos develop work on its author days and keeps deleted Notes refused after branch changes', async () => {
+    const path = '/code/chronos'
+    const { journal, settings, clock, session } = await observeSessionAt('2026-10-12T08:00:00', {
+      [path]: {
+        repository: `${path}/.git`,
+        commits: [
+          commit('today', 'Fix import', '2026-10-13T11:00:00'),
+          commit('main', 'Main only', '2026-10-13T10:00:00'),
+          commit('yesterday', 'Account setup', '2026-10-12T13:00:00'),
+        ],
+        branches: { 'refs/heads/main': ['main'], 'refs/heads/develop': ['today', 'yesterday'], 'refs/remotes/origin/develop': ['today', 'yesterday'] },
+      },
+    })
+    await turn(settings, true)
+    await list(settings, 'chronos')
+    await journal.setProjectMapping(`${path}/.git`, 'chronos')
+    await settings.updateObserving((current) => setBranches(current, `${path}/.git`, ['refs/heads/develop']))
+    clock.set(new Date('2026-10-13T12:00:00'))
+    await session.start()
+    try {
+      expect(await filingOn(journal, '2026-10-12')).toEqual([{ body: 'Account setup', project: 'chronos' }])
+      expect(await bodiesOn(journal, '2026-10-13')).toEqual(['Fix import'])
+      const [note] = await journal.notesForFilter(rangeForJournalDay('2026-10-12'))
+      await journal.delete(note.id)
+      await settings.updateObserving((current) => setBranches(current, `${path}/.git`, []))
+      await flushSweep()
+      expect(await bodiesOn(journal, '2026-10-12')).toEqual([])
+      expect(await bodiesOn(journal, '2026-10-13')).toEqual(['Main only', 'Fix import'])
+    } finally { session.stop() }
+  })
+
+  it('discards a read whose branch selection changed while git was running', async () => {
+    const path = '/code/chronos'
+    const { journal, desktop, settings, clock, session } = await observeSessionAt('2026-10-12T08:00:00', {
+      [path]: { repository: `${path}/.git`, commits: [commit('main', 'Main only', '2026-10-12T09:00:00')], branches: { 'refs/heads/main': ['main'], 'refs/heads/develop': [] } },
+    })
+    await turn(settings, true)
+    await list(settings, 'chronos')
+    await settings.updateObserving((current) => setBranches(current, `${path}/.git`, ['refs/heads/main']))
+    clock.set(new Date('2026-10-12T12:00:00'))
+    const { reading, release } = gateRepositoryRead(desktop, path)
+    const starting = session.start()
+    try {
+      await reading
+      await settings.updateObserving((current) => setBranches(current, `${path}/.git`, ['refs/heads/develop']))
+      release()
+      await starting
+      expect(await bodiesOn(journal, '2026-10-12')).toEqual([])
+    } finally { release(); await starting; session.stop() }
   })
 })

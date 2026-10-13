@@ -77,3 +77,31 @@ describe('the updater', () => {
     expect(options.timeout).toBeGreaterThan(check.mock.calls[0][0].timeout)
   })
 })
+
+
+describe('observed branch commands', () => {
+  it('passes selected refs, empty all-branches, and legacy unset through IPC', async () => {
+    invoke.mockReset()
+    invoke.mockResolvedValue({ state: 'read', commits: [] })
+    const desktop = createTauriDesktop()
+    for (const branches of [['refs/heads/develop'], [], undefined]) {
+      await desktop.repositoryCommits('/code/chronos', ['me@example.com'], 123, branches)
+      expect(invoke).toHaveBeenLastCalledWith('repository_commits', { path: '/code/chronos', identities: ['me@example.com'], since: 123, branches })
+    }
+    invoke.mockResolvedValue({ state: 'read', branches: ['refs/heads/develop'], defaultBranch: 'refs/heads/main' })
+    expect(await desktop.repositoryBranches('/code/chronos')).toEqual({ state: 'read', branches: ['refs/heads/develop'], defaultBranch: 'refs/heads/main' })
+    expect(invoke).toHaveBeenLastCalledWith('repository_branches', { path: '/code/chronos' })
+  })
+})
+
+
+it('passes the applicable branch histories through identity-discovery IPC', async () => {
+  invoke.mockReset()
+  invoke.mockResolvedValue({ state: 'read', repository: '/code/chronos/.git', identities: ['previous@example.test'], reason: null })
+  const desktop = createTauriDesktop()
+  for (const branches of [['refs/heads/develop'], [], undefined]) {
+    const result = await desktop.repositoryIdentities('/code/chronos', branches)
+    expect(invoke).toHaveBeenLastCalledWith('repository_identities', { path: '/code/chronos', branches })
+    expect(result).toMatchObject({ identities: ['previous@example.test'] })
+  }
+})
