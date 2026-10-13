@@ -4,6 +4,8 @@ What changed in each released version, newest first. Every `vX.Y.Z` section here
 
 ## Unreleased
 
+## 0.17.1 — 2026-10-13
+
 - A Pause or Resume now survives concurrent Observing changes made in another window.
 - Restoring a backup with altered table or index definitions is now refused before it can break journal writes or remove data constraints.
 - Pausing Observing during a commit sweep now keeps work authored during the Pause out of the journal, and disabling Observing or removing a repository takes effect during that sweep.
