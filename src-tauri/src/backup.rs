@@ -378,9 +378,9 @@ pub enum ApplyOutcome {
 }
 
 /// Opens a candidate read-only and validates it: `quick_check`, the schema
-/// the version it claims makes — exactly its tables, their columns and its
-/// named indexes, nothing a journal never makes — and the `_sqlx_migrations`
-/// boundary. Never opens it with the app's own pool, never writes to the
+/// the version it claims makes — exactly its table definitions, their columns
+/// and its named index definitions, nothing a journal never makes — and the
+/// `_sqlx_migrations` boundary. Never opens it with the app's own pool, never writes to the
 /// file, and never mutates anything on a refusal. A refusal names which check
 /// failed. Answers with the migration version the candidate carries, so the
 /// caller can log what it staged.
@@ -511,8 +511,8 @@ pub async fn validate_restore_candidate(candidate: &Path) -> Result<i64, String>
     }
 
     // A journal at `version` holds exactly what the migrations up to it make:
-    // the same tables, the same columns, the same named indexes. A schema
-    // ahead of the version its rows claim has the launch migrator re-run a
+    // the same tables, columns and named indexes, with the same definitions.
+    // A schema ahead of the version its rows claim has the launch migrator re-run a
     // migration over what already exists, which fails and panics the app on
     // every launch; one behind it fails the app's own reads. A genuine
     // snapshot is neither, so it was crafted or hand-edited.
@@ -538,11 +538,11 @@ pub async fn validate_restore_candidate(candidate: &Path) -> Result<i64, String>
     let mut extra_columns: Vec<String> = Vec::new();
     for (table, wanted) in &expected.tables {
         let present = &held.tables[table];
-        let absent = list(wanted.difference(present));
+        let absent = list(wanted.columns.difference(&present.columns));
         if !absent.is_empty() {
             missing_columns.push(format!("{table} ({absent})"));
         }
-        let extra = list(present.difference(wanted));
+        let extra = list(present.columns.difference(&wanted.columns));
         if !extra.is_empty() {
             extra_columns.push(format!("{table} ({extra})"));
         }
@@ -560,21 +560,43 @@ pub async fn validate_restore_candidate(candidate: &Path) -> Result<i64, String>
         ));
     }
 
-    let extra_indexes = list(held.indexes.difference(&expected.indexes));
+    let extra_indexes = list(
+        held.indexes.keys().filter(|index| !expected.indexes.contains_key(*index)),
+    );
     if !extra_indexes.is_empty() {
         return Err(format!(
             "the backup carries unexpected indexes for version {version}: {extra_indexes}"
         ));
     }
-    let missing_indexes = list(expected.indexes.difference(&held.indexes));
+    let missing_indexes = list(
+        expected.indexes.keys().filter(|index| !held.indexes.contains_key(*index)),
+    );
     if !missing_indexes.is_empty() {
         return Err(format!("the backup is missing indexes: {missing_indexes}"));
+    }
+
+    // Exact sqlite_master SQL also covers generated columns, constraints,
+    // keys, and index uniqueness and predicates. Names alone cannot establish
+    // that ordinary journal writes will work or enforce the same invariants.
+    for (table, wanted) in &expected.tables {
+        if held.tables[table].sql != wanted.sql {
+            return Err(format!(
+                "the backup's table definition differs for {table} at version {version}"
+            ));
+        }
+    }
+    for (index, wanted) in &expected.indexes {
+        if &held.indexes[index] != wanted {
+            return Err(format!(
+                "the backup's index definition differs for {index} at version {version}"
+            ));
+        }
     }
 
     Ok(version)
 }
 
-/// Names joined for a refusal; the schema's sets are already sorted.
+/// Names joined for a refusal; the schema's sets and map keys are already sorted.
 fn list<'a>(names: impl Iterator<Item = &'a String>) -> String {
     names.cloned().collect::<Vec<_>>().join(", ")
 }
@@ -598,34 +620,45 @@ fn known_migration_checksums() -> Vec<(i64, Vec<u8>)> {
 }
 
 /// What a journal's schema holds that the app made: each table with its
-/// columns, and the named indexes. Leaves out sqlx's own `_sqlx_migrations`,
-/// SQLite's `sqlite_*` bookkeeping (matched by `substr`, since `_` in a `LIKE` pattern matches any character), and the `sqlite_autoindex_*` entries
+/// columns and SQL definition, and the named indexes' SQL definitions.
+/// Leaves out sqlx's own `_sqlx_migrations`, SQLite's `sqlite_*` bookkeeping
+/// (matched by `substr`, since `_` in a `LIKE` pattern matches any character),
+/// and the `sqlite_autoindex_*` entries
 /// (`sql IS NOT NULL`) it keeps for primary keys and unique constraints.
 struct Schema {
-    tables: BTreeMap<String, BTreeSet<String>>,
-    indexes: BTreeSet<String>,
+    tables: BTreeMap<String, TableSchema>,
+    indexes: BTreeMap<String, String>,
 }
 
-/// Reads a connection's schema. Columns come through `pragma_table_xinfo`'s
-/// table-valued form, so a table name from the file is a bound parameter,
+struct TableSchema {
+    columns: BTreeSet<String>,
+    sql: String,
+}
+
+/// Reads exact table and named-index definitions from `sqlite_master`.
+/// Columns come through `pragma_table_xinfo`'s table-valued form, so a table
+/// name from the file is a bound parameter,
 /// never interpolated into SQL — and it, unlike `table_info`, lists generated
 /// columns, which would have migration 10 fail on a duplicate `details`.
 async fn schema_of(connection: &mut sqlx::sqlite::SqliteConnection) -> Result<Schema, String> {
     use sqlx::Row;
-    let names: Vec<(String, String)> = sqlx::query(
-        "SELECT type, name FROM sqlite_master
+    let definitions: Vec<(String, String, String)> = sqlx::query(
+        "SELECT type, name, sql FROM sqlite_master
          WHERE type IN ('table', 'index') AND sql IS NOT NULL
            AND substr(name, 1, 7) != 'sqlite_' AND name != '_sqlx_migrations'",
     )
-    .try_map(|row: sqlx::sqlite::SqliteRow| Ok((row.try_get(0)?, row.try_get(1)?)))
+    .try_map(|row: sqlx::sqlite::SqliteRow| Ok((row.try_get(0)?, row.try_get(1)?, row.try_get(2)?)))
     .fetch_all(&mut *connection)
     .await
     .map_err(|error| format!("the backup's schema could not be read: {error}"))?;
 
-    let mut schema = Schema { tables: BTreeMap::new(), indexes: BTreeSet::new() };
-    for (kind, name) in names {
+    let mut schema = Schema {
+        tables: BTreeMap::new(),
+        indexes: BTreeMap::new(),
+    };
+    for (kind, name, sql) in definitions {
         if kind == "index" {
-            schema.indexes.insert(name);
+            schema.indexes.insert(name, sql);
             continue;
         }
         let columns: Vec<String> = sqlx::query("SELECT name FROM pragma_table_xinfo(?)")
@@ -634,7 +667,10 @@ async fn schema_of(connection: &mut sqlx::sqlite::SqliteConnection) -> Result<Sc
             .fetch_all(&mut *connection)
             .await
             .map_err(|error| format!("the backup's {name} columns could not be read: {error}"))?;
-        schema.tables.insert(name, columns.into_iter().collect());
+        schema.tables.insert(name, TableSchema {
+            columns: columns.into_iter().collect(),
+            sql,
+        });
     }
     Ok(schema)
 }
@@ -1830,6 +1866,98 @@ mod tests {
         assert_eq!(candidate_bytes(&candidate), before);
     });
 
+    async_test!(a_generated_note_body_is_refused_before_staging_without_touching_any_file, {
+        let config = TempDir::new("restore-generated-body-live");
+        let live = live_database_path(&config.path);
+        write_journal_file(&live, SUPPORTED_MIGRATION_VERSION, "the live journal").await;
+        let elsewhere = TempDir::new("restore-generated-body");
+        let candidate = healthy_candidate(&elsewhere, "candidate.db", "the candidate").await;
+        alter_candidate(&candidate, &[
+            "ALTER TABLE notes RENAME TO original_notes;
+             CREATE TABLE notes (
+                 id TEXT PRIMARY KEY NOT NULL,
+                 body TEXT GENERATED ALWAYS AS (id) VIRTUAL,
+                 captured_at TEXT NOT NULL, journal_day TEXT NOT NULL,
+                 edited_at TEXT, project TEXT,
+                 origin TEXT NOT NULL DEFAULT 'capture', source TEXT, source_key TEXT
+             );
+             INSERT INTO notes (id, captured_at, journal_day, edited_at, project, origin, source, source_key)
+                 SELECT id, captured_at, journal_day, edited_at, project, origin, source, source_key
+                 FROM original_notes;
+             DROP TABLE original_notes;
+             CREATE INDEX notes_journal_day ON notes(journal_day);
+             CREATE INDEX notes_project ON notes(project);",
+        ]).await;
+        let candidate_before = candidate_bytes(&candidate);
+        let live_before = candidate_bytes(&live);
+        let staged = staged_restore_path(&config.path);
+        write_journal_file(&staged, SUPPORTED_MIGRATION_VERSION, "already pending").await;
+        let staged_before = candidate_bytes(&staged);
+
+        let refusal = validate_restore_candidate(&candidate)
+            .await
+            .expect_err("a generated Note Body must not validate");
+        assert!(refusal.contains("table definition") && refusal.contains("notes"), "{refusal}");
+        let refusal = stage_restore(&candidate, &config.path)
+            .await
+            .expect_err("a generated Note Body must not stage");
+        assert!(refusal.contains("table definition") && refusal.contains("notes"), "{refusal}");
+        assert_eq!(candidate_bytes(&candidate), candidate_before);
+        assert_eq!(candidate_bytes(&live), live_before);
+        assert_eq!(candidate_bytes(&staged), staged_before);
+        assert!(!staged_temp_path(&staged).exists());
+    });
+
+    async_test!(note_check_constraints_cannot_be_removed_from_a_restore_candidate, {
+        let directory = TempDir::new("restore-note-checks");
+        let candidate = healthy_candidate(&directory, "candidate.db", "the journal").await;
+        alter_candidate(&candidate, &[
+            "ALTER TABLE notes RENAME TO original_notes;
+             CREATE TABLE notes (
+                 id TEXT PRIMARY KEY NOT NULL, body TEXT NOT NULL,
+                 captured_at TEXT NOT NULL, journal_day TEXT NOT NULL,
+                 edited_at TEXT, project TEXT,
+                 origin TEXT NOT NULL DEFAULT 'capture', source TEXT, source_key TEXT
+             );
+             INSERT INTO notes SELECT * FROM original_notes;
+             DROP TABLE original_notes;
+             CREATE INDEX notes_journal_day ON notes(journal_day);
+             CREATE INDEX notes_project ON notes(project);",
+        ]).await;
+        let before = candidate_bytes(&candidate);
+
+        let refusal = validate_restore_candidate(&candidate)
+            .await
+            .expect_err("a Note table without its CHECK constraints must not validate");
+
+        assert!(refusal.contains("table definition") && refusal.contains("notes"), "{refusal}");
+        assert_eq!(candidate_bytes(&candidate), before);
+    });
+
+    async_test!(a_handled_event_primary_key_cannot_be_removed_from_a_restore_candidate, {
+        let directory = TempDir::new("restore-handled-event-key");
+        let candidate = healthy_candidate(&directory, "candidate.db", "the journal").await;
+        alter_candidate(&candidate, &[
+            "ALTER TABLE handled_events RENAME TO original_handled_events;
+             CREATE TABLE handled_events (
+                 source TEXT NOT NULL, event_key TEXT NOT NULL, handled_at TEXT NOT NULL
+             );
+             INSERT INTO handled_events SELECT * FROM original_handled_events;
+             DROP TABLE original_handled_events;",
+        ]).await;
+        let before = candidate_bytes(&candidate);
+
+        let refusal = validate_restore_candidate(&candidate)
+            .await
+            .expect_err("handled events without their primary key must not validate");
+
+        assert!(
+            refusal.contains("table definition") && refusal.contains("handled_events"),
+            "{refusal}"
+        );
+        assert_eq!(candidate_bytes(&candidate), before);
+    });
+
     async_test!(a_malformed_file_is_refused_without_touching_it, {
         let directory = TempDir::new("restore-malformed");
         let candidate = directory.path.join("candidate.db");
@@ -2082,6 +2210,40 @@ mod tests {
         );
     });
 
+    async_test!(a_named_index_with_changed_uniqueness_columns_or_predicate_is_refused, {
+        let definitions = [
+            "CREATE INDEX task_occurrences_one_kept_per_slot
+                 ON task_occurrences (task_id, scheduled_date)
+                 WHERE completed_at IS NOT NULL",
+            "CREATE UNIQUE INDEX task_occurrences_one_kept_per_slot
+                 ON task_occurrences (task_id, scheduled_date, scheduled_time)
+                 WHERE completed_at IS NOT NULL",
+            "CREATE UNIQUE INDEX task_occurrences_one_kept_per_slot
+                 ON task_occurrences (task_id, scheduled_date)
+                 WHERE completed_at IS NULL",
+        ];
+        for (index, definition) in definitions.iter().enumerate() {
+            let directory = TempDir::new(&format!("restore-index-definition-{index}"));
+            let candidate = healthy_candidate(&directory, "candidate.db", "the journal").await;
+            alter_candidate(&candidate, &[
+                "DROP INDEX task_occurrences_one_kept_per_slot",
+                definition,
+            ]).await;
+            let before = candidate_bytes(&candidate);
+
+            let refusal = validate_restore_candidate(&candidate)
+                .await
+                .expect_err("an altered one-kept-per-slot index must not validate");
+
+            assert!(
+                refusal.contains("index definition")
+                    && refusal.contains("task_occurrences_one_kept_per_slot"),
+                "{refusal}"
+            );
+            assert_eq!(candidate_bytes(&candidate), before);
+        }
+    });
+
     async_test!(a_journal_missing_an_index_its_version_made_is_refused, {
         let directory = TempDir::new("restore-missing-index");
         let candidate = healthy_candidate(&directory, "candidate.db", "the journal").await;
@@ -2302,6 +2464,22 @@ mod tests {
             "a refusal names which check failed, got: {refusal}"
         );
         assert_eq!(candidate_bytes(&candidate), before);
+    });
+
+    async_test!(genuine_snapshots_validate_read_only_at_every_supported_version, {
+        for version in 1..=SUPPORTED_MIGRATION_VERSION {
+            let directory = TempDir::new(&format!("restore-genuine-v{version}"));
+            let candidate = directory.path.join("candidate.db");
+            write_journal_file(&candidate, version, "the journal").await;
+            let before = candidate_bytes(&candidate);
+
+            let validated = validate_restore_candidate(&candidate)
+                .await
+                .unwrap_or_else(|error| panic!("genuine version {version} refused: {error}"));
+
+            assert_eq!(validated, version);
+            assert_eq!(candidate_bytes(&candidate), before);
+        }
     });
 
     async_test!(an_older_snapshot_is_accepted_and_names_its_version, {
