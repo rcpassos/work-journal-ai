@@ -126,3 +126,19 @@ describe('who may change Observing', () => {
     expect(held.get(TASK_CREATION_WINDOW)).not.toContain(permission)
   })
 })
+
+describe('the established Desktop commands', () => {
+  it('keeps every existing registered command available to local app windows', () => {
+    const root = new URL('../../', import.meta.url)
+    const source = readFileSync(new URL('src-tauri/src/lib.rs', root), 'utf8')
+    const registered = source.match(/invoke_handler\(tauri::generate_handler!\[([\s\S]*?)\]\)/)?.[1]
+      .split(',').map((command) => command.trim().split('::').at(-1))
+      .filter((command) => command && command !== 'compare_and_set_observing')
+    const permission = readFileSync(new URL('src-tauri/permissions/desktop-commands.toml', root), 'utf8')
+    const granted = [...permission.matchAll(/^\s*"([a-z_]+)",?$/gm)].map(([, command]) => command)
+    expect(granted).toEqual(registered)
+    for (const window of EVERY_WINDOW) {
+      expect(permissionsByWindow().get(window)).toContain('existing-desktop-commands')
+    }
+  })
+})

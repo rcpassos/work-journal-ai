@@ -1,0 +1,42 @@
+# Before the Observing ACL, these application commands were available to every
+# local app window. Preserve that policy while granting Observing separately.
+[[permission]]
+identifier = "existing-desktop-commands"
+description = "Preserves local window access to the established Desktop commands."
+commands.allow = [
+  "dismiss_capture",
+  "dismiss_practice_capture",
+  "start_practice_capture",
+  "start_task_creation",
+  "dismiss_task_creation",
+  "hotkey_status",
+  "set_hotkey",
+  "export_journal",
+  "show_tray_count",
+  "show_tray_observing",
+  "calendar_access",
+  "request_calendar_access",
+  "calendars",
+  "todays_calendar_events",
+  "repository_commits",
+  "repository_identities",
+  "requested_section",
+  "opened_task_alert",
+  "focus_task_alert",
+  "completed_task_alert",
+  "task_alert_permission",
+  "request_task_alert_permission",
+  "reconcile_task_alerts",
+  "open_notification_settings",
+  "journal_transaction",
+  "api_key_set",
+  "save_api_key",
+  "clear_api_key",
+  "generate_work_summary",
+  "automatic_backups",
+  "backup_journal",
+  "reveal_backups",
+  "stage_restore",
+  "onboarding_state",
+  "dismiss_onboarding",
+]

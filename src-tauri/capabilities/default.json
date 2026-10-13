@@ -8,6 +8,7 @@
     "main"
   ],
   "permissions": [
+    "existing-desktop-commands",
     "core:default",
     "sql:default",
     "sql:allow-execute",

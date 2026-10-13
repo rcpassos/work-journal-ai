@@ -7,6 +7,8 @@ mod export;
 mod frontmost;
 mod hotkey;
 mod keychain;
+#[cfg(test)]
+mod ipc_permissions;
 mod onboarding;
 mod observing_settings;
 mod work_summary;

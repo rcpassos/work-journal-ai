@@ -373,6 +373,89 @@ describe('Observing', () => {
   }
   const running = () => addRepository(turnObserving(NO_OBSERVING, true, now - 1000), repository, now - 1000)
 
+  function delayedCompare(desktop: ReturnType<typeof fakeDesktop>) {
+    const compareAndSet = desktop.compareAndSetObserving
+    let reached = () => {}
+    let release = () => {}
+    const ready = new Promise<void>((resolve) => { reached = resolve })
+    const held = new Promise<void>((resolve) => { release = resolve })
+    let first = true
+    desktop.compareAndSetObserving = async (expected, next) => {
+      if (first) {
+        first = false
+        reached()
+        await held
+      }
+      return compareAndSet(expected, next)
+    }
+    return { ready, release }
+  }
+
+  it.each([1, 60000])('includes a repository in a later Pause when its earlier addition retries (%i ms apart)', async (gap) => {
+    const stored = { observing: running() }
+    const mainDesktop = fakeDesktop({ stored })
+    const delay = delayedCompare(mainDesktop)
+    const main = createAppSettings(mainDesktop, { now: () => new Date(now) })
+    const capture = createAppSettings(fakeDesktop({ stored }), { now: () => new Date(now + gap) })
+    const added = { ...repository, path: '/code/added', repository: '/code/added/.git', identities: [] }
+    const adding = main.updateObserving((current, time) => addRepository(current, added, time))
+    await delay.ready
+    await capture.updateObserving((current, time) => pauseObserving(current, 'until-resumed', time))
+    delay.release()
+    await adding
+    await main.updateObserving((current) => setIdentities(current, added.repository, ['me@work']))
+
+    const saved = (await main.load()).observing
+    expect(pauseState(saved, now + gap + 1).state).toBe('paused')
+    expect(observedAt(saved, added.repository, now + gap + 1)).toBe(false)
+    expect(observedAt(saved, repository.repository, now + gap + 1)).toBe(false)
+  })
+
+  it('inherits a later Pause that also ended before an earlier repository addition could retry', async () => {
+    const stored = { observing: running() }
+    const mainDesktop = fakeDesktop({ stored })
+    const delay = delayedCompare(mainDesktop)
+    const main = createAppSettings(mainDesktop, { now: () => new Date(now) })
+    let captureNow = now + 60000
+    const capture = createAppSettings(fakeDesktop({ stored }), { now: () => new Date(captureNow) })
+    const added = { ...repository, path: '/code/added', repository: '/code/added/.git' }
+    const adding = main.updateObserving((current, time) => addRepository(current, added, time))
+    await delay.ready
+    await capture.updateObserving((current, time) => pauseObserving(current, 'until-resumed', time))
+    captureNow = now + 120000
+    await capture.updateObserving(resumeObserving)
+    delay.release()
+    await adding
+
+    const saved = (await main.load()).observing
+    expect(observedAt(saved, added.repository, now + 30000)).toBe(true)
+    expect(observedAt(saved, added.repository, now + 90000)).toBe(false)
+    expect(observedAt(saved, added.repository, now + 150000)).toBe(true)
+  })
+
+  it('keeps an earlier Pause over a repository removed before its retry and later readded', async () => {
+    const remaining = { ...repository, path: '/code/remaining', repository: '/code/remaining/.git' }
+    const stored = { observing: addRepository(running(), remaining, now - 1000) }
+    const captureDesktop = fakeDesktop({ stored })
+    const delay = delayedCompare(captureDesktop)
+    const capture = createAppSettings(captureDesktop, { now: () => new Date(now) })
+    let mainNow = now + 60000
+    const main = createAppSettings(fakeDesktop({ stored }), { now: () => new Date(mainNow) })
+    const pausing = capture.updateObserving((current, time) => pauseObserving(current, 'until-resumed', time))
+    await delay.ready
+    await main.updateObserving((current, time) => removeRepository(current, repository.repository, time))
+    delay.release()
+    await pausing
+    mainNow = now + 120000
+    await main.updateObserving((current, time) => addRepository(current, repository, time))
+
+    const saved = (await main.load()).observing
+    expect(pauseState(saved, mainNow + 1).state).toBe('paused')
+    expect(observedAt(saved, repository.repository, now + 30000)).toBe(false)
+    expect(observedAt(saved, remaining.repository, now + 30000)).toBe(false)
+    expect(observedAt(saved, repository.repository, mainNow + 1)).toBe(false)
+  })
+
   // Both windows capture the same old value before either can write it.
   function windows(observing: Observing = running()) {
     const stored: Record<string, unknown> = { observing }
