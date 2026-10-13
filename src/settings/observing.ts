@@ -172,12 +172,17 @@ export function pauseObserving(
         ? now + msUntilNextJournalDay(new Date(now))
         : null
 
-  // A later removal can already be stored when this earlier Pause retries.
-  // Consent identifies repositories whose work was still observed at `now`,
-  // so their excluded history must survive even while they are off the list.
+  // A later addition and removal can already be stored when this earlier
+  // Pause retries. Retained consent overlapping the Pause identifies their
+  // excluded work, even if the repository joined after `now` and is gone now.
   const repositories = new Set([
     ...observing.repositories.map(({ repository }) => repository),
-    ...Object.keys(observing.consent).filter((repository) => consentedAt(observing, repository, now)),
+    ...Object.entries(observing.consent)
+      .filter(([, intervals]) => intervals.some((interval) =>
+        (interval.until === null || interval.until > now) &&
+        (until === null || interval.from < until),
+      ))
+      .map(([repository]) => repository),
   ])
   let pauses = observing.pauses
   for (const repository of repositories) {

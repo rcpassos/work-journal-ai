@@ -456,6 +456,30 @@ describe('Observing', () => {
     expect(observedAt(saved, repository.repository, mainNow + 1)).toBe(false)
   })
 
+  it.each(['until-resumed', 'an-hour'] as const)('keeps Pause history for a repository added and removed while the Pause waited to save (%s)', async (length) => {
+    const stored = { observing: running() }
+    const captureDesktop = fakeDesktop({ stored })
+    const delay = delayedCompare(captureDesktop)
+    const capture = createAppSettings(captureDesktop, { now: () => new Date(now) })
+    let mainNow = now + 60000
+    const main = createAppSettings(fakeDesktop({ stored }), { now: () => new Date(mainNow) })
+    const added = { ...repository, path: '/code/added', repository: '/code/added/.git' }
+    const pausing = capture.updateObserving((current, time) => pauseObserving(current, length, time))
+    await delay.ready
+    await main.updateObserving((current, time) => addRepository(current, added, time))
+    mainNow = now + 120000
+    await main.updateObserving((current, time) => removeRepository(current, added.repository, time))
+    delay.release()
+    await pausing
+    mainNow = now + 2 * 60 * 60 * 1000
+    await main.updateObserving((current, time) => addRepository(current, added, time))
+
+    const saved = (await main.load()).observing
+    expect(pauseState(saved, mainNow + 1).state).toBe(length === 'until-resumed' ? 'paused' : 'running')
+    expect(observedAt(saved, added.repository, now + 90000)).toBe(false)
+    expect(observedAt(saved, added.repository, mainNow + 1)).toBe(length === 'an-hour')
+  })
+
   // Both windows capture the same old value before either can write it.
   function windows(observing: Observing = running()) {
     const stored: Record<string, unknown> = { observing }
