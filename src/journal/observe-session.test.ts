@@ -12,7 +12,7 @@ import {
   type FakeRepository,
   type FakeUnreadablePath,
 } from '../platform/testing/desktop'
-import type { PauseLength } from '../platform/desktop'
+import type { Desktop, PauseLength } from '../platform/desktop'
 import { createAppSettings, type AppSettings } from '../settings/app-settings'
 import {
   addRepository,
@@ -146,6 +146,131 @@ async function filingOn(journal: Journal, journalDay: string) {
 async function flushSweep(): Promise<void> {
   for (let turn = 0; turn < 40; turn += 1) await Promise.resolve()
 }
+
+/** Holds one repository read while Settings changes and more work is authored. */
+function gateRepositoryRead(desktop: Desktop, path: string) {
+  let reached!: () => void
+  let release!: () => void
+  const reading = new Promise<void>((resolve) => { reached = resolve })
+  const gate = new Promise<void>((resolve) => { release = resolve })
+  const read = desktop.repositoryCommits
+  desktop.repositoryCommits = async (...args) => {
+    if (args[0] === path) {
+      reached()
+      await gate
+    }
+    return read(...args)
+  }
+  return { reading, release }
+}
+
+describe('Observing changes during a sweep', () => {
+  it.each(['work-journal-ai', 'site'])('never records work authored during a Pause saved while %s is being read', async (gated) => {
+    const site = repository('site')
+    const { journal, desktop, clock, settings, session, driver } = await observeSessionAt(
+      '2026-03-09T08:00:00',
+      {
+        '/code/work-journal-ai': repository('work-journal-ai'),
+        '/code/site': site,
+      },
+    )
+    await turn(settings, true)
+    await list(settings, 'work-journal-ai')
+    await list(settings, 'site')
+    clock.set(new Date('2026-03-09T10:00:00'))
+    const { reading, release } = gateRepositoryRead(desktop, `/code/${gated}`)
+    const starting = session.start()
+    try {
+      await reading
+      clock.set(new Date('2026-03-09T10:00:01'))
+      await pause(settings, 'until-resumed')
+      clock.set(new Date('2026-03-09T10:00:02'))
+      site.commits.push(commit('private', 'Confidential work during pause', '2026-03-09T10:00:02'))
+      release()
+      await starting
+
+      expect(await bodiesOn(journal, '2026-03-09')).toEqual([])
+      expect(await driver.select('SELECT source, event_key FROM handled_events', [])).toEqual([])
+    } finally {
+      release()
+      await starting
+      session.stop()
+    }
+  })
+
+  it.each(['disabled', 'removed'] as const)('skips a later repository when Observing is %s during an earlier read', async (change) => {
+    const { journal, desktop, clock, settings, session, driver } = await observeSessionAt(
+      '2026-03-09T08:00:00',
+      {
+        '/code/work-journal-ai': repository('work-journal-ai'),
+        // Authored before the change: its consent interval still covers it,
+        // but being disabled or off the list must prevent it arriving now.
+        '/code/site': repository('site', [commit('s1', 'Earlier work', '2026-03-09T09:00')]),
+      },
+    )
+    await turn(settings, true)
+    await list(settings, 'work-journal-ai')
+    await list(settings, 'site')
+    clock.set(new Date('2026-03-09T10:00:00'))
+    const { reading, release } = gateRepositoryRead(desktop, '/code/work-journal-ai')
+    const starting = session.start()
+    try {
+      await reading
+      clock.set(new Date('2026-03-09T10:00:01'))
+      if (change === 'disabled') {
+        await turn(settings, false)
+      } else {
+        await settings.updateObserving((observing, now) =>
+          removeRepository(observing, '/code/site/.git', now),
+        )
+      }
+      release()
+      await starting
+
+      expect(await bodiesOn(journal, '2026-03-09')).toEqual([])
+      expect(await driver.select('SELECT source, event_key FROM handled_events', [])).toEqual([])
+    } finally {
+      release()
+      await starting
+      session.stop()
+    }
+  })
+
+  it('observes work authored before a mid-sweep Pause exactly once across two sweeps', async () => {
+    const { journal, desktop, clock, settings, session, driver } = await observeSessionAt(
+      '2026-03-09T08:00:00',
+      {
+        '/code/work-journal-ai': repository('work-journal-ai'),
+        '/code/site': repository('site', [commit('s1', 'Before the pause', '2026-03-09T09:00')]),
+      },
+    )
+    await turn(settings, true)
+    await list(settings, 'work-journal-ai')
+    await list(settings, 'site')
+    clock.set(new Date('2026-03-09T10:00:00'))
+    const { reading, release } = gateRepositoryRead(desktop, '/code/work-journal-ai')
+    const starting = session.start()
+    try {
+      await reading
+      clock.set(new Date('2026-03-09T10:00:01'))
+      await pause(settings, 'until-resumed')
+      release()
+      await starting
+
+      expect(await bodiesOn(journal, '2026-03-09')).toEqual(['Before the pause'])
+      await vi.advanceTimersByTimeAsync(OBSERVE_INTERVAL_MS)
+      await flushSweep()
+      expect(await bodiesOn(journal, '2026-03-09')).toEqual(['Before the pause'])
+      expect(await driver.select('SELECT source, event_key FROM handled_events', [])).toEqual([
+        { source: 'commit', event_key: 's1@/code/site/.git' },
+      ])
+    } finally {
+      release()
+      await starting
+      session.stop()
+    }
+  })
+})
 
 describe('a day of commits', () => {
   it('becomes Observed Notes across two repositories, each on the day it was authored', async () => {
