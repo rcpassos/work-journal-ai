@@ -5,6 +5,7 @@ What changed in each released version, newest first. Every `vX.Y.Z` section here
 ## Unreleased
 
 - Restoring a backup with altered table or index definitions is now refused before it can break journal writes or remove data constraints.
+- Pausing Observing during a commit sweep now keeps work authored during the Pause out of the journal, and disabling Observing or removing a repository takes effect during that sweep.
 - An interrupted restore now keeps the previous journal’s committed Notes recoverable in its rollback.
 - Repeated submissions while a Note or Task is saving now create one record, and a pending save no longer discards a newer draft.
 - A failed backup no longer appears as a successful snapshot or delays the next automatic attempt, and existing backups are preserved.
