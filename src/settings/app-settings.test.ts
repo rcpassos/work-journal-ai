@@ -391,6 +391,53 @@ describe('Observing', () => {
     return { ready, release }
   }
 
+  it('resumes a repository added after Resume began while retaining the earlier Pause history', async () => {
+    const stored = { observing: pauseObserving(running(), 'until-resumed', now - 500) }
+    const captureDesktop = fakeDesktop({ stored })
+    const delay = delayedCompare(captureDesktop)
+    const capture = createAppSettings(captureDesktop, { now: () => new Date(now) })
+    const main = createAppSettings(fakeDesktop({ stored }), { now: () => new Date(now + 60000) })
+    const added = { ...repository, path: '/code/added', repository: '/code/added/.git', identities: [] }
+    const resuming = capture.updateObserving(resumeObserving)
+    await delay.ready
+    await main.updateObserving((current, time) => addRepository(current, added, time))
+    delay.release()
+    await resuming
+    await main.updateObserving((current) => setIdentities(current, added.repository, ['me@work']))
+
+    const saved = (await main.load()).observing
+    expect(pauseState(saved, now + 120000).state).toBe('running')
+    expect(observedAt(saved, repository.repository, now + 120000)).toBe(true)
+    expect(observedAt(saved, added.repository, now + 120000)).toBe(true)
+    expect(observedAt(saved, repository.repository, now - 250)).toBe(false)
+  })
+
+  it('preserves a genuinely later Pause inherited from a remaining repository while Resume retries', async () => {
+    const remaining = { ...repository, path: '/code/remaining', repository: '/code/remaining/.git' }
+    const stored = { observing: pauseObserving(addRepository(running(), remaining, now - 1000), 'until-resumed', now - 500) }
+    const captureDesktop = fakeDesktop({ stored })
+    const delay = delayedCompare(captureDesktop)
+    const capture = createAppSettings(captureDesktop, { now: () => new Date(now) })
+    let mainNow = now + 60000
+    const main = createAppSettings(fakeDesktop({ stored }), { now: () => new Date(mainNow) })
+    const added = { ...repository, path: '/code/added', repository: '/code/added/.git' }
+    const resuming = capture.updateObserving(resumeObserving)
+    await delay.ready
+    await main.updateObserving((current, time) => removeRepository(current, repository.repository, time))
+    mainNow = now + 120000
+    await main.updateObserving((current, time) => pauseObserving(current, 'until-resumed', time))
+    mainNow = now + 180000
+    await main.updateObserving((current, time) => addRepository(current, added, time))
+    delay.release()
+    await resuming
+
+    const saved = (await main.load()).observing
+    expect(pauseState(saved, mainNow + 1).state).toBe('paused')
+    expect(observedAt(saved, remaining.repository, mainNow + 1)).toBe(false)
+    expect(observedAt(saved, added.repository, mainNow + 1)).toBe(false)
+    expect(observedAt(saved, remaining.repository, now + 90000)).toBe(true)
+  })
+
   it.each([1, 60000])('includes a repository in a later Pause when its earlier addition retries (%i ms apart)', async (gap) => {
     const stored = { observing: running() }
     const mainDesktop = fakeDesktop({ stored })

@@ -4,4 +4,6 @@ Main and Capture each own an AppSettings instance, so a per-window queue cannot 
 
 Retries can encounter state produced at a later instant. A repository addition therefore inherits every overlapping Pause after its original addition instant, including a Pause that has already ended; a Pause uses overlapping consent history to include repositories that were added or removed after its original instant. Keeping these temporal rules in the Observing core preserves excluded work without moving the Pause forward to retry time.
 
+Inherited intervals keep the original global Pause start: consent separately bounds the repository's participation. This lets an earlier Resume end that Pause even for a repository added while the Resume waited to save. Only intervals with the same Pause start can replace one another during inheritance, so a genuinely later Pause remains distinct and survives the earlier Resume.
+
 An application ACL gates all custom commands once any application permissions exist. The established Desktop commands retain their previous grants to local app windows through one explicit permission; Observing alone receives the new Main/Capture grant. A real MockRuntime IPC test uses the generated ACL to verify handler access, while a source accounting test keeps the established command grant aligned with registration.

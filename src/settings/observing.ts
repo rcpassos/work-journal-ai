@@ -275,9 +275,13 @@ export function addRepository(
 
   let intervals = observing.pauses[added.repository] ?? []
   for (const pause of Object.values(observing.pauses).flat()) {
-    const from = Math.max(now, pause.from)
-    if (pause.until !== null && pause.until <= from) continue
-    if (intervals.some((held) => held.from <= from && (
+    // Keep the global Pause's start, so an earlier Resume also ends this
+    // inherited interval. Consent already excludes work before the addition.
+    const from = pause.from
+    if (pause.until !== null && pause.until <= Math.max(now, from)) continue
+    // Different starts represent different Pause requests, even when an older
+    // open interval contains a later one. Resume must not erase the later one.
+    if (intervals.some((held) => held.from === from && (
       held.until === null || (pause.until !== null && held.until >= pause.until)
     ))) continue
     intervals = [...intervals, { from, until: pause.until }]
