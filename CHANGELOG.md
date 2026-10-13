@@ -4,11 +4,12 @@ What changed in each released version, newest first. Every `vX.Y.Z` section here
 
 ## Unreleased
 
+- Each repository can observe several selected branches, or all branches when the selection is empty, so development work can arrive before it reaches the default branch.
+- Existing repositories keep observing their default branch until you change the selection; missing selected branches are explained and shared commits are added only once.
 - Author address suggestions follow the observed branches and refresh when their selection changes, so an address used only on develop can be chosen.
 - Repositories with non-UTF-8 branch names continue to be observed, including when all branches are selected.
 
-- Each repository can observe several selected branches, or all branches when the selection is empty, so development work can arrive before it reaches the default branch.
-- Existing repositories keep observing their default branch until you change the selection; missing selected branches are explained and shared commits are added only once.
+## 0.17.1 — 2026-10-13
 
 - A Pause or Resume now survives concurrent Observing changes made in another window.
 - Restoring a backup with altered table or index definitions is now refused before it can break journal writes or remove data constraints.
