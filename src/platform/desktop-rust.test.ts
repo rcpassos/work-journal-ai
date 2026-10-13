@@ -744,6 +744,9 @@ describe('the restore from a backup', () => {
       'the restore hook must be registered before plugin-sql',
     ).toBeLessThan(sqlAt)
     expect(rustSource).toContain('apply_staged_restore')
+    expect(rustSource.slice(restoreAt, sqlAt)).toContain(
+      'apply_restore_before_sql(&config_dir)',
+    )
   })
 
   it('registers the logger in every build, before the staged apply', () => {

@@ -477,23 +477,7 @@ pub fn run() {
                             return Ok(());
                         }
                     };
-                    match backup::apply_staged_restore(
-                        &config_dir,
-                        std::time::SystemTime::now(),
-                    ) {
-                        Ok(backup::ApplyOutcome::Absent) => {}
-                        Ok(backup::ApplyOutcome::Restored { rollback }) => match rollback {
-                            Some(path) => log::info!(
-                                "restored the journal from a staged backup, previous journal kept as {}",
-                                path.display()
-                            ),
-                            None => log::info!("restored the journal from a staged backup"),
-                        },
-                        Err(error) => {
-                            log::error!("the staged restore could not be applied: {error}")
-                        }
-                    }
-                    Ok(())
+                    apply_restore_before_sql(&config_dir)
                 })
                 .build(),
         )
@@ -2821,6 +2805,27 @@ fn build_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
     // buttons go through the mouseUp handler above instead.
     let _ = tray.with_inner_tray_icon(|inner| inner.set_show_menu_on_right_click(false));
 
+    Ok(())
+}
+
+/// Apply before SQL preload can create or open the live journal.
+fn apply_restore_before_sql(config_dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    match backup::apply_staged_restore(config_dir) {
+        Ok(backup::ApplyOutcome::Absent) => {}
+        Ok(backup::ApplyOutcome::Restored { rollback }) => match rollback {
+            Some(path) => log::info!(
+                "restored the journal from a staged backup, previous journal kept as {}",
+                path.display()
+            ),
+            None => log::info!("restored the journal from a staged backup"),
+        },
+        Err(error) => {
+            log::error!("the staged restore could not be applied: {error}");
+            if !backup::live_database_path(config_dir).is_file() {
+                return Err(error.into());
+            }
+        }
+    }
     Ok(())
 }
 
