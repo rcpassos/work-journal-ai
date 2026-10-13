@@ -9,6 +9,7 @@
  */
 
 import type { Desktop, Unlisten } from '@/platform/desktop'
+import { OBSERVING_KEY } from '@/platform/desktop'
 import {
   readSettings,
   writeSetting,
@@ -16,7 +17,7 @@ import {
   type SettingsStore,
 } from './settings'
 import { systemClock, type Clock } from '@/journal/journal'
-import type { Observing } from './observing'
+import { readObserving, type Observing } from './observing'
 import { readTheme, writeTheme, type Theme } from './theme'
 
 /**
@@ -125,11 +126,11 @@ export interface AppSettings {
   /**
    * One change to Observing — a rule from `./observing.ts`, applied to the
    * file as it stands and at the instant it is made, since consent is kept
-   * as instants. Changes are applied one after another, never side by side:
-   * two applied to the same read would each write the list without the
-   * other's repository, and a consent interval lost that way is work the
-   * user said yes to that never arrives. Resolves with what the file came to
-   * hold, and announces it, because the window that sweeps is not this one.
+   * as instants. The transform must be pure: a concurrent change in another
+   * window causes it to be reapplied to the current stored value, using the
+   * same instant. Comparison and persistence happen together in Rust, so a
+   * Pause or consent interval cannot be overwritten by a stale read. Resolves
+   * with the value that landed and announces only after persistence succeeds.
    */
   updateObserving(
     change: (observing: Observing, now: number) => Observing,
@@ -372,11 +373,20 @@ export function createAppSettings(
     updateObserving(change) {
       const applying = observingChanges.then(async () => {
         const opened = await store()
-        const { observing } = await readSettings(opened)
-        const next = change(observing, clock.now().getTime())
-        await writeSetting(opened, 'observing', next)
-        emitChange(desktop.announceObservingChanged())
-        return next
+        // Compare the raw read, not its normalized form: older or malformed
+        // settings can be repaired, and an absent key can be written first.
+        let expected: unknown = (await opened.get<unknown>(OBSERVING_KEY)) ?? null
+        const now = clock.now().getTime()
+        for (let attempt = 0; attempt < 8; attempt += 1) {
+          const next = change(readObserving(expected), now)
+          const result = await desktop.compareAndSetObserving(expected, next)
+          if (result.written) {
+            emitChange(desktop.announceObservingChanged())
+            return next
+          }
+          expected = result.current
+        }
+        throw new Error('Observing changed in another window; please try again.')
       })
       observingChanges = applying.catch(() => {})
       return applying

@@ -22,6 +22,7 @@ import {
   HISTORY_SECTION,
   MAIN_WINDOW,
   ONBOARDING_KEY,
+  OBSERVING_KEY,
   OBSERVING_PAUSE_EVENT,
   OBSERVING_RESUME_EVENT,
   PRACTICE_ENDED_EVENT,
@@ -96,6 +97,7 @@ const shared: Record<string, string> = {
   SETTINGS_FILE,
   THEME_KEY,
   ONBOARDING_KEY,
+  OBSERVING_KEY,
   PRACTICE_ENDED_EVENT,
   DATABASE_URL,
 }
@@ -549,7 +551,10 @@ describe('the arguments commands are invoked with', () => {
     // Read to the closing paren of the parameter list and no further: a
     // command with no return type would otherwise be read on into the next
     // declaration and answer for its parameters too.
-    const signature = rustSource.match(
+    const source = command === 'compare_and_set_observing'
+      ? read('src-tauri/src/observing_settings.rs')
+      : rustSource
+    const signature = source.match(
       new RegExp(`(?:async )?fn ${command}\\b([^)]*)\\)`),
     )?.[1]
     if (signature === undefined) {

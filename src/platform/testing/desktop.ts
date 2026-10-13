@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from 'node:util'
 import type { CalendarEvent, SqlDriver, TaskAlert } from '../../journal/journal'
 import type { HotkeyStatuses } from '../../settings/hotkey'
 import type { SettingsStore } from '../../settings/settings'
@@ -418,6 +419,17 @@ export function fakeDesktop({
           desktop.stored[key] = value
         },
       })),
+
+    // No await between comparison and replacement: this is one shared-store
+    // operation, including when different fake Desktops share `stored`.
+    compareAndSetObserving: async (expected, next) => {
+      const current = desktop.stored.observing ?? null
+      if (!isDeepStrictEqual(current, expected)) {
+        return { written: false, current: structuredClone(current) }
+      }
+      desktop.stored.observing = structuredClone(next)
+      return { written: true }
+    },
 
     dismissCapture: async () => {
       desktop.capturesDismissed += 1

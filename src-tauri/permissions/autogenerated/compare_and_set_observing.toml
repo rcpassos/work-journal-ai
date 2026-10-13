@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-compare-and-set-observing"
+description = "Enables the compare_and_set_observing command without any pre-configured scope."
+commands.allow = ["compare_and_set_observing"]
+
+[[permission]]
+identifier = "deny-compare-and-set-observing"
+description = "Denies the compare_and_set_observing command without any pre-configured scope."
+commands.deny = ["compare_and_set_observing"]

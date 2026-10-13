@@ -11,6 +11,7 @@
 import type { CalendarEvent, SqlDriver, TaskAlert } from '@/journal/journal'
 import type { HotkeyAction, HotkeyStatuses } from '@/settings/hotkey'
 import type { SettingsStore } from '@/settings/settings'
+import type { Observing } from '@/settings/observing'
 import type { Theme } from '@/settings/theme'
 
 /** Stops a subscription. Everything subscribed to here can be unsubscribed. */
@@ -79,6 +80,9 @@ export const SECTION_REQUESTED_EVENT = 'main://section'
  * `src/platform/desktop-rust.test.ts` checks.
  */
 export const SETTINGS_FILE = 'settings.json'
+
+/** The setting Rust replaces atomically for all windows. */
+export const OBSERVING_KEY = 'observing'
 
 /**
  * Must match `THEME_KEY` in `src-tauri/src/lib.rs`, as
@@ -704,6 +708,14 @@ export interface Desktop {
   openJournalDatabase(): Promise<SqlDriver>
   /** The settings file, with every write flushed rather than debounced. */
   openSettingsStore(): Promise<SettingsStore>
+  /**
+   * Writes Observing only if its raw stored value still equals `expected`.
+   * Comparison and persistence are serialized across all webviews. A missing
+   * value is passed as null; a conflict answers the raw value to retry against.
+   */
+  compareAndSetObserving(expected: unknown, next: Observing): Promise<
+    { written: true } | { written: false; current: unknown }
+  >
 
   /**
    * Ends a Capture. Hiding the window is the Rust side's job: it also has to

@@ -10,7 +10,7 @@
  * docs/adr/0026-the-api-key-lives-in-the-keychain-and-rust-makes-the-call.md.
  */
 
-import { START_AT_LOGIN_KEY } from '@/platform/desktop'
+import { OBSERVING_KEY, START_AT_LOGIN_KEY } from '@/platform/desktop'
 import { NO_OBSERVING, readObserving, type Observing } from './observing'
 
 /** The whole of the app's settings storage: string keys to JSON values. */
@@ -138,11 +138,6 @@ export const DEFAULT_SETTINGS: Settings = {
  */
 const IMPORT_MEETINGS_KEY = 'importMeetings'
 const IMPORT_CALENDARS_KEY = 'importCalendars'
-/**
- * Observing, whole: the wish, the list and the consent under one key, so a
- * change to any of them is one write and the three can never disagree.
- */
-const OBSERVING_KEY = 'observing'
 /**
  * The two halves of Model Access that are not secrets. The third — the API Key
  * — is never a key in this store; it is in the Keychain, and `Settings` has no

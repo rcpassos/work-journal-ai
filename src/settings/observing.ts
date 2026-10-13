@@ -172,8 +172,20 @@ export function pauseObserving(
         ? now + msUntilNextJournalDay(new Date(now))
         : null
 
+  // A later addition and removal can already be stored when this earlier
+  // Pause retries. Retained consent overlapping the Pause identifies their
+  // excluded work, even if the repository joined after `now` and is gone now.
+  const repositories = new Set([
+    ...observing.repositories.map(({ repository }) => repository),
+    ...Object.entries(observing.consent)
+      .filter(([, intervals]) => intervals.some((interval) =>
+        (interval.until === null || interval.until > now) &&
+        (until === null || interval.from < until),
+      ))
+      .map(([repository]) => repository),
+  ])
   let pauses = observing.pauses
-  for (const { repository } of observing.repositories) {
+  for (const repository of repositories) {
     const intervals = pauses[repository] ?? []
     pauses = {
       ...pauses,
@@ -248,9 +260,9 @@ export function turnObserving(
 /**
  * A repository added to the list — consented from now if Observing is on, and
  * from the moment it is turned on otherwise. A repository whose identity is
- * already listed, such as a second worktree of it, adds nothing. A pause in
- * force reaches it too: the pause is of Observing, so work it does from the
- * moment it joins is refused like every other repository's.
+ * already listed, such as a second worktree of it, adds nothing. Every pause
+ * overlapping the time after it joins reaches it too. On a conflict retry,
+ * the stored pauses can start later than this addition's original instant.
  */
 export function addRepository(
   observing: Observing,
@@ -261,17 +273,22 @@ export function addRepository(
     return observing
   }
 
-  const active = activePause(observing, now)
-  const pauses =
-    active !== null && !covers(observing.pauses[added.repository], now)
-      ? {
-          ...observing.pauses,
-          [added.repository]: [
-            ...(observing.pauses[added.repository] ?? []),
-            { from: now, until: active.until },
-          ],
-        }
-      : observing.pauses
+  let intervals = observing.pauses[added.repository] ?? []
+  for (const pause of Object.values(observing.pauses).flat()) {
+    // Keep the global Pause's start, so an earlier Resume also ends this
+    // inherited interval. Consent already excludes work before the addition.
+    const from = pause.from
+    if (pause.until !== null && pause.until <= Math.max(now, from)) continue
+    // Different starts represent different Pause requests, even when an older
+    // open interval contains a later one. Resume must not erase the later one.
+    if (intervals.some((held) => held.from === from && (
+      held.until === null || (pause.until !== null && held.until >= pause.until)
+    ))) continue
+    intervals = [...intervals, { from, until: pause.until }]
+  }
+  const pauses = intervals.length === 0
+    ? observing.pauses
+    : { ...observing.pauses, [added.repository]: intervals }
 
   return prune(
     {
