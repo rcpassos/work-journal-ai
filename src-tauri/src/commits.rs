@@ -13,10 +13,12 @@
 //! config touched; the tests below snapshot every fixture before and after to
 //! hold that.
 //!
-//! **Which refs.** Explicit selections are exact refs from `refs/heads/` or
+//! **Which refs.** Explicit selections are branch identities from `refs/heads/` or
 //! `refs/remotes/`. An empty selection walks all those branch tips together,
 //! so shared commits are read once. Symbolic remote HEAD aliases and tags are
 //! not branch choices. Missing selected refs never widen the selection.
+//! Invalid UTF-8 name bytes are escaped without collisions; traversal uses
+//! the resolved object IDs, never the displayed names.
 //!
 //! Older settings without a selection retain the default-branch policy:
 //! each remote's HEAD, main and master, origin first; then local main/master
@@ -157,8 +159,14 @@ pub fn branches(path: &Path) -> BranchesRead {
     let answer = (|| {
         Git::SYSTEM.repository(path)?;
         Ok::<_, RepositoryUnreadable>((
-            Git::SYSTEM.branch_refs(path)?,
-            Git::SYSTEM.default_branch(path)?,
+            Git::SYSTEM
+                .branch_refs(path)?
+                .into_iter()
+                .map(|branch| branch.reference)
+                .collect(),
+            Git::SYSTEM
+                .default_branch(path)?
+                .map(|branch| branch.reference),
         ))
     })();
     match answer {
@@ -176,9 +184,39 @@ pub fn branches(path: &Path) -> BranchesRead {
 const SUGGESTION_LOOKBACK: f64 = 90.0 * 24.0 * 60.0 * 60.0 * 1000.0;
 
 /// The addresses that might be the user in this repository: the configured
-/// one, and whoever authored first-parent commits in the last ninety days.
-pub fn identities(path: &Path) -> IdentitiesRead {
-    Git::SYSTEM.identities(path, crate::now_ms() - SUGGESTION_LOOKBACK)
+/// one, and whoever authored first-parent commits in the selected branches
+/// in the last ninety days.
+pub fn identities(path: &Path, branches: Option<&[String]>) -> IdentitiesRead {
+    Git::SYSTEM.identities(path, crate::now_ms() - SUGGESTION_LOOKBACK, branches)
+}
+
+/// Git names are bytes, while settings are JSON strings. Valid UTF-8 names
+/// keep their existing identity. Invalid bytes use \xNN escapes: backslashes
+/// cannot occur in Git ref names, so these keys cannot collide with real names.
+struct BranchRef {
+    reference: String,
+    tip: String,
+}
+
+fn ref_identity(mut bytes: &[u8]) -> String {
+    let mut name = String::new();
+    loop {
+        match std::str::from_utf8(bytes) {
+            Ok(valid) => {
+                name.push_str(valid);
+                return name;
+            }
+            Err(error) => {
+                let valid = error.valid_up_to();
+                name.push_str(std::str::from_utf8(&bytes[..valid]).unwrap());
+                let end = valid + error.error_len().unwrap_or(bytes.len() - valid);
+                for byte in &bytes[valid..end] {
+                    name.push_str(&format!("\\x{byte:02x}"));
+                }
+                bytes = &bytes[end..];
+            }
+        }
+    }
 }
 
 /// The `git` every call goes through. A seam only so the tests can name a
@@ -203,8 +241,8 @@ impl Git {
         }
     }
 
-    fn identities(&self, path: &Path, since: f64) -> IdentitiesRead {
-        match self.candidates(path, since) {
+    fn identities(&self, path: &Path, since: f64, branches: Option<&[String]>) -> IdentitiesRead {
+        match self.candidates(path, since, branches) {
             Ok((repository, identities, reason)) => IdentitiesRead::Read {
                 repository,
                 identities,
@@ -222,16 +260,7 @@ impl Git {
         branches: Option<&[String]>,
     ) -> Result<Vec<Commit>, RepositoryUnreadable> {
         let repository = self.repository(path)?;
-        let tips = match branches {
-            None => vec![self.tip(path)?.ok_or(RepositoryUnreadable::NoHead)?],
-            Some(selected) => {
-                let available = self.branch_refs(path)?;
-                available
-                    .into_iter()
-                    .filter(|reference| selected.is_empty() || selected.contains(reference))
-                    .collect()
-            }
-        };
+        let tips = self.tips(path, branches)?;
         if tips.is_empty() {
             return Err(RepositoryUnreadable::NoHead);
         }
@@ -286,6 +315,7 @@ impl Git {
         &self,
         path: &Path,
         since: f64,
+        branches: Option<&[String]>,
     ) -> Result<(String, Vec<String>, Option<RepositoryUnreadable>), RepositoryUnreadable> {
         let repository = self.repository(path)?;
 
@@ -299,21 +329,19 @@ impl Git {
         // A repository with nothing committed yet still has a configured
         // address worth offering — and says so beside them, as the reason the
         // commit read gives for there being nothing to read.
-        let tip = self.tip(path)?;
-        if let Some(tip) = tip.as_deref() {
-            let log = self.succeed(
-                path,
-                &[
-                    "log",
-                    "--first-parent",
-                    "--no-mailmap",
-                    "--no-show-signature",
-                    "-z",
-                    "--format=%at%x00%ae",
-                    tip,
-                    "--",
-                ],
-            )?;
+        let tips = self.tips(path, branches)?;
+        if !tips.is_empty() {
+            let mut args = vec![
+                "log",
+                "--first-parent",
+                "--no-mailmap",
+                "--no-show-signature",
+                "-z",
+                "--format=%at%x00%ae",
+            ];
+            args.extend(tips.iter().map(String::as_str));
+            args.push("--");
+            let log = self.succeed(path, &args)?;
             let mut authors = Vec::new();
             for record in records(&log, 2) {
                 let authored_at =
@@ -335,7 +363,7 @@ impl Git {
         Ok((
             repository,
             identities,
-            tip.is_none().then_some(RepositoryUnreadable::NoHead),
+            tips.is_empty().then_some(RepositoryUnreadable::NoHead),
         ))
     }
 
@@ -379,31 +407,56 @@ impl Git {
         Ok(common.display().to_string())
     }
 
-    /// Exact refs keep local and remote branches unambiguous. Symbolic remote
-    /// HEADs are aliases, not another branch; tags and non-commit refs are omitted.
-    fn branch_refs(&self, path: &Path) -> Result<Vec<String>, RepositoryUnreadable> {
-        let refs = self.succeed(
+    /// Exact branch identities and ASCII object IDs from one raw-byte snapshot.
+    /// Ref names are never round-tripped through a lossy string into `git log`.
+    fn branch_refs(&self, path: &Path) -> Result<Vec<BranchRef>, RepositoryUnreadable> {
+        let refs = self.succeed_bytes(
             path,
             &[
                 "for-each-ref",
-                "--format=%(refname)%09%(objecttype)%09%(symref)",
+                "--format=%(refname)%09%(objectname)%09%(objecttype)%09%(symref)",
                 "refs/heads/",
                 "refs/remotes/",
             ],
         )?;
-        Ok(refs
-            .lines()
+        refs.split(|byte| *byte == b'\n')
+            .filter(|line| !line.is_empty())
             .filter_map(|line| {
-                let fields: Vec<_> = line.split('\t').collect();
-                (fields.len() == 3 && fields[1] == "commit" && fields[2].is_empty())
-                    .then(|| fields[0].to_string())
+                let fields: Vec<_> = line.split(|byte| *byte == b'\t').collect();
+                if fields.len() != 4 || fields[2] != b"commit" || !fields[3].is_empty() {
+                    return None;
+                }
+                Some(
+                    std::str::from_utf8(fields[1])
+                        .map(|tip| BranchRef {
+                            reference: ref_identity(fields[0]),
+                            tip: tip.to_string(),
+                        })
+                        .map_err(|_| RepositoryUnreadable::GitUnavailable),
+                )
             })
-            .collect())
+            .collect()
+    }
+
+    fn tips(
+        &self,
+        path: &Path,
+        branches: Option<&[String]>,
+    ) -> Result<Vec<String>, RepositoryUnreadable> {
+        match branches {
+            None => Ok(self.tip(path)?.into_iter().collect()),
+            Some(selected) => Ok(self
+                .branch_refs(path)?
+                .into_iter()
+                .filter(|branch| selected.is_empty() || selected.contains(&branch.reference))
+                .map(|branch| branch.tip)
+                .collect()),
+        }
     }
 
     /// The legacy default branch ref: remotes first, origin preferred, then
     /// local main/master and HEAD. Symbolic aliases resolve to their named ref.
-    fn default_branch(&self, path: &Path) -> Result<Option<String>, RepositoryUnreadable> {
+    fn default_branch(&self, path: &Path) -> Result<Option<BranchRef>, RepositoryUnreadable> {
         let mut remotes: Vec<String> = self
             .succeed(path, &["remote"])?
             .lines()
@@ -426,10 +479,18 @@ impl Git {
             let output = self.run(path, &["rev-parse", "--verify", "--quiet", &target])?;
             if output.status.success() {
                 let symbolic = self.run(path, &["symbolic-ref", "--quiet", &candidate])?;
-                return Ok(Some(if symbolic.status.success() {
-                    String::from_utf8_lossy(&symbolic.stdout).trim().to_string()
-                } else {
-                    candidate
+                return Ok(Some(BranchRef {
+                    reference: if symbolic.status.success() {
+                        ref_identity(
+                            symbolic
+                                .stdout
+                                .strip_suffix(b"\n")
+                                .unwrap_or(&symbolic.stdout),
+                        )
+                    } else {
+                        candidate
+                    },
+                    tip: String::from_utf8_lossy(&output.stdout).trim().to_string(),
                 }));
             }
         }
@@ -437,24 +498,22 @@ impl Git {
     }
 
     fn tip(&self, path: &Path) -> Result<Option<String>, RepositoryUnreadable> {
-        let Some(reference) = self.default_branch(path)? else {
-            return Ok(None);
-        };
-        self.succeed(
-            path,
-            &["rev-parse", "--verify", &format!("{reference}^{{commit}}")],
-        )
-        .map(|hash| Some(hash.trim().to_string()))
+        Ok(self.default_branch(path)?.map(|branch| branch.tip))
     }
 
     /// Runs one read-only `git` call in `path`, answering with what it said
     /// only if it succeeded.
     fn succeed(&self, path: &Path, args: &[&str]) -> Result<String, RepositoryUnreadable> {
+        self.succeed_bytes(path, args)
+            .map(|output| String::from_utf8_lossy(&output).into_owned())
+    }
+
+    fn succeed_bytes(&self, path: &Path, args: &[&str]) -> Result<Vec<u8>, RepositoryUnreadable> {
         let output = self.run(path, args)?;
         if !output.status.success() {
             return Err(RepositoryUnreadable::GitUnavailable);
         }
-        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+        Ok(output.stdout)
     }
 
     /// Runs one `git` call in `path`. Never one that writes or reaches a
@@ -711,8 +770,111 @@ mod tests {
         );
     }
 
+    #[test]
+    fn non_utf8_branch_refs_are_distinct_and_walked_by_commit_hash() {
+        let root = TempDir::new("non-utf8-branches");
+        let source = root.path.join("source");
+        let cloned = root.path.join("cloned");
+        init(&source);
+        commit(&source, ME, 1, "Main work");
+        git(&source, &["switch", "--quiet", "-c", "develop"]);
+        let develop = commit(&source, ME, 2, "Branch work");
+        git(&source, &["switch", "--quiet", "main"]);
+        git(&source, &["pack-refs", "--all"]);
+        // Packed refs permit byte-valued names even on a filesystem that
+        // cannot represent them as loose-ref filenames. Clone normally.
+        let packed = source.join(".git/packed-refs");
+        let mut bytes = std::fs::read(&packed).unwrap();
+        bytes.extend_from_slice(format!("{develop} refs/heads/topic-").as_bytes());
+        bytes.extend_from_slice(b"\xff\n");
+        std::fs::write(packed, bytes).unwrap();
+        git(&root.path, &["clone", "--quiet", "source", "cloned"]);
+
+        assert_eq!(
+            subjects(&read(&cloned, &[ME.to_string()], at(0), Some(&[]))),
+            ["Branch work", "Main work"]
+        );
+        // A genuine replacement-character name must not collide with an escaped byte.
+        git(
+            &cloned,
+            &["update-ref", "refs/remotes/origin/topic-�", "HEAD"],
+        );
+        let before = snapshot(&cloned);
+        let escaped = r"refs/remotes/origin/topic-\xff".to_string();
+        match branches(&cloned) {
+            BranchesRead::Read { branches, .. } => {
+                assert!(branches.contains(&escaped));
+                assert!(branches.contains(&"refs/remotes/origin/topic-�".to_string()));
+            }
+            answer => panic!("unexpected: {answer:?}"),
+        }
+        assert_eq!(
+            subjects(&read(&cloned, &[ME.to_string()], at(0), Some(&[escaped]))),
+            ["Branch work", "Main work"]
+        );
+        assert_eq!(snapshot(&cloned), before);
+        // The legacy symbolic default can point to that same byte-valued ref.
+        std::fs::write(
+            cloned.join(".git/refs/remotes/origin/HEAD"),
+            b"ref: refs/remotes/origin/topic-\xff\n",
+        )
+        .unwrap();
+        assert_eq!(
+            subjects(&read_by(&cloned, &[ME], at(0))),
+            ["Branch work", "Main work"]
+        );
+    }
+
+    #[test]
+    fn selected_branch_authors_are_offered_without_automatically_consenting() {
+        let root = TempDir::new("selected-authors");
+        init(&root.path);
+        git(&root.path, &["config", "user.email", ME]);
+        commit(&root.path, ME, 1, "Main work");
+        git(&root.path, &["switch", "--quiet", "-c", "develop"]);
+        commit(
+            &root.path,
+            "previous@example.test",
+            2,
+            "Previous address work",
+        );
+        git(&root.path, &["switch", "--quiet", "main"]);
+        git(&root.path, &["switch", "--quiet", "-c", "unselected"]);
+        commit(&root.path, "other@example.test", 3, "Other work");
+        let before = snapshot(&root.path);
+        let offered = |selection: Option<&[String]>| match Git::SYSTEM.identities(
+            &root.path,
+            at(0),
+            selection,
+        ) {
+            IdentitiesRead::Read { identities, .. } => identities,
+            answer => panic!("unexpected: {answer:?}"),
+        };
+        assert_eq!(offered(None), [ME]);
+        let develop = vec!["refs/heads/develop".to_string()];
+        assert_eq!(offered(Some(&develop)), [ME, "previous@example.test"]);
+        assert_eq!(
+            offered(Some(&[])),
+            [ME, "other@example.test", "previous@example.test"]
+        );
+        assert_eq!(
+            subjects(&read(&root.path, &[ME.to_string()], at(0), Some(&develop))),
+            ["Main work"]
+        );
+        assert_eq!(
+            subjects(&read(
+                &root.path,
+                &["previous@example.test".to_string()],
+                at(0),
+                Some(&develop)
+            )),
+            ["Previous address work"]
+        );
+        assert_eq!(snapshot(&root.path), before);
+    }
+
     fn identities_since(path: &Path, since: f64) -> IdentitiesRead {
-        Git::SYSTEM.identities(path, since)
+        Git::SYSTEM.identities(path, since, None)
     }
 
     fn subjects(answer: &CommitsRead) -> Vec<&str> {
@@ -1375,7 +1537,7 @@ mod tests {
             }
         ));
         assert!(matches!(
-            absent.identities(&root.path, at(0)),
+            absent.identities(&root.path, at(0), None),
             IdentitiesRead::Unreadable {
                 reason: RepositoryUnreadable::GitUnavailable
             }

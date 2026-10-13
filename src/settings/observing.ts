@@ -48,7 +48,7 @@ export interface ObservedRepository {
   identities: string[]
   /** Subject prefixes whose commits become nothing. Empty by default. */
   ignoredPrefixes: string[]
-  /** Exact local/remote refs. Empty is all; absent preserves legacy default-branch observation. */
+  /** Local/remote branch identities; invalid name bytes are escaped. Empty is all; absent preserves the legacy default. */
   branches?: string[]
 }
 

@@ -93,3 +93,15 @@ describe('observed branch commands', () => {
     expect(invoke).toHaveBeenLastCalledWith('repository_branches', { path: '/code/chronos' })
   })
 })
+
+
+it('passes the applicable branch histories through identity-discovery IPC', async () => {
+  invoke.mockReset()
+  invoke.mockResolvedValue({ state: 'read', repository: '/code/chronos/.git', identities: ['previous@example.test'], reason: null })
+  const desktop = createTauriDesktop()
+  for (const branches of [['refs/heads/develop'], [], undefined]) {
+    const result = await desktop.repositoryIdentities('/code/chronos', branches)
+    expect(invoke).toHaveBeenLastCalledWith('repository_identities', { path: '/code/chronos', branches })
+    expect(result).toMatchObject({ identities: ['previous@example.test'] })
+  }
+})

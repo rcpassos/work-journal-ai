@@ -949,7 +949,7 @@ describe('the commit reader contract', () => {
       /#\[tauri::command\(async\)\]\s*fn repository_commits\(\s*path: String,\s*identities: Vec<String>,\s*since: f64,\s*branches: Option<Vec<String>>,?\s*\)/,
     )
     expect(rustSource).toMatch(
-      /#\[tauri::command\(async\)\]\s*fn repository_identities\(path: String\)/,
+      /#\[tauri::command\(async\)\]\s*fn repository_identities\(path: String, branches: Option<Vec<String>>\)/,
     )
     expect(handler).toContain('repository_commits')
     expect(handler).toContain('repository_identities')
@@ -959,7 +959,7 @@ describe('the commit reader contract', () => {
       "invoke<CommitsRead>('repository_commits', { path, identities, since, branches })",
     )
     expect(tauriSource).toContain(
-      "invoke<IdentitiesRead>('repository_identities', { path })",
+      "invoke<IdentitiesRead>('repository_identities', { path, branches })",
     )
   })
 })

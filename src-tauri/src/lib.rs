@@ -2039,10 +2039,10 @@ fn repository_branches(path: String) -> commits::BranchesRead {
 
 /// Who might be the user in one repository, for Settings to offer as
 /// suggestions: the configured address and the last ninety days' first-parent
-/// authors. None of them counts until the user ticks it.
+/// authors from the applicable branch histories. None of them counts until the user ticks it.
 #[tauri::command(async)]
-fn repository_identities(path: String) -> commits::IdentitiesRead {
-    commits::identities(Path::new(&path))
+fn repository_identities(path: String, branches: Option<Vec<String>>) -> commits::IdentitiesRead {
+    commits::identities(Path::new(&path), branches.as_deref())
 }
 
 /// What the OS allows the app to deliver as Task Alerts. Asked rather than

@@ -929,10 +929,11 @@ export interface Desktop {
   /**
    * The addresses that might be the user in the repository at `path`, for
    * Settings to offer: `git config user.email`, then the last ninety days'
-   * first-parent authors, most recent first. Suggestions only — none of them
+   * first-parent authors from the selected branches (empty means all, absent
+   * keeps the legacy default), most recent first. Suggestions only — none of them
    * counts until the user ticks it.
    */
-  repositoryIdentities(path: string): Promise<IdentitiesRead>
+  repositoryIdentities(path: string, branches?: string[]): Promise<IdentitiesRead>
   /** Read branch refs from this machine; never fetch or alter a repository. */
   repositoryBranches(path: string): Promise<BranchesRead>
   /**

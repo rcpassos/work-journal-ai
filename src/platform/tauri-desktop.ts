@@ -262,8 +262,8 @@ export function createTauriDesktop(): Desktop {
     repositoryCommits: (path, identities, since, branches) =>
       invoke<CommitsRead>('repository_commits', { path, identities, since, branches }),
     repositoryBranches: (path) => invoke<BranchesRead>('repository_branches', { path }),
-    repositoryIdentities: (path) =>
-      invoke<IdentitiesRead>('repository_identities', { path }),
+    repositoryIdentities: (path, branches) =>
+      invoke<IdentitiesRead>('repository_identities', { path, branches }),
 
     // Opened on this side, like the restore picker: a cancelled dialog is a
     // frontend outcome rather than an error.

@@ -56,6 +56,14 @@ export interface FakeRepository {
   defaultBranch?: string
 }
 
+/** The selected first-parent histories; null means no selected branch resolves. */
+function selectedHistory(found: FakeRepository, branches: string[] | undefined): string[] | null {
+  const histories = found.branches ?? { 'refs/heads/main': found.commits.map(({ hash }) => hash) }
+  const selected = branches ?? [found.defaultBranch ?? 'refs/heads/main']
+  const refs = Object.keys(histories).filter((ref) => selected.length === 0 || selected.includes(ref))
+  return refs.length === 0 ? null : refs.flatMap((ref) => histories[ref])
+}
+
 /**
  * Why a path cannot be read at all, as the fake answers it. `no-head` is not
  * one of these — the real reader cannot fail an identities read with it,
@@ -591,11 +599,9 @@ export function fakeDesktop({
 
       // Matched on the whole address regardless of case, as the reader does.
       const named = new Set(identities.map((identity) => identity.toLowerCase()))
-      const histories = found.branches ?? { 'refs/heads/main': found.commits.map(({ hash }) => hash) }
-      const selected = branches ?? [found.defaultBranch ?? 'refs/heads/main']
-      const refs = Object.keys(histories).filter((ref) => selected.length === 0 || selected.includes(ref))
-      if (refs.length === 0) return { state: 'unreadable', reason: 'no-head' }
-      const hashes = new Set(refs.flatMap((ref) => histories[ref]))
+      const history = selectedHistory(found, branches)
+      if (history === null) return { state: 'unreadable', reason: 'no-head' }
+      const hashes = new Set(history)
       return {
         state: 'read',
         commits: found.commits
@@ -620,17 +626,19 @@ export function fakeDesktop({
         defaultBranch: found.noHead ? null : (found.defaultBranch ?? 'refs/heads/main'),
       }
     },
-    repositoryIdentities: async (path): Promise<IdentitiesRead> => {
+    repositoryIdentities: async (path, branches): Promise<IdentitiesRead> => {
       const found = desktop.repositories[path] ?? 'missing'
       if (typeof found === 'string') return { state: 'unreadable', reason: found }
 
       const since = Date.now() - SUGGESTION_LOOKBACK
+      const history = selectedHistory(found, branches)
+      const hashes = new Set(found.noHead ? [] : history ?? [])
       const addresses = [
         ...(found.configuredEmail ? [found.configuredEmail] : []),
         // Most recent by author date, as the reader sorts them: a rebase
         // leaves walk order and author order apart.
         ...found.commits
-          .filter(({ authoredAt }) => authoredAt >= since)
+          .filter(({ hash, authoredAt }) => hashes.has(hash) && authoredAt >= since)
           .toSorted((a, b) => b.authoredAt - a.authoredAt)
           .map(({ author }) => author),
       ]
@@ -646,7 +654,7 @@ export function fakeDesktop({
         identities: [...identities.values()],
         // Beside the suggestions, as the reader answers: a repository with
         // nothing resolvable is still worth asking who the user is.
-        reason: found.noHead ? 'no-head' : null,
+        reason: found.noHead || history === null ? 'no-head' : null,
       }
     },
 

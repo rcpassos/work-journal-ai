@@ -180,7 +180,7 @@ export default function ObservingSettings({
       const path = await desktop.chooseRepositoryFolder()
       if (path === null) return
 
-      const read = await desktop.repositoryIdentities(path)
+      const read = await desktop.repositoryIdentities(path, [])
       if (read.state === 'unreadable') {
         says.failure(`Could not add that folder: ${describeUnreadable(read.reason)}`, 'observing-repositories')
         return
@@ -539,7 +539,7 @@ function RepositoryEntry({
     let stop: (() => void) | null = null
     async function readIdentities(): Promise<void> {
       const mine = (reads.current += 1)
-      const read = await desktop.repositoryIdentities(listed.path)
+      const read = await desktop.repositoryIdentities(listed.path, listed.branches)
       if (!listening || mine !== reads.current) return
       if (read.state === 'read') setSuggested(read.identities)
       // Both answers say why nothing can be read from this repository, when
@@ -563,7 +563,7 @@ function RepositoryEntry({
       listening = false
       stop?.()
     }
-  }, [desktop, listed.path, onScreen])
+  }, [desktop, listed.path, listed.branches, onScreen])
 
   // A sweep lands while this is open, and "is this on?" is exactly the
   // question the line answers — so it is read again when the journal changes.
@@ -942,7 +942,7 @@ function describeUnreadable(reason: RepositoryUnreadable): string {
     case 'not-a-repository':
       return 'That folder is not a git repository.'
     case 'no-head':
-      return 'The default branch of that repository cannot be resolved.'
+      return 'No commit can be resolved on the observed branches.'
     case 'denied':
       return 'macOS is not letting Work Journal read that folder.'
     case 'git-unavailable':
