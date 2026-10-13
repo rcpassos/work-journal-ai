@@ -125,13 +125,13 @@ export function createObserveSession({
     sweeping = true
 
     try {
-      const { observing } = await settings.load()
-      if (!observing.enabled) return
+      const { observing: initial } = await settings.load()
+      if (!initial.enabled) return
 
       const since = clock.now().getTime() - OBSERVE_LOOKBACK_MS
       let observed = 0
       let moved = false
-      for (const listed of observing.repositories) {
+      for (const listed of initial.repositories) {
         try {
           // Every listed repository is read, identities or not: what it reads
           // as — gone, not a repository, nothing on its branches yet — moves
@@ -147,6 +147,15 @@ export function createObserveSession({
           readAs[listed.path] = reads
           if (read.state !== 'read') continue
 
+          // A Pause covering a commit was saved before that commit existed.
+          // Reading settings after git therefore sees it, even when it was
+          // saved while an earlier repository was being read.
+          const { observing } = await settings.load()
+          const current = observing.repositories.find(
+            ({ repository }) => repository === listed.repository,
+          )
+          if (!observing.enabled || !current) continue
+
           const core = await journal
           // What this repository's Notes arrive filed under. Read here and
           // never written back: a Note the user has refiled by hand is
@@ -160,7 +169,7 @@ export function createObserveSession({
           // way. See `SELECT_LAST_COMMIT_NOTE`.
           const events = commitsToObserve({
             observing,
-            listed,
+            listed: current,
             commits: read.commits,
             project,
           })
