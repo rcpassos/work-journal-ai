@@ -178,6 +178,9 @@ export function createTauriDesktop(): Desktop {
       }
     },
 
+    compareAndSetObserving: (expected, next) =>
+      invoke('compare_and_set_observing', { expected, next }),
+
     dismissCapture: () => invoke('dismiss_capture'),
     beginPracticeCapture: () => invoke('start_practice_capture'),
     dismissPracticeCapture: (ended) =>

@@ -13,6 +13,18 @@ vi.mock('@tauri-apps/plugin-sql', () => ({ default: { load: loadDatabase } }))
 
 import { createTauriDesktop } from './tauri-desktop'
 import { TRANSACTION_GUARD_MISS, TransactionGuardMiss } from '@/journal/journal'
+import { NO_OBSERVING } from '@/settings/observing'
+
+describe('the Observing compare-and-set command', () => {
+  it('sends the raw expected value and returns a conflict unchanged', async () => {
+    const expected = { enabled: true, repositories: 'old format' }
+    const conflict = { written: false, current: { ...NO_OBSERVING, enabled: true } }
+    invoke.mockResolvedValueOnce(conflict)
+    const result = await createTauriDesktop().compareAndSetObserving(expected, NO_OBSERVING)
+    expect(invoke).toHaveBeenLastCalledWith('compare_and_set_observing', { expected, next: NO_OBSERVING })
+    expect(result).toEqual(conflict)
+  })
+})
 
 describe('the journal transaction driver', () => {
   beforeEach(() => {

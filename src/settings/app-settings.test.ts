@@ -3,7 +3,10 @@ import { START_AT_LOGIN_KEY } from '../platform/desktop'
 import { fakeDesktop } from '../platform/testing/desktop'
 import { DEFAULT_WORK_SUMMARY_PROMPT } from './settings'
 import { createAppSettings, type ModelAccessChange } from './app-settings'
-import { addRepository, turnObserving } from './observing'
+import {
+  addRepository, NO_OBSERVING, observedAt, pauseObserving, pauseState,
+  removeRepository, resumeObserving, setIdentities, turnObserving, type Observing,
+} from './observing'
 
 // The settings as a running window has them: the core's rules over the
 // desktop's store, plus the announcements that keep the other windows honest.
@@ -363,6 +366,186 @@ describe('the Work Summary Prompt', () => {
 
 describe('Observing', () => {
   const at = (time: string) => ({ now: () => new Date(time) })
+  const now = new Date('2026-10-11T10:00:00Z').getTime()
+  const repository = {
+    path: '/code/work', repository: '/code/work/.git',
+    identities: ['me@work'], ignoredPrefixes: [],
+  }
+  const running = () => addRepository(turnObserving(NO_OBSERVING, true, now - 1000), repository, now - 1000)
+
+  // Both windows capture the same old value before either can write it.
+  function windows(observing: Observing = running()) {
+    const stored: Record<string, unknown> = { observing }
+    let reads = 0
+    let release = () => {}
+    const bothRead = new Promise<void>((resolve) => { release = resolve })
+    const desktop = fakeDesktop({
+      stored,
+      openSettingsStore: async () => ({
+        async get<T>(key: string) {
+          const snapshot = structuredClone(stored[key]) as T | undefined
+          if (key === 'observing' && reads < 2) {
+            if (++reads === 2) release()
+            await bothRead
+          }
+          return snapshot
+        },
+        async has(key) { return key in stored },
+        async set(key, value) { stored[key] = structuredClone(value) },
+      }),
+    })
+    const clock = { now: () => new Date(now) }
+    return {
+      desktop,
+      capture: createAppSettings(desktop, clock),
+      main: createAppSettings(fakeDesktop({ stored, openSettingsStore: desktop.openSettingsStore }), clock),
+    }
+  }
+
+  it('keeps a tray Pause and identities saved concurrently in another window', async () => {
+    const { capture, main } = windows()
+    const [paused] = await Promise.all([
+      capture.updateObserving((current, time) => pauseObserving(current, 'until-resumed', time)),
+      main.updateObserving((current) => setIdentities(current, repository.repository, ['me@work', 'me@personal'])),
+    ])
+
+    const saved = (await main.load()).observing
+    expect(pauseState(paused, now + 1).state).toBe('paused')
+    expect(pauseState(saved, now + 1).state).toBe('paused')
+    expect(saved.repositories[0].identities).toEqual(['me@work', 'me@personal'])
+    expect(observedAt(saved, repository.repository, now + 600000)).toBe(false)
+  })
+
+  it('keeps Resume and identities saved concurrently without losing the past Pause', async () => {
+    const { capture, main } = windows(pauseObserving(running(), 'until-resumed', now - 500))
+    await Promise.all([
+      capture.updateObserving(resumeObserving),
+      main.updateObserving((current) => setIdentities(current, repository.repository, ['me@personal'])),
+    ])
+
+    const saved = (await main.load()).observing
+    expect(pauseState(saved, now + 1).state).toBe('running')
+    expect(saved.repositories[0].identities).toEqual(['me@personal'])
+    expect(observedAt(saved, repository.repository, now - 250)).toBe(false)
+    expect(observedAt(saved, repository.repository, now + 1)).toBe(true)
+  })
+
+  it.each([true, false])('keeps a Pause when another window turns Observing to %s', async (enabled) => {
+    const { capture, main } = windows(turnObserving(running(), !enabled, now - 500))
+    await Promise.all([
+      capture.updateObserving((current, time) => pauseObserving(current, 'until-resumed', time)),
+      main.updateObserving((current, time) => turnObserving(current, enabled, time)),
+    ])
+
+    const saved = (await main.load()).observing
+    expect(saved.enabled).toBe(enabled)
+    expect(saved.pauses[repository.repository]).toEqual([{ from: now, until: null }])
+    expect(observedAt(saved, repository.repository, now + 600000)).toBe(false)
+  })
+
+  it.each(['pause-first', 'configuration-first'])('keeps a Pause when another window adds a repository (%s)', async (order) => {
+    const { capture, main } = windows()
+    const added = { ...repository, path: '/code/added', repository: '/code/added/.git' }
+    const pause = () => capture.updateObserving((current, time) => pauseObserving(current, 'until-resumed', time))
+    const add = () => main.updateObserving((current, time) => addRepository(current, added, time))
+    await Promise.all(order === 'pause-first' ? [pause(), add()] : [add(), pause()])
+
+    const saved = (await main.load()).observing
+    expect(saved.repositories.map(({ path }) => path)).toEqual(['/code/work', '/code/added'])
+    expect(pauseState(saved, now + 1).state).toBe('paused')
+    expect(observedAt(saved, repository.repository, now + 1)).toBe(false)
+    expect(observedAt(saved, added.repository, now + 1)).toBe(false)
+  })
+
+  it.each(['pause-first', 'configuration-first'])('keeps a Pause when another window removes a repository (%s)', async (order) => {
+    const remaining = { ...repository, path: '/code/remaining', repository: '/code/remaining/.git' }
+    const { capture, main } = windows(addRepository(running(), remaining, now - 1000))
+    const pause = () => capture.updateObserving((current, time) => pauseObserving(current, 'until-resumed', time))
+    const remove = () => main.updateObserving((current, time) => removeRepository(current, repository.repository, time))
+    await Promise.all(order === 'pause-first' ? [pause(), remove()] : [remove(), pause()])
+
+    const saved = (await main.load()).observing
+    expect(saved.repositories.map(({ path }) => path)).toEqual(['/code/remaining'])
+    expect(pauseState(saved, now + 1).state).toBe('paused')
+    expect(saved.consent[repository.repository]).toEqual([{ from: now - 1000, until: now }])
+    expect(observedAt(saved, remaining.repository, now + 1)).toBe(false)
+    expect(observedAt(saved, repository.repository, now + 1)).toBe(false)
+  })
+
+  it.each([undefined, null, { enabled: true, repositories: 'old format' }])('can change an absent or malformed raw setting (%j)', async (observing) => {
+    const settings = createAppSettings(fakeDesktop({ stored: { observing } }))
+    await settings.updateObserving((current, time) => turnObserving(current, true, time))
+    expect((await settings.load()).observing.enabled).toBe(true)
+  })
+
+  it('rejects a throwing transform without announcing or stalling the next queued change', async () => {
+    const desktop = fakeDesktop()
+    const settings = createAppSettings(desktop)
+    let heard = 0
+    await desktop.onObservingChanged(() => { heard += 1 })
+    const refused = settings.updateObserving(() => { throw new Error('refused') })
+    const rejected = expect(refused).rejects.toThrow('refused')
+    const next = settings.updateObserving((current, time) => turnObserving(current, true, time))
+    await rejected
+    await next
+    expect((await settings.load()).observing.enabled).toBe(true)
+    expect(heard).toBe(1)
+  })
+
+  it('keeps the original Pause instant when retrying a conflict and announces only the landed change', async () => {
+    const desktop = fakeDesktop({ stored: { observing: running() } })
+    const compareAndSet = desktop.compareAndSetObserving
+    let attempts = 0
+    desktop.compareAndSetObserving = async (expected, next) => {
+      if (attempts++ === 0) {
+        desktop.stored.observing = setIdentities(running(), repository.repository, ['me@personal'])
+      }
+      return compareAndSet(expected, next)
+    }
+    let time = now
+    const settings = createAppSettings(desktop, { now: () => new Date(time += 1000) })
+    let heard = 0
+    await desktop.onObservingChanged(() => { heard += 1 })
+
+    const saved = await settings.updateObserving((current, instant) => pauseObserving(current, 'until-resumed', instant))
+    expect(saved.pauses[repository.repository]).toEqual([{ from: now + 1000, until: null }])
+    expect(saved.repositories[0].identities).toEqual(['me@personal'])
+    expect(heard).toBe(1)
+  })
+
+  it('rejects exhausted conflicts without announcing or stalling the next queued change', async () => {
+    const desktop = fakeDesktop()
+    const compareAndSet = desktop.compareAndSetObserving
+    desktop.compareAndSetObserving = async () => ({ written: false, current: NO_OBSERVING })
+    const settings = createAppSettings(desktop)
+    let heard = 0
+    await desktop.onObservingChanged(() => { heard += 1 })
+    await expect(settings.updateObserving((current, time) => turnObserving(current, true, time)))
+      .rejects.toThrow('Observing changed in another window')
+    expect(heard).toBe(0)
+    expect((await settings.load()).observing.enabled).toBe(false)
+
+    desktop.compareAndSetObserving = compareAndSet
+    await settings.updateObserving((current, time) => turnObserving(current, true, time))
+    expect((await settings.load()).observing.enabled).toBe(true)
+    expect(heard).toBe(1)
+  })
+
+  it('rejects a storage failure without announcing or stalling the next change', async () => {
+    const desktop = fakeDesktop()
+    const compareAndSet = desktop.compareAndSetObserving
+    desktop.compareAndSetObserving = async () => { throw new Error('disk refused') }
+    const settings = createAppSettings(desktop)
+    let heard = 0
+    await desktop.onObservingChanged(() => { heard += 1 })
+    await expect(settings.updateObserving((current, time) => turnObserving(current, true, time)))
+      .rejects.toThrow('disk refused')
+    expect(heard).toBe(0)
+    desktop.compareAndSetObserving = compareAndSet
+    await settings.updateObserving((current, time) => turnObserving(current, true, time))
+    expect((await settings.load()).observing.enabled).toBe(true)
+    expect(heard).toBe(1)
+  })
 
   it('applies a change to the file as it stands, at the instant it is made, and announces it', async () => {
     const desktop = fakeDesktop()

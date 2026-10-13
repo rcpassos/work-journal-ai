@@ -8,6 +8,7 @@ mod frontmost;
 mod hotkey;
 mod keychain;
 mod onboarding;
+mod observing_settings;
 mod work_summary;
 
 use alerts::{Permission, TaskAlert, TaskAlertCompletion};
@@ -95,6 +96,10 @@ const ABOUT_TAB: &str = "about";
 /// `src/settings/tauri-settings.ts` — which is acceptable only because v1 has
 /// no secrets in it; see docs/adr/0001-defer-voice-capture-to-v2.md.
 const SETTINGS_FILE: &str = "settings.json";
+
+/// The setting replaced atomically across webviews. Must match `OBSERVING_KEY`
+/// in `src/platform/desktop.ts`, as `src/platform/desktop-rust.test.ts` checks.
+const OBSERVING_KEY: &str = "observing";
 
 /// The Note Hotkey. Claimed from the OS rather than merely stored, so this
 /// side owns both registering it and remembering it. Named without
@@ -550,6 +555,7 @@ pub fn run() {
             reconcile_task_alerts,
             open_notification_settings,
             journal_transaction,
+            observing_settings::compare_and_set_observing,
             api_key_set,
             save_api_key,
             clear_api_key,

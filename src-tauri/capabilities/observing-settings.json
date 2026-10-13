@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "observing-settings",
+  "description": "Main changes Observing configuration; Capture handles Tray Pause and Resume",
+  "windows": ["main", "capture"],
+  "permissions": ["allow-compare-and-set-observing"]
+}

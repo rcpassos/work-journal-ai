@@ -116,3 +116,13 @@ describe('who may update the app', () => {
     expect([...named].sort()).toEqual([...EVERY_WINDOW].sort())
   })
 })
+
+describe('who may change Observing', () => {
+  it('allows Main configuration and Capture tray actions, without granting Task Creation', () => {
+    const permission = 'allow-compare-and-set-observing'
+    const held = permissionsByWindow()
+    expect(held.get(MAIN_WINDOW)).toContain(permission)
+    expect(held.get(CAPTURE_WINDOW)).toContain(permission)
+    expect(held.get(TASK_CREATION_WINDOW)).not.toContain(permission)
+  })
+})
