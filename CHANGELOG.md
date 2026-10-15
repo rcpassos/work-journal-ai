@@ -4,6 +4,8 @@ What changed in each released version, newest first. Every `vX.Y.Z` section here
 
 ## Unreleased
 
+## 0.18.1 — 2026-10-15
+
 - Undo Completion now preserves completion history when another window stops recurrence while the undo is being processed.
 
 ## 0.18.0 — 2026-10-13
