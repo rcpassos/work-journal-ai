@@ -2046,7 +2046,7 @@ export function createJournal({
     },
 
     async undoCompletion(id) {
-      const task = await readTask(driver, id)
+      await readTask(driver, id)
       const occurrences = await readOccurrences(driver, id)
 
       if (!canUndoCompletion(occurrences)) {
@@ -2060,13 +2060,20 @@ export function createJournal({
 
       // Removed before reopened, and never the other way round: the one-Open
       // index would refuse the moment in between, and a transaction that
-      // cannot hold its own middle is not one.
+      // cannot hold its own middle is not one. Each step must accept exactly
+      // one row: a successor removed or replaced since the read refuses the
+      // whole Undo before any completion history can be changed.
       await driver.transaction([
         {
           sql: DELETE_ADVANCED_OCCURRENCE,
           params: [successor.id, restored.id, restored.id],
+          expectedRows: 1,
         },
-        { sql: REOPEN_TASK_OCCURRENCE, params: [restored.id, id] },
+        {
+          sql: REOPEN_TASK_OCCURRENCE,
+          params: [restored.id, id],
+          expectedRows: 1,
+        },
         {
           sql: UPDATE_TASK_SCHEDULE_IF_OPEN,
           params: [
@@ -2075,22 +2082,11 @@ export function createJournal({
             id,
             restored.id,
           ],
+          expectedRows: 1,
         },
       ])
 
-      // The statements guard themselves against a record that moved while
-      // this was being decided, which means they can all decline. Saying so is
-      // better than reporting an undo that did not happen.
-      const after = await readOccurrences(driver, id)
-      if (openOccurrence(after)?.id !== restored.id) {
-        throw new Error('That completion could no longer be undone.')
-      }
-
-      return {
-        ...task,
-        scheduledDate: restored.scheduledDate,
-        scheduledTime: restored.scheduledTime,
-      }
+      return readTask(driver, id)
     },
 
     async stopRecurrence(id) {
