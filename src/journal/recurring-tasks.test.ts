@@ -10,6 +10,7 @@ import {
   openingSlot,
   resumedSlot,
   sameRecurrence,
+  TransactionGuardMiss,
   type Journal,
   type Recurrence,
   type SqlDriver,
@@ -795,6 +796,55 @@ describe('Undo Completion', () => {
 
     await journal.undoCompletion(task.id)
     expect(canUndoCompletion(await occurrencesOf(journal, task.id))).toBe(false)
+  })
+
+  it('returns the persisted Task when wording changes after Undo reads it', async () => {
+    const { journal, clock, driver, task } = await completedOnce()
+    const undoing = createJournal({ clock, driver: {
+      ...driver,
+      async transaction(statements) {
+        await journal.editTask(task.id, {
+          description: 'water the garden', details: 'include the seedlings',
+          schedule: { date: '2026-03-17', time: null },
+        })
+        return driver.transaction(statements)
+      },
+    } })
+
+    const restored = await undoing.undoCompletion(task.id)
+
+    expect(restored).toEqual({
+      ...task, description: 'water the garden', details: 'include the seedlings',
+    })
+    expect(await journal.openTasks()).toEqual([restored])
+    expect(completedOccurrences(await occurrencesOf(journal, task.id))).toEqual([])
+    expect(openOccurrence(await occurrencesOf(journal, task.id))?.scheduledDate)
+      .toBe('2026-03-16')
+  })
+
+  it('preserves the stopped Task and its completion when Stop Recurrence wins the race', async () => {
+    const { journal, clock, driver, task } = await completedOnce()
+    const [completed] = completedOccurrences(await occurrencesOf(journal, task.id))
+    let stopped: Task | undefined
+    const undoing = createJournal({ clock, driver: {
+      ...driver,
+      async transaction(statements) {
+        // Undo has read both the Task and its history. The other window
+        // finishes stopping the series before Undo's transaction starts.
+        stopped = await journal.stopRecurrence(task.id)
+        return driver.transaction(statements)
+      },
+    } })
+
+    await expect(undoing.undoCompletion(task.id)).rejects.toThrow(TransactionGuardMiss)
+
+    expect(stopped).toEqual({
+      ...task, scheduledDate: '2026-03-17', recurrence: null, recurrenceAnchor: null,
+    })
+    expect(await journal.openTasks()).toEqual([stopped])
+    expect(await journal.completedTasks()).toEqual([])
+    expect(await occurrencesOf(journal, task.id)).toEqual([completed])
+    expect(completed.completedAt).toBe('2026-03-16T20:00:00.000Z')
   })
 
   it('reaches only the latest completion, one at a time', async () => {

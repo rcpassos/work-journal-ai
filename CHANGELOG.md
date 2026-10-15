@@ -4,6 +4,8 @@ What changed in each released version, newest first. Every `vX.Y.Z` section here
 
 ## Unreleased
 
+- Undo Completion now preserves completion history when another window stops recurrence while the undo is being processed.
+
 ## 0.18.0 — 2026-10-13
 
 - Each repository can observe several selected branches, or all branches when the selection is empty, so development work can arrive before it reaches the default branch.
