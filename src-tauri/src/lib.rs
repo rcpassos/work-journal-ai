@@ -1693,35 +1693,8 @@ fn take_automatic_snapshot(app: tauri::AppHandle) {
         };
 
         let now = std::time::SystemTime::now();
-        let decision = backup::automatic(&directory, now);
-        if !decision.due {
-            return;
-        }
-
-        // Made before the snapshot is attempted, so the file is never asked
-        // to appear out of nowhere: VACUUM INTO refuses to create a directory
-        // on the way, and a snapshot refused for want of one is a launch that
-        // never backs up again.
-        if let Err(error) = std::fs::create_dir_all(&directory) {
-            log::error!("could not make the backups directory: {error}");
-            return;
-        }
-
-        let destination = directory.join(backup::snapshot_file_name(now));
-        if let Err(error) = backup::take_snapshot(&destination, &pool).await {
-            log::error!("could not take the automatic snapshot: {error}");
-            return;
-        }
-        log::info!("automatic snapshot written to {}", destination.display());
-
-        // Only after a snapshot is safely on disk: pruning first could take
-        // the newest copy there is.
-        for path in backup::prunable(&directory) {
-            if let Err(error) = std::fs::remove_file(&path) {
-                log::warn!("could not prune {}: {error}", path.display());
-            } else {
-                log::info!("pruned old snapshot {}", path.display());
-            }
+        if let Err(error) = backup::automatic(&directory, now, &pool).await {
+            log::error!("{error}");
         }
     });
 }
