@@ -5,10 +5,10 @@
 //! restoring one is
 //! docs/adr/0033-a-restore-replaces-the-journal-at-startup-and-keeps-a-rollback.md.
 //!
-//! Everything in this module is narrow and Tauri-free: filenames, due and
-//! prune arithmetic, one snapshot through a `SqlitePool`, and the restore
-//! side — validating a candidate read-only, staging it, and applying a staged
-//! file at startup. The commands and the startup hook in `lib.rs` hand it
+//! Everything in this module is Tauri-free: the complete automatic Backup
+//! pass, manual snapshots through a `SqlitePool`, and the restore side —
+//! validating a candidate read-only, staging it, and applying a staged file
+//! at startup. The commands and the startup hook in `lib.rs` hand it
 //! what it needs; nothing here reaches for the app.
 
 use serde::Serialize;
@@ -136,30 +136,54 @@ pub fn settle_destination(directory: &Path, file_name: &str) -> io::Result<PathB
     free_path(directory, Path::new(&plain))
 }
 
-/// The whole automatic pass: whether a snapshot is due given what is already
-/// in `directory`, and — once one has been taken — which files to prune.
-/// Split rather than one function so a caller that took no snapshot prunes
-/// nothing.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Automatic {
-    /// Whether the interval has passed since the newest snapshot, or there
-    /// are none yet: take one.
-    pub due: bool,
-    /// What the directory holds after the pass: count and newest instant,
-    /// for Settings to say.
-    pub status: AutomaticBackups,
+/// Runs the complete automatic pass through the journal's already-open pool.
+/// Abandoned writes are cleaned even when no snapshot is due. Retention runs
+/// only after successful publication; a failure leaves the interval eligible
+/// for retry. The desktop caller schedules the pass and logs any failure.
+pub async fn automatic(
+    directory: &Path,
+    now: SystemTime,
+    pool: &SqlitePool,
+) -> Result<(), String> {
+    automatic_with(directory, now, |path| vacuum_into(path, pool)).await
 }
 
-/// Decides, from the directory's listing and a clock, whether a snapshot is
-/// due and what the automatic backups look like right now. Abandoned snapshot
-/// temporary files are removed first, even when no new snapshot is due.
-/// Unrelated files neither delay a snapshot nor count as one, and are untouched.
-pub fn automatic(directory: &Path, now: SystemTime) -> Automatic {
+/// The same complete pass with the temporary-file writer seam used by
+/// `take_snapshot_with`, so tests can fail a write before publication.
+async fn automatic_with<F, W>(directory: &Path, now: SystemTime, write: W) -> Result<(), String>
+where
+    W: FnOnce(PathBuf) -> F,
+    F: std::future::Future<Output = Result<(), String>>,
+{
     remove_snapshot_temps(directory);
-    let snapshots = listed_snapshots(directory);
-    let status = status_of(&snapshots);
+    if !snapshot_due(directory, now) {
+        return Ok(());
+    }
 
-    let due = match snapshots.first() {
+    std::fs::create_dir_all(directory)
+        .map_err(|error| format!("could not make the backups directory: {error}"))?;
+
+    let destination = directory.join(snapshot_file_name(now));
+    take_snapshot_with(&destination, SnapshotDestination::Exact, write)
+        .await
+        .map_err(|error| format!("could not take the automatic snapshot: {error}"))?;
+    log::info!("automatic snapshot written to {}", destination.display());
+
+    // Only after a snapshot is safely on disk: pruning first could take
+    // the newest copy there is.
+    for path in prunable(directory) {
+        if let Err(error) = std::fs::remove_file(&path) {
+            log::warn!("could not prune {}: {error}", path.display());
+        } else {
+            log::info!("pruned old snapshot {}", path.display());
+        }
+    }
+    Ok(())
+}
+
+/// Unrelated files neither delay a snapshot nor count as one.
+fn snapshot_due(directory: &Path, now: SystemTime) -> bool {
+    match listed_snapshots(directory).first() {
         Some(newest) => match newest.instant {
             Some(taken) => now
                 .duration_since(taken)
@@ -169,9 +193,7 @@ pub fn automatic(directory: &Path, now: SystemTime) -> Automatic {
             None => true,
         },
         None => true,
-    };
-
-    Automatic { due, status }
+    }
 }
 
 fn remove_snapshot_temps(directory: &Path) {
@@ -205,7 +227,7 @@ fn remove_snapshot_temps(directory: &Path) {
 /// Which snapshots to prune once a new one is safely on disk: all but the
 /// newest N, oldest first. Only files that parse as snapshots are ever
 /// returned, so an unrelated file in the directory is left alone.
-pub fn prunable(directory: &Path) -> Vec<PathBuf> {
+fn prunable(directory: &Path) -> Vec<PathBuf> {
     // Counted by what is a snapshot, not by what is in the directory: the
     // limit is on backups, and a neighbour that is not one is outside the
     // arithmetic entirely.
@@ -227,22 +249,6 @@ pub fn prunable(directory: &Path) -> Vec<PathBuf> {
         .collect();
     pruned.reverse();
     pruned
-}
-
-/// Takes a snapshot of `source` into `destination` through the pool the
-/// journal is already served from — one statement, no second connection.
-///
-/// The destination is bound, never interpolated: `VACUUM INTO ?`. A snapshot
-/// opens, passes `quick_check`, and carries every journal table including
-/// `_sqlx_migrations`, whether the source runs WAL or rollback-journal.
-/// Only a completed write is published, by a no-overwrite rename of its
-/// temporary sibling. A failed attempt never creates the destination.
-pub async fn take_snapshot(destination: &Path, pool: &SqlitePool) -> Result<(), String> {
-    take_snapshot_with(destination, SnapshotDestination::Exact, |path| {
-        vacuum_into(path, pool)
-    })
-    .await
-    .map(|_| ())
 }
 
 /// Takes a manual snapshot beside any taken name, including one claimed while
@@ -1125,6 +1131,16 @@ mod tests {
         };
     }
 
+    /// Exercises single-snapshot publication and WAL behavior through the same
+    /// writer and publication implementation used by the automatic pass.
+    async fn take_snapshot(destination: &Path, pool: &SqlitePool) -> Result<(), String> {
+        take_snapshot_with(destination, SnapshotDestination::Exact, |path| {
+            vacuum_into(path, pool)
+        })
+        .await
+        .map(|_| ())
+    }
+
     /// A directory of this run's own, removed when the test is done with it.
     struct TempDir {
         path: PathBuf,
@@ -1220,23 +1236,45 @@ mod tests {
         assert_healthy_snapshot(&destination).await;
     });
 
-    async_test!(a_partial_snapshot_failure_leaves_no_backup_and_the_next_launch_retries, {
+    async_test!(an_automatic_pass_creates_its_directory_and_publishes_a_healthy_snapshot, {
+        let (_source, pool) = seeded_journal("wal").await;
+        let parent = TempDir::new("first-automatic-pass");
+        let directory = parent.path.join("new").join("backups");
+        let now = UNIX_EPOCH + Duration::from_secs(1_788_425_100);
+
+        automatic(&directory, now, &pool).await.unwrap();
+
+        let destination = directory.join("work-journal-20260903T084500.db");
+        assert_healthy_snapshot(&destination).await;
+        assert_eq!(std::fs::read_dir(&directory).unwrap().count(), 1);
+        assert_eq!(automatic_backups(&directory), AutomaticBackups {
+            count: 1,
+            newest_taken_at: Some(1_788_425_100),
+        });
+    });
+
+    async_test!(a_partial_automatic_snapshot_leaves_no_backup_and_the_next_launch_retries, {
+        let (_source, pool) = seeded_journal("delete").await;
         let directory = TempDir::new("partial-snapshot");
         let now = UNIX_EPOCH + Duration::from_secs(1_788_425_100);
         let destination = directory.path.join(snapshot_file_name(now));
 
-        let result = take_snapshot_with(&destination, SnapshotDestination::Exact, |path| async move {
+        let result = automatic_with(&directory.path, now, |path| async move {
             std::fs::write(path, b"partial SQLite output").unwrap();
             Err("injected VACUUM disk I/O error".to_string())
         }).await;
 
-        assert_eq!(result.unwrap_err(), "injected VACUUM disk I/O error");
+        assert!(result.unwrap_err().contains("injected VACUUM disk I/O error"));
         assert!(!destination.exists());
         assert_eq!(std::fs::read_dir(&directory.path).unwrap().count(), 0);
-        let retry = automatic(&directory.path, now + Duration::from_secs(3600));
-        assert!(retry.due);
-        assert_eq!(retry.status.count, 0);
-        assert!(prunable(&directory.path).is_empty());
+        assert_eq!(automatic_backups(&directory.path).count, 0);
+
+        let retry_at = now + Duration::from_secs(3600);
+        automatic(&directory.path, retry_at, &pool).await.unwrap();
+
+        assert!(!destination.exists());
+        assert_eq!(std::fs::read_dir(&directory.path).unwrap().count(), 1);
+        assert_healthy_snapshot(&directory.path.join(snapshot_file_name(retry_at))).await;
     });
 
     async_test!(a_manual_snapshot_settles_past_a_name_claimed_during_the_write, {
@@ -1300,7 +1338,7 @@ mod tests {
         assert_eq!(std::fs::read_dir(&directory.path).unwrap().count(), 3);
     });
 
-    async_test!(a_failed_snapshot_preserves_valid_backups_without_pruning, {
+    async_test!(a_failed_automatic_pass_preserves_backups_and_a_retry_prunes_only_after_publication, {
         let (_source, pool) = seeded_journal("delete").await;
         let directory = TempDir::new("failure-preserves-backups");
         let now = UNIX_EPOCH + Duration::from_secs(1_788_425_100);
@@ -1309,41 +1347,41 @@ mod tests {
         take_snapshot(&first, &pool).await.unwrap();
         let bytes = std::fs::read(&first).unwrap();
         let mut existing = vec![first];
-        for seconds in 1..=RETAINED_SNAPSHOTS {
-            let path = directory.path.join(snapshot_file_name(oldest + Duration::from_secs(seconds as u64)));
+        for seconds in 1..=30 {
+            let path = directory.path.join(snapshot_file_name(oldest + Duration::from_secs(seconds)));
             std::fs::write(&path, &bytes).unwrap();
             existing.push(path);
         }
-        let before = prunable(&directory.path);
-        assert_eq!(before.len(), 1);
+        let unrelated = directory.path.join("read-me-first.txt");
+        std::fs::write(&unrelated, "keep me").unwrap();
         let destination = directory.path.join(snapshot_file_name(now));
 
-        let result = take_snapshot_with(&destination, SnapshotDestination::Exact, |path| async move {
-            assert_eq!(snapshot_instant(path.file_name().unwrap().to_str().unwrap()), None);
+        let result = automatic_with(&directory.path, now, |path| async move {
             std::fs::write(path, "partial output").unwrap();
             Err("injected VACUUM failure".to_string())
         }).await;
 
-        assert!(result.is_err());
-        let retry = automatic(&directory.path, now + Duration::from_secs(3600));
-        assert!(retry.due);
-        assert_eq!(retry.status.count, 31);
-        assert_eq!(prunable(&directory.path), before);
-        assert_eq!(std::fs::read_dir(&directory.path).unwrap().count(), 31);
+        assert!(result.unwrap_err().contains("injected VACUUM failure"));
+        assert!(!destination.exists());
+        assert_eq!(automatic_backups(&directory.path).count, 31);
+        assert_eq!(std::fs::read_dir(&directory.path).unwrap().count(), 32);
         for path in &existing {
             assert_eq!(std::fs::read(path).unwrap(), bytes);
         }
+        assert_eq!(std::fs::read_to_string(&unrelated).unwrap(), "keep me");
 
-        // Successful publication is the point at which the caller may prune.
-        take_snapshot(&destination, &pool).await.unwrap();
+        // The same instant is still eligible: failed writes never advance the interval.
+        automatic(&directory.path, now, &pool).await.unwrap();
+
         assert_healthy_snapshot(&destination).await;
-        let pruned = prunable(&directory.path);
-        assert_eq!(pruned.len(), 2);
-        for path in pruned {
-            std::fs::remove_file(path).unwrap();
-        }
         assert_eq!(automatic_backups(&directory.path).count, 30);
-        assert!(destination.exists());
+        assert_eq!(std::fs::read_dir(&directory.path).unwrap().count(), 31);
+        assert!(!existing[0].exists());
+        assert!(!existing[1].exists());
+        for path in &existing[2..] {
+            assert_eq!(std::fs::read(path).unwrap(), bytes);
+        }
+        assert_eq!(std::fs::read_to_string(&unrelated).unwrap(), "keep me");
     });
 
     async_test!(an_exact_snapshot_never_replaces_a_destination_claimed_during_the_write, {
@@ -1556,7 +1594,7 @@ mod tests {
         )
         .unwrap();
 
-        assert!(automatic(&directory.path, now).due);
+        assert!(snapshot_due(&directory.path, now));
 
         std::fs::write(
             directory.path.join(snapshot_file_name(now - SNAPSHOT_INTERVAL + Duration::from_secs(1))),
@@ -1564,15 +1602,22 @@ mod tests {
         )
         .unwrap();
 
-        assert!(!automatic(&directory.path, now).due);
+        assert!(!snapshot_due(&directory.path, now));
     }
 
-    #[test]
-    fn the_automatic_pass_removes_only_abandoned_snapshot_temporary_files() {
+    async_test!(a_not_due_automatic_pass_cleans_abandoned_writes_without_snapshot_or_pruning, {
+        let (_source, pool) = seeded_journal("delete").await;
         let directory = TempDir::new("abandoned-snapshots");
         let now = UNIX_EPOCH + Duration::from_secs(1_788_425_100);
         let completed = directory.path.join(snapshot_file_name(now));
-        std::fs::write(&completed, "completed snapshot").unwrap();
+        take_snapshot(&completed, &pool).await.unwrap();
+        let bytes = std::fs::read(&completed).unwrap();
+        let mut existing = vec![completed];
+        for seconds in 1..=30 {
+            let path = directory.path.join(snapshot_file_name(now - Duration::from_secs(seconds)));
+            std::fs::write(&path, &bytes).unwrap();
+            existing.push(path);
+        }
         let temporary = directory.path.join(".work-journal-snapshot-Ab123Z.tmp");
         std::fs::write(&temporary, "interrupted output").unwrap();
         let unrelated = [
@@ -1586,39 +1631,30 @@ mod tests {
         }
         let neighbour_directory = directory.path.join(".work-journal-snapshot-Xyz789.tmp");
         std::fs::create_dir(&neighbour_directory).unwrap();
+        let not_due_at = now + Duration::from_secs(3600);
 
-        assert_eq!(
-            snapshot_instant(temporary.file_name().unwrap().to_str().unwrap()),
-            None
-        );
-        assert_eq!(automatic_backups(&directory.path).count, 1);
-        assert!(prunable(&directory.path).is_empty());
-        assert!(
-            temporary.exists(),
-            "discovery and retention do not remove files"
-        );
+        automatic(&directory.path, not_due_at, &pool).await.unwrap();
 
-        let decision = automatic(&directory.path, now + Duration::from_secs(3600));
-        assert!(!decision.due, "cleanup also runs when no snapshot is due");
-        assert_eq!(decision.status.count, 1);
+        assert!(!directory.path.join(snapshot_file_name(not_due_at)).exists());
+        assert_eq!(automatic_backups(&directory.path).count, 31);
         assert!(!temporary.exists());
-        assert!(completed.exists());
+        for path in existing {
+            assert_eq!(std::fs::read(path).unwrap(), bytes);
+        }
         for name in unrelated {
-            assert!(directory.path.join(name).exists());
+            assert_eq!(std::fs::read_to_string(directory.path.join(name)).unwrap(), "keep me");
         }
         assert!(neighbour_directory.is_dir());
-    }
+    });
 
     #[test]
     fn an_empty_directory_is_always_due() {
         let directory = TempDir::new("due-empty");
         let now = UNIX_EPOCH + Duration::from_secs(1_788_425_100);
 
-        let decision = automatic(&directory.path, now);
-
-        assert!(decision.due);
-        assert_eq!(decision.status.count, 0);
-        assert_eq!(decision.status.newest_taken_at, None);
+        assert!(snapshot_due(&directory.path, now));
+        assert_eq!(automatic_backups(&directory.path).count, 0);
+        assert_eq!(automatic_backups(&directory.path).newest_taken_at, None);
     }
 
     #[test]
@@ -1629,7 +1665,7 @@ mod tests {
         // cannot be read off it, so the pass errs toward taking one.
         std::fs::write(directory.path.join("work-journal.db"), "not a snapshot name").unwrap();
 
-        assert!(automatic(&directory.path, now).due);
+        assert!(snapshot_due(&directory.path, now));
     }
 
     #[test]
