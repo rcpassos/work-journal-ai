@@ -1,3 +1,5 @@
+import { Combobox as ComboboxPrimitive } from '@base-ui/react/combobox'
+import { Combobox, ComboboxContent, ComboboxInput, ComboboxItem, ComboboxList, ComboboxEmpty } from '@/components/ui/combobox'
 import { useEffect, useId, useRef, useState } from 'react'
 import {
   CheckCircle2Icon,
@@ -10,6 +12,7 @@ import {
   SearchIcon,
   Trash2Icon,
   TriangleAlertIcon,
+  XIcon,
   type LucideIcon,
 } from 'lucide-react'
 import WindowTitleBar from '@/components/WindowTitleBar'
@@ -73,7 +76,7 @@ const GROUP_HEADINGS: Record<TaskGroupName, string> = {
 }
 
 /**
- * Managing what you owe. Every rule of the two lists — which one opens, what a
+ * Managing what you owe. Every rule of the task lists — which one opens, what a
  * change re-reads, which group a Task falls in, what a refusal says — belongs
  * to the Tasks session; this view renders its snapshot and calls its verbs.
  *
@@ -313,6 +316,7 @@ export default function TasksView({
         onEdit={() => setEditing(task)}
         onUndoCompletion={() => void session.undoCompletion(task.id)}
         onStopRecurrence={() => void session.stopRecurrence(task.id)}
+        onRemoveDaily={showing === 'daily' ? () => void session.removeDaily(task.id) : undefined}
         onDelete={() => setDeleting(task)}
       />
     )
@@ -335,15 +339,21 @@ export default function TasksView({
           value={[showing]}
           onValueChange={(next) => {
             // Pressing the list already showing deselects it, which is not a
-            // list at all — one of the two is always on screen.
+            // list at all — one list is always on screen.
             const chosen = next[0]
-            if (chosen === 'open' || chosen === 'completed') {
+            if (chosen === 'daily' || chosen === 'open' || chosen === 'completed') {
               // Whatever an Alert singled out, the user has moved on from it.
               setFocused(null)
               void session.show(chosen)
             }
           }}
         >
+          <ToggleGroupItem
+            value="daily"
+            className="rounded-sm! px-2.5 hover:bg-transparent data-pressed:bg-background data-pressed:text-foreground data-pressed:shadow-sm"
+          >
+            Daily Tasks
+          </ToggleGroupItem>
           <ToggleGroupItem
             value="open"
             className="rounded-sm! px-2.5 hover:bg-transparent data-pressed:bg-background data-pressed:text-foreground data-pressed:shadow-sm"
@@ -362,6 +372,13 @@ export default function TasksView({
           term={term}
           onType={(typed) => void session.search(typed)}
         />
+
+        {showing === 'daily' && !searching && (
+          <AddExistingTasks
+            candidates={snapshot.candidates}
+            onPick={(task) => session.addDaily(task.id)}
+          />
+        )}
 
         {/* One of the Task Entry Points, and it reaches the very same resident
             window the Hotkey and the Tray Menu do — never a second creation
@@ -405,6 +422,11 @@ export default function TasksView({
             icon={TriangleAlertIcon}
             heading="The Tasks could not be read."
           />
+        )}
+        {tasks.state === 'tasks' && list.length === 0 && showing === 'daily' && (
+          <EmptyState icon={ListTodoIcon} heading="No Daily Tasks yet">
+            Choose Open Tasks with Add existing to start your working list.
+          </EmptyState>
         )}
         {tasks.state === 'tasks' && list.length === 0 && showing === 'open' && (
           <NoOpenTasks hotkeys={hotkeys} />
@@ -450,7 +472,7 @@ export default function TasksView({
             ))}
           </div>
         )}
-        {showing === 'completed' && list.length > 0 && (
+        {showing !== 'open' && list.length > 0 && (
           <ol className="flex flex-col gap-1">{list.map(line)}</ol>
         )}
       </main>
@@ -477,6 +499,71 @@ export default function TasksView({
         onCancel={() => setDeleting(null)}
       />
     </div>
+  )
+}
+
+/** Picker controls stay in React; the Tasks session sequences durable changes. */
+function AddExistingTasks({ candidates, onPick }: {
+  candidates: Task[]
+  onPick: (task: Task) => Promise<boolean>
+}) {
+  const [open, setOpen] = useState(false)
+  const [term, setTerm] = useState('')
+  const [saving, setSaving] = useState(false)
+  useOffScreen(() => setOpen(false))
+
+  return (
+    <Combobox
+      items={candidates}
+      value={null}
+      open={open}
+      onOpenChange={(next, details) => {
+        if (details.reason === 'item-press') return
+        setOpen(next)
+        if (!next) setTerm('')
+      }}
+      inputValue={term}
+      onInputValueChange={(next, details) => {
+        if (details.reason !== 'item-press') setTerm(next)
+      }}
+      itemToStringLabel={(task: Task) => task.description}
+      filter={(task: Task, query: string) =>
+        `${task.description}\n${task.details ?? ''}`.toLocaleLowerCase().includes(query.toLocaleLowerCase())
+      }
+      onValueChange={(task: Task | null) => {
+        if (task === null || saving) return
+        setSaving(true)
+        void onPick(task).then((saved) => {
+          setSaving(false)
+          if (saved) {
+            setOpen(false)
+            setTerm('')
+          }
+        })
+      }}
+    >
+      <ComboboxPrimitive.Trigger
+        render={<Button variant="outline" size="sm" disabled={saving} />}
+        onKeyDown={(event) => {
+          if (event.key === 'Escape' && open) event.stopPropagation()
+        }}
+      >
+        Add existing
+      </ComboboxPrimitive.Trigger>
+      <ComboboxContent className="w-80" onKeyDown={(event) => {
+        if (event.key === 'Escape') event.stopPropagation()
+      }}>
+        <ComboboxInput aria-label="Search Open Tasks" placeholder="Search Open Tasks" showTrigger={false} disabled={saving} />
+        <ComboboxEmpty>No eligible Open Tasks.</ComboboxEmpty>
+        <ComboboxList>
+          {(task: Task) => (
+            <ComboboxItem key={task.id} value={task} disabled={saving}>
+              {task.description}
+            </ComboboxItem>
+          )}
+        </ComboboxList>
+      </ComboboxContent>
+    </Combobox>
   )
 }
 
@@ -551,6 +638,7 @@ function TaskLine({
   onEdit,
   onUndoCompletion,
   onStopRecurrence,
+  onRemoveDaily,
   onDelete,
 }: {
   task: Task
@@ -562,6 +650,7 @@ function TaskLine({
   onEdit: () => void
   onUndoCompletion: () => void
   onStopRecurrence: () => void
+  onRemoveDaily?: () => void
   onDelete: () => void
 }) {
   const done = task.completedAt !== null
@@ -635,6 +724,17 @@ function TaskLine({
         </div>
 
         <div className="flex shrink-0 items-center gap-0.5 pointer-events-none opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 focus-within:pointer-events-auto focus-within:opacity-100">
+          {onRemoveDaily && (
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              onClick={onRemoveDaily}
+              aria-label={`Remove “${task.description}” from Daily Tasks`}
+              className="text-muted-foreground"
+            >
+              <XIcon />
+            </Button>
+          )}
           {/* Offered only while it is safe. A completion whose successor was
               edited or completed stays historical, because undoing it would
               either open two occurrences at once or throw away a later

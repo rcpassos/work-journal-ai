@@ -52,7 +52,7 @@ pub const DATABASE_FILE_NAME: &str = "work-journal.db";
 /// snapshot is accepted and migrated forward by the immutable list; a newer
 /// one is refused before anything is touched. Every future migration raises
 /// this.
-pub const SUPPORTED_MIGRATION_VERSION: i64 = 10;
+pub const SUPPORTED_MIGRATION_VERSION: i64 = 11;
 
 /// The staged snapshot of a validated candidate, beside the live
 /// journal. Not a snapshot name, so pruning never touches it, and never
@@ -1784,7 +1784,7 @@ mod tests {
 
     /// The migration files, in version order — the very files
     /// `migrations()` in `lib.rs` serves plugin-sql.
-    const REAL_MIGRATIONS: [&str; 10] = [
+    const REAL_MIGRATIONS: [&str; 11] = [
         include_str!("../migrations/0001_create_notes.sql"),
         include_str!("../migrations/0002_notes_project.sql"),
         include_str!("../migrations/0003_note_origin_and_imported_meetings.sql"),
@@ -1795,6 +1795,7 @@ mod tests {
         include_str!("../migrations/0008_note_origin_observe_and_handled_events.sql"),
         include_str!("../migrations/0009_project_mappings.sql"),
         include_str!("../migrations/0010_task_details.sql"),
+        include_str!("../migrations/0011_daily_tasks.sql"),
     ];
 
     /// The checksum sqlx records for a shipped migration — what a genuine

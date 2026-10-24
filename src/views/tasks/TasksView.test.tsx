@@ -47,6 +47,14 @@ async function showTasks(
   return { desktop, core, clock, created, driver }
 }
 
+/** Existing broader-list scenarios explicitly navigate away from Daily Tasks. */
+async function showOpenTasks(...args: Parameters<typeof showTasks>) {
+  const result = await showTasks(...args)
+  fireEvent.click(tab('Open'))
+  await expect.poll(() => screen.getByRole('button', { name: 'Open' }).getAttribute('aria-pressed')).toBe('true')
+  return result
+}
+
 /**
  * A Task changed behind the view's back, then the row for it once the view has
  * caught up — the Editor is opened from the row, and a row read before the
@@ -87,7 +95,7 @@ function rows(): string[] {
     .map((button) => button.textContent ?? '')
 }
 
-function tab(name: 'Open' | 'Completed'): HTMLElement {
+function tab(name: 'Daily Tasks' | 'Open' | 'Completed'): HTMLElement {
   return screen.getByRole('button', { name })
 }
 
@@ -106,16 +114,182 @@ function setTime(time: string) {
   fireEvent.change(screen.getByLabelText('Time'), { target: { value: time } })
 }
 
+describe('Daily Tasks', () => {
+  it('searches eligible work and appends each choice once without leaving Daily Tasks', async () => {
+    const { core, created, desktop } = await showTasks(['first', 'second', 'finished'])
+    await core.completeTask(created[2].id)
+    await desktop.announceTasksChanged()
+    await screen.findByRole('heading', { name: 'No Daily Tasks yet' })
+    const user = userEvent.setup()
+    await user.click(screen.getByText('Add existing'))
+    const search = await screen.findByPlaceholderText('Search Open Tasks')
+    await user.type(search, 'second')
+    expect(screen.queryByRole('option', { name: 'first' })).toBeNull()
+    expect(screen.queryByRole('option', { name: 'finished' })).toBeNull()
+    await user.click(await screen.findByRole('option', { name: 'second' }))
+    await expect.poll(rows).toEqual(['second'])
+    await user.click(screen.getByText('Add existing'))
+    expect(screen.queryByRole('option', { name: 'second' })).toBeNull()
+    await user.click(await screen.findByRole('option', { name: 'first' }))
+    await expect.poll(rows).toEqual(['second', 'first'])
+    expect((await core.dailyTasks()).map(task => task.id)).toEqual([created[1].id, created[0].id])
+  })
+
+  it('removes selection without deleting or rescheduling the task, then appends a reselection', async () => {
+    const { core, created, desktop } = await showTasks(['first', 'second'])
+    const scheduled = await core.editTask(created[0].id, {
+      description: 'first', schedule: { date: '2026-04-01', time: '12:00' },
+    })
+    await core.addDailyTask(created[0].id)
+    await core.addDailyTask(created[1].id)
+    await desktop.announceTasksChanged()
+    await expect.poll(rows).toEqual(['first', 'second'])
+    fireEvent.click(screen.getByRole('button', { name: 'Remove “first” from Daily Tasks' }))
+    await expect.poll(rows).toEqual(['second'])
+    expect(await core.openTasks()).toContainEqual(scheduled)
+    expect(screen.queryByRole('alertdialog')).toBeNull()
+    await core.addDailyTask(created[0].id)
+    await desktop.announceTasksChanged()
+    await expect.poll(rows).toEqual(['second', 'first'])
+  })
+
+  it('completes selected work and keeps later reopening outside Daily Tasks', async () => {
+    const { core, created, desktop } = await showTasks(['first', 'second', 'third'])
+    for (const task of created) await core.addDailyTask(task.id)
+    await desktop.announceTasksChanged()
+    await expect.poll(rows).toEqual(['first', 'second', 'third'])
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Complete “second”' }))
+    await expect.poll(rows).toEqual(['first', 'third'])
+    expect(screen.queryByRole('alertdialog')).toBeNull()
+    fireEvent.click(tab('Completed'))
+    fireEvent.click(await screen.findByRole('checkbox', { name: 'Reopen “second”' }))
+    await expect.poll(rows).toEqual([])
+    fireEvent.click(tab('Daily Tasks'))
+    await expect.poll(rows).toEqual(['first', 'third'])
+    expect((await core.dailyTasks()).map(task => task.description)).toEqual(['first', 'third'])
+    expect((await core.openTasks()).map(task => task.description)).toContain('second')
+  })
+
+  it('keeps selection and its order through editing, clock changes and reopening the view', async () => {
+    const { core, created, desktop, clock, driver } = await showTasks(['first', 'second', 'backlog'])
+    await core.addDailyTask(created[0].id)
+    await core.addDailyTask(created[1].id)
+    await desktop.announceTasksChanged()
+    await expect.poll(rows).toEqual(['first', 'second'])
+    fireEvent.click(screen.getByText('first'))
+    await screen.findByRole('dialog', { name: 'Edit Task' })
+    fireEvent.change(screen.getByLabelText('Task Description'), { target: { value: 'edited first' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    await expect.poll(rows).toEqual(['edited first', 'second'])
+    await core.editTask(created[0].id, {
+      description: 'edited first', details: 'keep this context',
+      schedule: { date: '2026-04-01', time: '12:00' },
+    })
+    await core.editTask(created[2].id, {
+      description: 'backlog', schedule: { date: '2026-03-10', time: null },
+    })
+    await desktop.announceTasksChanged()
+    await screen.findByText(/Apr 1, 2026/)
+    clock.set(new Date('2026-03-11T09:00:00'))
+    act(() => { desktop.wake(); desktop.focus() })
+    expect(rows()).toEqual(['edited first', 'second'])
+    cleanup()
+    const reconstructed = createJournal({ driver, clock })
+    render(<TasksView desktop={desktop} journal={Promise.resolve(reconstructed)} clock={clock} />)
+    await expect.poll(rows).toEqual(['edited first', 'second'])
+    expect((await reconstructed.dailyTasks())[0].details).toBe('keep this context')
+  })
+
+  it.each(['checkbox', 'alert'] as const)('removes recurring work completed through %s and keeps safe Undo outside the selection', async surface => {
+    const { core, desktop, clock } = await showTasks()
+    const task = await core.createTask('daily report', { date: '2026-03-09', time: '12:00' }, {
+      unit: 'day', interval: 1, weekdays: [],
+    })
+    await core.addDailyTask(task.id)
+    await desktop.announceTasksChanged()
+    await screen.findByText('daily report')
+    if (surface === 'checkbox') {
+      fireEvent.click(screen.getByRole('checkbox', { name: 'Complete “daily report”' }))
+    } else {
+      await core.completeTaskAt(task.id, { date: '2026-03-09', time: '12:00' })
+      await desktop.announceTasksChanged()
+    }
+    await expect.poll(rows).toEqual([])
+    expect((await occurrencesOf(core, task.id)).filter(occurrence => occurrence.completedAt !== null)).toHaveLength(1)
+    clock.set(new Date('2026-03-10T13:00:00'))
+    act(() => { desktop.wake(); desktop.focus() })
+    expect(await core.dailyTasks()).toEqual([])
+    fireEvent.click(tab('Open'))
+    fireEvent.click(await screen.findByRole('button', { name: 'Undo the last completion of “daily report”' }))
+    await expect.poll(async () => (await core.openTasks())[0].scheduledDate).toBe('2026-03-09')
+    expect(await core.dailyTasks()).toEqual([])
+    expect((await occurrencesOf(core, task.id)).filter(occurrence => occurrence.completedAt === null)).toHaveLength(1)
+  })
+
+  it('confirms deletion of selected work and refreshes membership changes from other surfaces', async () => {
+    const { core, created, desktop } = await showTasks(['first', 'second'])
+    await core.addDailyTask(created[0].id)
+    await desktop.announceTasksChanged()
+    await screen.findByText('first')
+    await core.removeDailyTask(created[0].id)
+    await core.addDailyTask(created[1].id)
+    await desktop.announceTasksChanged()
+    await expect.poll(rows).toEqual(['second'])
+    fireEvent.click(screen.getByRole('button', { name: 'Delete “second”' }))
+    await screen.findByRole('alertdialog')
+    expect(await core.dailyTasks()).toEqual([created[1]])
+    fireEvent.click(screen.getByRole('button', { name: 'Delete' }))
+    await expect.poll(rows).toEqual([])
+    expect(await core.dailyTasks()).toEqual([])
+    expect(await core.openTasks()).toEqual([created[0]])
+  })
+
+  it('keeps a failed picker choice available to retry and Escape dismisses only the picker', async () => {
+    const { core, desktop, driver } = await showTasks(['first'])
+    await screen.findByRole('heading', { name: 'No Daily Tasks yet' })
+    const transaction = driver.transaction
+    driver.transaction = async () => { throw new Error('storage unavailable') }
+    const user = userEvent.setup()
+    await user.click(screen.getByText('Add existing'))
+    const input = await screen.findByPlaceholderText('Search Open Tasks')
+    await user.type(input, 'first')
+    await user.click(await screen.findByRole('option', { name: 'first' }))
+    await screen.findByRole('alert')
+    expect(await core.dailyTasks()).toEqual([])
+    expect((input as HTMLInputElement).value).toBe('first')
+    driver.transaction = transaction
+    await user.click(await screen.findByRole('option', { name: 'first' }))
+    await expect.poll(rows).toEqual(['first'])
+    await expect.poll(() => screen.queryByPlaceholderText('Search Open Tasks')).toBeNull()
+    let closed = false
+    desktop.closeWindow = async () => { closed = true }
+    await user.click(screen.getByText('Add existing'))
+    await screen.findByPlaceholderText('Search Open Tasks')
+    await user.keyboard('{Escape}')
+    expect(closed).toBe(false)
+    expect(screen.queryByPlaceholderText('Search Open Tasks')).toBeNull()
+  })
+
+  it('starts empty with an existing backlog and keeps the broader list available', async () => {
+    await showTasks(['first', 'second'])
+    await screen.findByRole('heading', { name: 'No Daily Tasks yet' })
+    expect(rows()).toEqual([])
+    fireEvent.click(tab('Open'))
+    await screen.findByText('second')
+    expect(rows()).toEqual(['second', 'first'])
+  })
+})
+
 describe('opening Tasks View', () => {
-  it('opens on the Open Tasks, newest first', async () => {
-    await showTasks(['first', 'second', 'third'])
+  it('shows Open Tasks newest first when chosen', async () => {
+    await showOpenTasks(['first', 'second', 'third'])
 
     await screen.findByText('third')
     expect(rows()).toEqual(['third', 'second', 'first'])
   })
 
   it('teaches the Task Hotkey when there is nothing owed yet', async () => {
-    await showTasks()
+    await showOpenTasks()
 
     const empty = await screen.findByRole('heading', { name: 'No Open Tasks' })
     const section = empty.closest('section')!
@@ -127,7 +301,7 @@ describe('opening Tasks View', () => {
   })
 
   it('says the Completed list is empty in its own words', async () => {
-    await showTasks()
+    await showOpenTasks()
     await screen.findByRole('heading', { name: 'No Open Tasks' })
 
     fireEvent.click(tab('Completed'))
@@ -138,7 +312,7 @@ describe('opening Tasks View', () => {
 
 describe('completing and reopening', () => {
   it('completes from the checkbox with no confirmation at all', async () => {
-    const { core } = await showTasks(['renew the certificate'])
+    const { core } = await showOpenTasks(['renew the certificate'])
     await screen.findByText('renew the certificate')
 
     fireEvent.click(
@@ -152,7 +326,7 @@ describe('completing and reopening', () => {
   })
 
   it('reopens a Completed Task from the Completed list', async () => {
-    const { core } = await showTasks(['renew the certificate'])
+    const { core } = await showOpenTasks(['renew the certificate'])
     fireEvent.click(
       await screen.findByRole('checkbox', {
         name: 'Complete “renew the certificate”',
@@ -173,7 +347,7 @@ describe('completing and reopening', () => {
 
 describe('the Task Editor', () => {
   it('saves a reworded Task', async () => {
-    const { core } = await showTasks(['renew the cert'])
+    const { core } = await showOpenTasks(['renew the cert'])
     fireEvent.click(await screen.findByText('renew the cert'))
 
     const editor = await screen.findByRole('dialog', { name: 'Edit Task' })
@@ -189,7 +363,7 @@ describe('the Task Editor', () => {
   })
 
   it('discards on Cancel', async () => {
-    const { core } = await showTasks(['renew the cert'])
+    const { core } = await showOpenTasks(['renew the cert'])
     fireEvent.click(await screen.findByText('renew the cert'))
 
     const input = screen.getByLabelText('Task Description') as HTMLInputElement
@@ -202,7 +376,7 @@ describe('the Task Editor', () => {
   })
 
   it('discards on Escape, and does not close the window with it', async () => {
-    const { desktop, core } = await showTasks(['renew the cert'])
+    const { desktop, core } = await showOpenTasks(['renew the cert'])
     let closed = 0
     desktop.closeWindow = async () => {
       closed += 1
@@ -219,7 +393,7 @@ describe('the Task Editor', () => {
   })
 
   it('never reuses the Task Creation window', async () => {
-    const { desktop } = await showTasks(['renew the cert'])
+    const { desktop } = await showOpenTasks(['renew the cert'])
     fireEvent.click(await screen.findByText('renew the cert'))
 
     await screen.findByRole('dialog', { name: 'Edit Task' })
@@ -229,7 +403,7 @@ describe('the Task Editor', () => {
 
 describe('deleting a Task', () => {
   it('always asks first, and removes it once confirmed', async () => {
-    const { core } = await showTasks(['renew the cert'])
+    const { core } = await showOpenTasks(['renew the cert'])
     await screen.findByText('renew the cert')
 
     fireEvent.click(
@@ -248,7 +422,7 @@ describe('deleting a Task', () => {
 
 describe('New Task', () => {
   it('reaches the same resident Task Creation window every Entry Point does', async () => {
-    const { desktop } = await showTasks()
+    const { desktop } = await showOpenTasks()
     await screen.findByRole('heading', { name: 'No Open Tasks' })
 
     fireEvent.click(screen.getByRole('button', { name: 'New Task' }))
@@ -259,7 +433,7 @@ describe('New Task', () => {
 
 describe('a Task changed elsewhere', () => {
   it('shows up with no manual refresh', async () => {
-    const { desktop, core, clock } = await showTasks(['already here'])
+    const { desktop, core, clock } = await showOpenTasks(['already here'])
     await screen.findByText('already here')
 
     clock.set(new Date('2026-03-09T14:00:00'))
@@ -274,7 +448,7 @@ describe('a Task changed elsewhere', () => {
 
 describe('Escape', () => {
   it('closes the window when nothing has taken the screen over', async () => {
-    const { desktop } = await showTasks(['renew the cert'])
+    const { desktop } = await showOpenTasks(['renew the cert'])
     let closed = 0
     desktop.closeWindow = async () => {
       closed += 1
@@ -292,7 +466,7 @@ describe('Escape', () => {
 /** Tasks View is one of the windows with an overlay title bar. */
 describe('the window chrome', () => {
   it('keeps a strip above everything for the traffic lights to sit in', async () => {
-    await showTasks()
+    await showOpenTasks()
     await screen.findByRole('heading', { name: 'No Open Tasks' })
 
     const strip = document.querySelector<HTMLElement>(
@@ -306,7 +480,7 @@ describe('the window chrome', () => {
 describe('the four groups', () => {
   /** One Task in each group, seen from a fixed morning. */
   async function grouped() {
-    const built = await showTasks()
+    const built = await showOpenTasks()
     const { core } = built
 
     await core.createTask('last week', { date: '2026-03-02', time: null })
@@ -332,7 +506,7 @@ describe('the four groups', () => {
   })
 
   it('leaves out a group with nothing in it', async () => {
-    await showTasks(['someday'])
+    await showOpenTasks(['someday'])
 
     await expect.poll(groupHeadings).toEqual(['Unscheduled'])
   })
@@ -351,7 +525,7 @@ describe('the four groups', () => {
   })
 
   it('shows the Completed Tasks as one ungrouped list', async () => {
-    const { core, created } = await showTasks(['renew the cert'])
+    const { core, created } = await showOpenTasks(['renew the cert'])
     await core.completeTask(created[0].id)
     fireEvent.click(tab('Completed'))
 
@@ -360,7 +534,7 @@ describe('the four groups', () => {
   })
 
   it('shows the year in a scheduled Task row', async () => {
-    const { core, desktop } = await showTasks()
+    const { core, desktop } = await showOpenTasks()
     await core.createTask('plan next year', {
       date: '2027-03-16',
       time: null,
@@ -372,7 +546,7 @@ describe('the four groups', () => {
   })
 
   it('puts schedule metadata below the larger Task description', async () => {
-    const { core, desktop } = await showTasks(['renew the cert'])
+    const { core, desktop } = await showOpenTasks(['renew the cert'])
     const [task] = await core.openTasks()
     await core.editTask(task.id, {
       description: 'renew the cert',
@@ -393,7 +567,7 @@ describe('the four groups', () => {
 
 describe('the schedule controls', () => {
   it('has no time until there is a date for it to be a minute of', async () => {
-    await showTasks(['renew the cert'])
+    await showOpenTasks(['renew the cert'])
     fireEvent.click(await screen.findByText('renew the cert'))
 
     // No date-shaped field either: WebKit fills an empty one with today's
@@ -404,7 +578,7 @@ describe('the schedule controls', () => {
   })
 
   it('saves the date and the time chosen', async () => {
-    const { core, created, desktop } = await showTasks(['renew the cert'])
+    const { core, created, desktop } = await showOpenTasks(['renew the cert'])
     await core.editTask(created[0].id, {
       description: 'renew the cert',
       schedule: { date: '2026-03-16', time: null },
@@ -421,7 +595,7 @@ describe('the schedule controls', () => {
   })
 
   it('clears the time along with the date', async () => {
-    const { core, created, desktop } = await showTasks(['renew the cert'])
+    const { core, created, desktop } = await showOpenTasks(['renew the cert'])
     await core.editTask(created[0].id, {
       description: 'renew the cert',
       schedule: { date: '2026-03-16', time: '14:00' },
@@ -438,7 +612,7 @@ describe('the schedule controls', () => {
   })
 
   it('leaves the Task Description exactly as typed, schedule words and all', async () => {
-    const { core, created } = await showTasks(['ship it'])
+    const { core, created } = await showOpenTasks(['ship it'])
     fireEvent.click(await screen.findByText('ship it'))
 
     const input = screen.getByLabelText('Task Description') as HTMLInputElement
@@ -453,7 +627,7 @@ describe('the schedule controls', () => {
   })
 
   it('offers no schedule controls at all while a Task is Completed', async () => {
-    const { core, created } = await showTasks(['renew the cert'])
+    const { core, created } = await showOpenTasks(['renew the cert'])
     await core.completeTask(created[0].id)
     fireEvent.click(tab('Completed'))
     fireEvent.click(await screen.findByText('renew the cert'))
@@ -468,7 +642,7 @@ describe('the schedule controls', () => {
 
 describe('asking about Task Alerts', () => {
   it('asks the first time a Task with a time is saved, and never before', async () => {
-    const { core, created, desktop } = await showTasks(['renew the cert'])
+    const { core, created, desktop } = await showOpenTasks(['renew the cert'])
     desktop.alertPermission = 'undetermined'
     await core.editTask(created[0].id, {
       description: 'renew the cert',
@@ -484,7 +658,7 @@ describe('asking about Task Alerts', () => {
   })
 
   it('keeps the Task when macOS refuses, and says the Task is unaffected', async () => {
-    const { core, created, desktop } = await showTasks(['renew the cert'])
+    const { core, created, desktop } = await showOpenTasks(['renew the cert'])
     desktop.alertPermission = 'denied'
     await core.editTask(created[0].id, {
       description: 'renew the cert',
@@ -502,7 +676,7 @@ describe('asking about Task Alerts', () => {
 
 describe('a reconciliation the OS refused', () => {
   it('says so, since the window that reconciles has no screen', async () => {
-    const { desktop } = await showTasks(['renew the cert'])
+    const { desktop } = await showOpenTasks(['renew the cert'])
     await screen.findByText('renew the cert')
 
     await desktop.announceTaskAlertsReconciled(false)
@@ -513,7 +687,7 @@ describe('a reconciliation the OS refused', () => {
   })
 
   it('stops saying so once the OS takes them after all', async () => {
-    const { desktop } = await showTasks(['renew the cert'])
+    const { desktop } = await showOpenTasks(['renew the cert'])
     await screen.findByText('renew the cert')
     await desktop.announceTaskAlertsReconciled(false)
     await screen.findByText(/macOS is not holding the alerts/)
@@ -526,7 +700,7 @@ describe('a reconciliation the OS refused', () => {
   })
 
   it('leaves every Task exactly where it was', async () => {
-    const { desktop } = await showTasks(['renew the cert'])
+    const { desktop } = await showOpenTasks(['renew the cert'])
     await screen.findByText('renew the cert')
 
     await desktop.announceTaskAlertsReconciled(false)
@@ -538,7 +712,7 @@ describe('a reconciliation the OS refused', () => {
 
 describe('searching the Tasks', () => {
   it('searches both lists at once, each result labelled with the state it is in', async () => {
-    const { core, created } = await showTasks(['planned the migration'])
+    const { core, created } = await showOpenTasks(['planned the migration'])
     await core.completeTask(created[0].id)
     await core.createTask('ran the migration')
     await screen.findByText('planned the migration')
@@ -557,7 +731,7 @@ describe('searching the Tasks', () => {
   })
 
   it('answers a Completed result in the Completed list, with that Task singled out', async () => {
-    const { core, created } = await showTasks([
+    const { core, created } = await showOpenTasks([
       'renew the cert',
       'chase the invoice',
     ])
@@ -585,7 +759,7 @@ describe('searching the Tasks', () => {
   })
 
   it('answers an Open result without leaving the Open list', async () => {
-    await showTasks(['renew the cert', 'chase the invoice'])
+    await showOpenTasks(['renew the cert', 'chase the invoice'])
     await screen.findByText('renew the cert')
 
     fireEvent.change(searchBox(), { target: { value: 'chase' } })
@@ -607,7 +781,7 @@ describe('searching the Tasks', () => {
   })
 
   it('says so when no Task says the term', async () => {
-    await showTasks(['renew the cert'])
+    await showOpenTasks(['renew the cert'])
     await screen.findByText('renew the cert')
 
     fireEvent.change(searchBox(), { target: { value: 'migration' } })
@@ -616,7 +790,7 @@ describe('searching the Tasks', () => {
   })
 
   it('leaves the Search on Escape and shows the list again, without closing the window', async () => {
-    const { desktop } = await showTasks(['renew the cert'])
+    const { desktop } = await showOpenTasks(['renew the cert'])
     let closed = 0
     desktop.closeWindow = async () => {
       closed += 1
@@ -672,7 +846,7 @@ describe('a clicked Task Alert', () => {  it('singles out the Task even when the
   })
 
   it('stops singling it out once the user moves on', async () => {
-    const { desktop, created } = await showTasks(['renew the cert'])
+    const { desktop, created } = await showOpenTasks(['renew the cert'])
     await screen.findByText('renew the cert')
     desktop.openTaskAlert(`task:${created[0].id}`)
     await expect
@@ -698,7 +872,7 @@ describe('a clicked Task Alert', () => {  it('singles out the Task even when the
   })
 
   it('leaves nothing behind for the next window when it was announced', async () => {
-    const { desktop, created } = await showTasks(['renew the cert'])
+    const { desktop, created } = await showOpenTasks(['renew the cert'])
     await screen.findByText('renew the cert')
 
     // The click is written down as well as announced — the Rust side cannot
@@ -719,7 +893,7 @@ describe('a clicked Task Alert', () => {  it('singles out the Task even when the
   })
 
   it('shows the Open list with that Task singled out', async () => {
-    const { desktop, core, created } = await showTasks([
+    const { desktop, core, created } = await showOpenTasks([
       'renew the cert',
       'chase the invoice',
     ])
@@ -758,7 +932,7 @@ describe('the recurrence controls', () => {
   }
 
   it('cannot be used until there is a date to count from', async () => {
-    await showTasks(['renew the cert'])
+    await showOpenTasks(['renew the cert'])
     fireEvent.click(await screen.findByText('renew the cert'))
 
     expect(cadence().disabled).toBe(true)
@@ -766,7 +940,7 @@ describe('the recurrence controls', () => {
   })
 
   it('saves a cadence chosen beside the date', async () => {
-    const { core, created, desktop } = await showTasks(['renew the cert'])
+    const { core, created, desktop } = await showOpenTasks(['renew the cert'])
     await core.editTask(created[0].id, {
       description: 'renew the cert',
       schedule: { date: '2026-03-16', time: null },
@@ -783,7 +957,7 @@ describe('the recurrence controls', () => {
   })
 
   it('offers the weekdays only for a weekly cadence, and keeps several', async () => {
-    const { core, created, desktop } = await showTasks(['gym'])
+    const { core, created, desktop } = await showOpenTasks(['gym'])
     await core.editTask(created[0].id, {
       description: 'gym',
       schedule: { date: '2026-03-16', time: null },
@@ -808,7 +982,7 @@ describe('the recurrence controls', () => {
   })
 
   it('asks before clearing a date that would stop an existing recurrence', async () => {
-    const { core, created, desktop } = await showTasks(['water the plants'])
+    const { core, created, desktop } = await showOpenTasks(['water the plants'])
     await core.editTask(created[0].id, {
       description: 'water the plants',
       schedule: { date: '2026-03-16', time: null },
@@ -827,7 +1001,7 @@ describe('the recurrence controls', () => {
   })
 
   it('does not ask when the cadence itself is turned off', async () => {
-    const { core, created, desktop } = await showTasks(['water the plants'])
+    const { core, created, desktop } = await showOpenTasks(['water the plants'])
     await core.editTask(created[0].id, {
       description: 'water the plants',
       schedule: { date: '2026-03-16', time: null },
@@ -853,7 +1027,7 @@ describe('the recurrence controls', () => {
   })
 
   it('stops the recurrence once that clearing is confirmed', async () => {
-    const { core, created, desktop } = await showTasks(['water the plants'])
+    const { core, created, desktop } = await showOpenTasks(['water the plants'])
     await core.editTask(created[0].id, {
       description: 'water the plants',
       schedule: { date: '2026-03-16', time: null },
@@ -881,7 +1055,7 @@ describe('a Recurring Task in the list', () => {
   async function showRecurring(
     { completions = 0 } = {},
   ) {
-    const { core, clock, desktop, created } = await showTasks(['water the plants'])
+    const { core, clock, desktop, created } = await showOpenTasks(['water the plants'])
     const task = await core.editTask(created[0].id, {
       description: 'water the plants',
       schedule: { date: '2026-03-09', time: null },
@@ -1044,7 +1218,7 @@ describe('a Recurring Task in the list', () => {
 })
 
 it('edits, cancels and clears Task Details on Open and Completed Tasks', async () => {
-  const { core, created } = await showTasks(['proposal'])
+  const { core, created } = await showOpenTasks(['proposal'])
   fireEvent.click(await screen.findByText('proposal'))
   const details = () => screen.getByLabelText('Task Details (optional)') as HTMLTextAreaElement
   fireEvent.change(details(), { target: { value: '  context\n\n  instructions  ' } })
@@ -1074,7 +1248,7 @@ it('edits, cancels and clears Task Details on Open and Completed Tasks', async (
 })
 
 it('retains both edited fields after a failed save for correction and retry', async () => {
-  const { core } = await showTasks(['proposal'])
+  const { core } = await showOpenTasks(['proposal'])
   fireEvent.click(await screen.findByText('proposal'))
   const save = core.editTask
   core.editTask = async () => { throw new Error('disk unavailable') }
@@ -1093,7 +1267,7 @@ it('retains both edited fields after a failed save for correction and retry', as
 })
 
 it('keeps the whole draft when completion conflicts with a schedule save, then permits retry', async () => {
-  const { core, clock, created, driver, desktop } = await showTasks(['proposal'])
+  const { core, clock, created, driver, desktop } = await showOpenTasks(['proposal'])
   const task = await core.editTask(created[0].id, {
     description: 'proposal', schedule: { date: '2026-03-09', time: '09:00' },
     recurrence: { unit: 'day', interval: 1, weekdays: [] },
@@ -1136,7 +1310,7 @@ it('keeps the whole draft when completion conflicts with a schedule save, then p
 
 it.each([false, true])('locks editor fields during a pending save (failure: %s)', async (fails) => {
   const user = userEvent.setup()
-  const { core } = await showTasks(['proposal'])
+  const { core } = await showOpenTasks(['proposal'])
   fireEvent.click(await screen.findByText('proposal'))
   const description = screen.getByLabelText('Task Description') as HTMLInputElement
   const details = screen.getByLabelText('Task Details (optional)') as HTMLTextAreaElement

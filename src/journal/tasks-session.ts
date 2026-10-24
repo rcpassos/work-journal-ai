@@ -1,6 +1,5 @@
 /**
- * Managing what you owe, as a session rather than a screen: which of the two
- * lists is showing — or the Search that has taken the screen over —, the Tasks
+ * Managing what you owe, as a session rather than a screen: which list is showing — or the Search that has taken the screen over —, the Tasks
  * it resolves to, which of the four groups each one falls in, and what a
  * change to any of them re-reads. Every sequencing rule of Tasks View lives
  * here — which of two overlapping reads may reach the view,
@@ -35,12 +34,8 @@ import {
   type TaskSchedule,
 } from './journal'
 
-/**
- * Which list is showing. Open is where Tasks View opens, because a Task is
- * about what remains; Completed is a separate view rather than a filter over
- * the same one, and there is nothing else to choose between.
- */
-export type TasksTab = 'open' | 'completed'
+/** Daily Tasks opens first; the broader Open and Completed lists stay available. */
+export type TasksTab = 'daily' | 'open' | 'completed'
 
 /**
  * What Tasks View has to show, once the core has been asked. One arm at a
@@ -75,6 +70,8 @@ export type TasksState =
 /** Everything Tasks View renders, and the only thing it renders. */
 export interface TasksSnapshot {
   showing: TasksTab
+  /** Open work eligible for the view’s Add existing picker. */
+  candidates: Task[]
   tasks: TasksState
   /** What the reader has typed into the search field, and what it shows. */
   term: string
@@ -107,7 +104,8 @@ export interface TasksSnapshot {
 
 /** Where every session starts: nothing asked yet, so nothing to show. */
 export const openingTasksSnapshot: TasksSnapshot = {
-  showing: 'open',
+  showing: 'daily',
+  candidates: [],
   tasks: { state: 'loading' },
   term: '',
   searching: false,
@@ -119,7 +117,7 @@ export const openingTasksSnapshot: TasksSnapshot = {
 export interface TasksSession {
   /** What a view would render right now. */
   snapshot(): TasksSnapshot
-  /** The first read: the Open Tasks, which is where Tasks View opens. */
+  /** The first read: the persistent Daily Tasks selection. */
   open(): Promise<void>
   /**
    * The other list, or back again. Nothing else narrows either one. Also how
@@ -174,6 +172,8 @@ export interface TasksSession {
       recurrence?: Recurrence | null
     },
   ): Promise<boolean>
+  addDaily(id: string): Promise<boolean>
+  removeDaily(id: string): Promise<void>
   complete(id: string): Promise<void>
   reopen(id: string): Promise<void>
   /**
@@ -248,8 +248,10 @@ export function createTasksSession({
     const ticket = ++latestRead
     try {
       const core = await journal
-      const tasks =
-        tab === 'open' ? await core.openTasks() : await core.completedTasks()
+      const tasks = await (tab === 'daily'
+        ? core.dailyTasks()
+        : tab === 'open' ? core.openTasks() : core.completedTasks())
+      const candidates = tab === 'daily' ? await core.dailyTaskCandidates() : []
       // One read for the whole list rather than one per row: the histories
       // are wanted together, and a list that grew a query per Task would get
       // slower for the reason it got longer.
@@ -258,6 +260,7 @@ export function createTasksSession({
       )
       if (latestRead !== ticket) return
       show({
+        candidates,
         tasks: {
           state: 'tasks',
           tasks,
@@ -370,7 +373,7 @@ export function createTasksSession({
   return {
     snapshot: () => snapshot,
 
-    open: () => read('open'),
+    open: () => read('daily'),
 
     async show(tab) {
       // A problem is about the list it was raised over, and this is a
@@ -437,6 +440,16 @@ export function createTasksSession({
       return saved
     },
 
+    addDaily: (id) => change(
+      'That Task could not be added to Daily Tasks.',
+      core => core.addDailyTask(id),
+    ),
+    async removeDaily(id) {
+      await change(
+        'That Task could not be removed from Daily Tasks.',
+        core => core.removeDailyTask(id),
+      )
+    },
     async complete(id) {
       await change('That Task could not be completed.', (core) =>
         core.completeTask(id),

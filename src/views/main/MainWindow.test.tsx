@@ -581,6 +581,7 @@ describe('a section that is not showing', () => {
       section: 'tasks',
     })
     await showsTasks()
+    fireEvent.click(screen.getByRole('button', { name: 'Open' }))
 
     await user.click(
       await screen.findByRole('button', { name: 'Delete \u201Crenew the cert\u201D' }),
@@ -607,6 +608,7 @@ describe('a section that is not showing', () => {
       section: 'tasks',
     })
     await showsTasks()
+    fireEvent.click(screen.getByRole('button', { name: 'Open' }))
     await user.click(
       await screen.findByRole('button', { name: 'Delete \u201Crenew the cert\u201D' }),
     )
@@ -629,6 +631,7 @@ describe('a section that is not showing', () => {
       section: 'tasks',
     })
     await showsTasks()
+    fireEvent.click(screen.getByRole('button', { name: 'Open' }))
     await core.editTask(created[0].id, {
       description: 'water the plants',
       schedule: { date: '2026-03-16', time: null },
