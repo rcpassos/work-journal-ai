@@ -14,17 +14,20 @@ const MIGRATIONS_DIR = join(import.meta.dirname, '../../../src-tauri/migrations'
  * includes at compile time — the tested schema is the shipped schema, not a
  * copy of it.
  */
-export async function openTestDatabase(): Promise<{
+export async function openTestDatabase({
+  filename = ':memory:',
+  migrations = migrationSql(),
+}: { filename?: string; migrations?: string[] } = {}): Promise<{
   driver: SqlDriver
   close: () => void
 }> {
-  const database = new DatabaseSync(':memory:')
+  const database = new DatabaseSync(filename)
 
   // Production is sqlx, which enables foreign keys by default. The harness
   // must match, or the suite tests a laxer database than the one that ships.
   database.exec('PRAGMA foreign_keys = ON')
 
-  for (const sql of migrationSql()) {
+  for (const sql of migrations) {
     database.exec(sql)
   }
 

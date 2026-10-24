@@ -584,6 +584,14 @@ export interface Journal {
    * list — the order here is already the order inside every group.
    */
   openTasks(): Promise<Task[]>
+  /** Explicitly selected Open work, in append order. */
+  dailyTasks(): Promise<Task[]>
+  /** Open Tasks outside the working list, offered by Add existing. */
+  dailyTaskCandidates(): Promise<Task[]>
+  /** Append current Open work; never change the Task itself. */
+  addDailyTask(id: string): Promise<void>
+  /** Remove selection without deleting or rescheduling the Task. */
+  removeDailyTask(id: string): Promise<void>
   /** The commitments that were kept, most recently completed first. */
   completedTasks(): Promise<Task[]>
   /**
@@ -867,6 +875,37 @@ const SELECT_OPEN_TASKS = `
     created_at DESC,
     id DESC
 `
+
+/** The same Task records, ordered only by the user's explicit selection. */
+const SELECT_DAILY_TASKS = `
+  ${SELECT_TASKS}
+  WHERE completed_at IS NULL AND id IN (SELECT task_id FROM daily_tasks)
+  ORDER BY (SELECT position FROM daily_tasks WHERE task_id = tasks.id)
+`
+
+const SELECT_DAILY_TASK_CANDIDATES = `
+  ${SELECT_TASKS}
+  WHERE completed_at IS NULL AND id NOT IN (SELECT task_id FROM daily_tasks)
+  ORDER BY created_at DESC, id DESC
+`
+
+/** Guard the current work, including a recurring occurrence replaced at the same slot. */
+const INSERT_DAILY_TASK = `
+  INSERT INTO daily_tasks (task_id)
+  SELECT id FROM tasks
+  WHERE id = ? AND completed_at IS NULL
+    AND scheduled_date IS ? AND scheduled_time IS ?
+    AND recurrence_unit IS ? AND recurrence_interval IS ?
+    AND recurrence_weekdays IS ? AND recurrence_anchor_date IS ?
+    AND description = ? AND details IS ?
+    AND (? IS NULL OR EXISTS (
+      SELECT 1 FROM task_occurrences WHERE id = ? AND completed_at IS NULL
+    ))
+    AND id NOT IN (SELECT task_id FROM daily_tasks)
+`
+
+/** Selection ends with completion, including a recurring advance. */
+const DELETE_DAILY_TASK = `DELETE FROM daily_tasks WHERE task_id = ?`
 
 /** Most recently kept first — a different question, and a different order. */
 const SELECT_COMPLETED_TASKS = `
@@ -1485,6 +1524,7 @@ export function createJournal({
           params: [completedAt, ...completionGuardParams(task)],
           expectedRows: 1,
         },
+        { sql: DELETE_DAILY_TASK, params: [task.id] },
       ])
       return { ...task, completedAt }
     }
@@ -1521,6 +1561,7 @@ export function createJournal({
         params: [next, open.scheduledTime, ...completionGuardParams(task)],
         expectedRows: 1,
       },
+      { sql: DELETE_DAILY_TASK, params: [task.id] },
     ])
 
     return advanced
@@ -1792,6 +1833,35 @@ export function createJournal({
     async openTasks() {
       const rows = await driver.select<TaskRow>(SELECT_OPEN_TASKS, [])
       return rows.map(toTask)
+    },
+
+    async dailyTasks() {
+      const rows = await driver.select<TaskRow>(SELECT_DAILY_TASKS, [])
+      return rows.map(toTask)
+    },
+
+    async dailyTaskCandidates() {
+      const rows = await driver.select<TaskRow>(SELECT_DAILY_TASK_CANDIDATES, [])
+      return rows.map(toTask)
+    },
+
+    async addDailyTask(id) {
+      const task = await readTask(driver, id)
+      if (!isOpen(task)) throw new Error('Only Open Tasks can be selected.')
+      const open = task.recurrence === null
+        ? null
+        : await readOpenOccurrence(driver, task)
+      // Eligibility and append happen in one write. A completion or replacement
+      // since the read cannot silently select a recurring successor.
+      await driver.transaction([{
+        sql: INSERT_DAILY_TASK,
+        params: [...completionGuardParams(task), open?.id ?? null, open?.id ?? null],
+        expectedRows: 1,
+      }])
+    },
+
+    async removeDailyTask(id) {
+      await driver.execute(DELETE_DAILY_TASK, [id])
     },
 
     async completedTasks() {

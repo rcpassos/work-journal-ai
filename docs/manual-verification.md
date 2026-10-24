@@ -296,7 +296,12 @@ Against a release build and a repository with commits of your own from today.
 - [ ] Clicking on another application closes the window and the text is gone.
 - [ ] `Enter` on an empty field, and on a field holding only spaces, creates nothing and closes nothing.
 - [ ] Two Tasks with exactly the same description are both created and both listed.
-- [ ] **View Tasks** opens on **Open**, newest first, and a Task created while it is open appears with no manual refresh.
+- [ ] **View Tasks** opens on **Daily Tasks**, initially empty even with an existing backlog; **Open** and **Completed** remain accessible. New Tasks appear in **Open** without manual refresh.
+- [ ] **Add existing** searches Open Tasks by description and details, excludes selected Tasks, and appends each choice once. Escape dismisses the picker without closing the window, and keyboard selection works.
+- [ ] Removing a Daily Task keeps its schedule and its row in **Open**; adding it again puts it last. Closing the Main Window and restarting the app preserves the chosen list and order.
+- [ ] Editing or rescheduling selected work keeps its position and displays its updated schedule. Midnight, wake and focus changes preserve selection while **Open** continues to refresh its schedule groups.
+- [ ] Completion from Daily Tasks or another surface removes selection immediately; ordinary work stays in **Completed**, recurring work retains history and advances outside Daily Tasks. Later reopening and safe recurring Undo do not reselect work.
+- [ ] Confirmed deletion of selected work removes its row from Daily Tasks and Open; cancelling leaves both intact.
 - [ ] A Task's checkbox completes it immediately, with no confirmation, and it leaves the Open list at once.
 - [ ] **Completed** lists it, newest completed first; its checkbox reopens it and it returns to **Open**.
 - [ ] Clicking a Task's description opens the Editor; **Save** commits the new wording, and the list shows it.

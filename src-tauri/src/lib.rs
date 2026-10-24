@@ -733,6 +733,12 @@ fn migrations() -> Vec<Migration> {
             sql: include_str!("../migrations/0010_task_details.sql"),
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 11,
+            description: "daily tasks selection",
+            sql: include_str!("../migrations/0011_daily_tasks.sql"),
+            kind: MigrationKind::Up,
+        },
     ]
 }
 

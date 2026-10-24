@@ -4,6 +4,8 @@ What changed in each released version, newest first. Every `vX.Y.Z` section here
 
 ## Unreleased
 
+- Tasks View now opens on a persistent Daily Tasks list, where you can select existing Open Tasks, keep them in your chosen append order across days and restarts, and remove or complete work without losing the broader task lists.
+
 ## 0.18.1 — 2026-10-15
 
 - Undo Completion now preserves completion history when another window stops recurrence while the undo is being processed.

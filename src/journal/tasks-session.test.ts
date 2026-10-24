@@ -117,19 +117,19 @@ function afterDebounce() {
 }
 
 describe('opening Tasks View', () => {
-  it('opens on the Open Tasks, newest first', async () => {
+  it('opens on Daily Tasks without selecting the backlog', async () => {
     const { session, now } = await tasksSession(['first', 'second', 'third'])
 
     await session.open()
 
-    expect(now().showing).toBe('open')
-    expect(descriptionsOf(now())).toEqual(['third', 'second', 'first'])
+    expect(now().showing).toBe('daily')
+    expect(descriptionsOf(now())).toEqual([])
   })
 
   it('opens on an empty list rather than on nothing', async () => {
     const { session, now } = await tasksSession()
 
-    await session.open()
+    await session.show('open')
 
     expect(now().tasks).toMatchObject({ state: 'tasks', tasks: [] })
     expect(groupsOf(now())).toEqual({})
@@ -144,7 +144,7 @@ describe('opening Tasks View', () => {
       onChange: () => {},
     })
 
-    await session.open()
+    await session.show('open')
 
     expect(session.snapshot().tasks).toEqual({ state: 'unreadable' })
   })
@@ -161,7 +161,7 @@ describe('the two lists', () => {
     clock.set(new Date('2026-03-09T13:00:00'))
     await core.completeTask(created[0].id)
 
-    await session.open()
+    await session.show('open')
     await session.show('completed')
 
     expect(now().showing).toBe('completed')
@@ -175,7 +175,7 @@ describe('the two lists', () => {
     ])
     await core.completeTask(created[1].id)
 
-    await session.open()
+    await session.show('open')
 
     expect(descriptionsOf(now())).toEqual(['still owed'])
   })
@@ -184,7 +184,7 @@ describe('the two lists', () => {
 describe('completing and reopening', () => {
   it('completes a Task and takes it out of the Open list at once', async () => {
     const { session, created, announced, now } = await tasksSession(['renew it'])
-    await session.open()
+    await session.show('open')
 
     await session.complete(created[0].id)
 
@@ -198,7 +198,7 @@ describe('completing and reopening', () => {
   it('reopens a Completed Task and takes it out of the Completed list', async () => {
     const { session, core, created, now } = await tasksSession(['renew it'])
     await core.completeTask(created[0].id)
-    await session.open()
+    await session.show('open')
     await session.show('completed')
 
     await session.reopen(created[0].id)
@@ -213,7 +213,7 @@ describe('completing and reopening', () => {
 describe('editing a Task', () => {
   it('rewords it and re-reads the list', async () => {
     const { session, created, announced, now } = await tasksSession(['renew it'])
-    await session.open()
+    await session.show('open')
 
     await session.save(created[0].id, {
       description: 'renew the TLS certificate',
@@ -228,7 +228,7 @@ describe('editing a Task', () => {
   it('says so when the record refuses, and leaves the list as it was', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {})
     const { session, created, announced, now } = await tasksSession(['renew it'])
-    await session.open()
+    await session.show('open')
 
     await session.save(created[0].id, { description: '   ', schedule: null })
 
@@ -240,7 +240,7 @@ describe('editing a Task', () => {
   it('clears the problem once a change lands', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {})
     const { session, created, now } = await tasksSession(['renew it'])
-    await session.open()
+    await session.show('open')
     await session.save(created[0].id, { description: '', schedule: null })
 
     await session.save(created[0].id, {
@@ -255,7 +255,7 @@ describe('editing a Task', () => {
 describe('scheduling a Task from the Editor', () => {
   it('saves the wording and the schedule together', async () => {
     const { session, core, created, now } = await tasksSession(['renew it'])
-    await session.open()
+    await session.show('open')
 
     await session.save(created[0].id, {
       description: 'renew the certificate',
@@ -271,7 +271,7 @@ describe('scheduling a Task from the Editor', () => {
 
   it('moves the Task into its new group without a second read', async () => {
     const { session, created, now } = await tasksSession(['renew it'])
-    await session.open()
+    await session.show('open')
     expect(groupsOf(now())).toEqual({ unscheduled: ['renew it'] })
 
     await session.save(created[0].id, {
@@ -346,7 +346,7 @@ describe('asking about Task Alerts', () => {
     const { session, created, desktop, now } = await tasksSession(['renew it'], {
       alertPermission: 'undetermined',
     })
-    await session.open()
+    await session.show('open')
 
     await session.save(created[0].id, {
       description: 'renew it',
@@ -361,7 +361,7 @@ describe('asking about Task Alerts', () => {
     const { session, created, desktop } = await tasksSession(['renew it'], {
       alertPermission: 'undetermined',
     })
-    await session.open()
+    await session.show('open')
 
     await session.save(created[0].id, {
       description: 'renew it',
@@ -375,7 +375,7 @@ describe('asking about Task Alerts', () => {
     const { session, created, desktop } = await tasksSession(['renew it'], {
       alertPermission: 'granted',
     })
-    await session.open()
+    await session.show('open')
 
     await session.save(created[0].id, {
       description: 'renew it',
@@ -389,7 +389,7 @@ describe('asking about Task Alerts', () => {
     const { session, core, created, now } = await tasksSession(['renew it'], {
       alertPermission: 'denied',
     })
-    await session.open()
+    await session.show('open')
 
     await session.save(created[0].id, {
       description: 'renew it',
@@ -418,7 +418,7 @@ describe('grouping the Open Tasks', () => {
   it('says which of the four groups each Open Task is in', async () => {
     const { session, now } = await scheduled()
 
-    await session.open()
+    await session.show('open')
 
     expect(groupsOf(now())).toEqual({
       overdue: ['last week'],
@@ -430,7 +430,7 @@ describe('grouping the Open Tasks', () => {
 
   it('re-groups on the day rolling over, without re-reading', async () => {
     const { session, clock, core, now } = await scheduled()
-    await session.open()
+    await session.show('open')
     await core.deleteTask((await core.openTasks())[0].id)
 
     clock.set(new Date('2026-03-10T00:01:00'))
@@ -460,7 +460,7 @@ describe('deleting a Task', () => {
       'keep this',
       'delete this',
     ])
-    await session.open()
+    await session.show('open')
 
     await session.delete(created[1].id)
 
@@ -471,7 +471,7 @@ describe('deleting a Task', () => {
   it('says so when the record refuses', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {})
     const { session, now } = await tasksSession(['keep this'])
-    await session.open()
+    await session.show('open')
 
     await session.delete('missing')
 
@@ -483,7 +483,7 @@ describe('deleting a Task', () => {
 describe('a Task created elsewhere', () => {
   it('shows up in the list on a refresh, with no manual reload', async () => {
     const { session, core, clock, now } = await tasksSession(['already here'])
-    await session.open()
+    await session.show('open')
 
     clock.set(new Date('2026-03-09T14:00:00'))
     await core.createTask('typed in the Task Creation window')
@@ -497,7 +497,7 @@ describe('a Task created elsewhere', () => {
 
   it('refreshes whichever list is showing', async () => {
     const { session, core, clock, now } = await tasksSession()
-    await session.open()
+    await session.show('open')
     await session.show('completed')
 
     const task = await core.createTask('done elsewhere')
@@ -531,7 +531,7 @@ describe('a Recurring Task in the session', () => {
 
     clock.set(new Date('2026-03-09T20:00:00'))
     await core.completeTask(repeating.id)
-    await session.open()
+    await session.show('open')
 
     expect(occurrencesOf(now(), repeating.id)).toHaveLength(2)
     expect(occurrencesOf(now(), ordinary.id)).toEqual([])
@@ -544,7 +544,7 @@ describe('a Recurring Task in the session', () => {
       { date: '2026-03-09', time: null },
       daily,
     )
-    await session.open()
+    await session.show('open')
 
     clock.set(new Date('2026-03-09T20:00:00'))
     await session.complete(task.id)
@@ -560,7 +560,7 @@ describe('a Recurring Task in the session', () => {
       { date: '2026-03-09', time: null },
       daily,
     )
-    await session.open()
+    await session.show('open')
 
     clock.set(new Date('2026-03-09T20:00:00'))
     await session.complete(task.id)
@@ -583,7 +583,7 @@ describe('a Recurring Task in the session', () => {
     )
     clock.set(new Date('2026-03-09T20:00:00'))
     await core.completeTask(task.id)
-    await session.open()
+    await session.show('open')
 
     await session.stopRecurrence(task.id)
 
@@ -597,7 +597,7 @@ describe('a Recurring Task in the session', () => {
   it('saves a cadence from the Editor', async () => {
     const { session, core, now } = await tasksSession()
     const task = await core.createTask('gym', { date: '2026-03-09', time: null })
-    await session.open()
+    await session.show('open')
 
     await session.save(task.id, {
       description: 'gym',
@@ -612,7 +612,7 @@ describe('a Recurring Task in the session', () => {
   it('says so when a cadence the record refuses is saved', async () => {
     const { session, core, now } = await tasksSession()
     const task = await core.createTask('gym', { date: '2026-03-09', time: null })
-    await session.open()
+    await session.show('open')
 
     await session.save(task.id, {
       description: 'gym',
@@ -633,7 +633,7 @@ describe('searching the Tasks', () => {
     await core.createTask('ran the migration')
     await core.completeTask(created[0].id)
 
-    await session.open()
+    await session.show('open')
     await session.search('migration')
 
     expect(resultsOf(now())).toEqual([
@@ -656,7 +656,7 @@ describe('searching the Tasks', () => {
       }),
     })
 
-    await session.open()
+    await session.show('open')
     await session.search('F')
 
     expect(asked).toEqual([])
@@ -667,7 +667,7 @@ describe('searching the Tasks', () => {
   it('is showing a Search even when nothing matched', async () => {
     const { session, now } = await tasksSession(['Friday'])
 
-    await session.open()
+    await session.show('open')
     await session.search('migration')
 
     expect(now().tasks).toMatchObject({
@@ -691,7 +691,7 @@ describe('searching the Tasks', () => {
       }),
     })
 
-    await session.open()
+    await session.show('open')
     slow.hold('Fri')
     const searching = session.search('Fri')
     await afterDebounce()
@@ -720,7 +720,7 @@ describe('searching the Tasks', () => {
       },
     )
 
-    await session.open()
+    await session.show('open')
     slow.hold('migration')
     slow.hold('tray')
 
@@ -741,7 +741,7 @@ describe('searching the Tasks', () => {
   it('goes back to the list when the term drops below two characters', async () => {
     const { session, now } = await tasksSession(['Friday'])
 
-    await session.open()
+    await session.show('open')
     await session.search('Fri')
     await session.search('')
 
@@ -753,7 +753,7 @@ describe('searching the Tasks', () => {
   it('switching lists ends the Search but keeps the term in the field', async () => {
     const { session, now } = await tasksSession(['Friday'])
 
-    await session.open()
+    await session.show('open')
     await session.search('Fri')
     await session.show('completed')
 
@@ -768,7 +768,7 @@ describe('searching the Tasks', () => {
       'ran the migration',
     ])
 
-    await session.open()
+    await session.show('open')
     await session.search('migration')
 
     clock.set(new Date('2026-03-13T14:00:00'))
@@ -781,7 +781,7 @@ describe('searching the Tasks', () => {
   it('leaves the results alone when the day is looked at again', async () => {
     const { session, clock, now } = await tasksSession(['ran the migration'])
 
-    await session.open()
+    await session.show('open')
     await session.search('migration')
 
     clock.set(new Date('2026-03-10T00:01:00'))
@@ -793,7 +793,7 @@ describe('searching the Tasks', () => {
   it('ends the Search when a change made here shows the list as it now reads', async () => {
     const { session, created, now } = await tasksSession(['renew it'])
 
-    await session.open()
+    await session.show('open')
     await session.search('renew')
 
     await session.save(created[0].id, {
@@ -819,7 +819,7 @@ describe('searching the Tasks', () => {
       }),
     })
 
-    await session.open()
+    await session.show('open')
     slow.hold('read')
     const searching = session.search('al')
     // The list — with its checkboxes — is still on screen while the term
