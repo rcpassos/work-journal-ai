@@ -21,7 +21,7 @@ Optional multiline plain text belonging to a Task: context, instructions, links,
 _Avoid_: Body, attachment, subtask, Markdown
 
 **Task Creation**:
-The explicit act of writing a Task Description, optionally adding Task Details, and choosing Scheduled For and recurrence in its own always-ready window. `Enter` from the description or the Create action commits one Task; an empty description fails, while Escape or closing hides the window, commits nothing, and the next Task Creation starts empty. Date is the prerequisite for time and recurrence; clearing it also clears time, and asks before stopping an existing recurrence.
+The explicit act of writing a Task Description. Its always-ready window optionally accepts Task Details, Scheduled For, recurrence and an initially unchecked Add to Daily Tasks choice: `Enter` from the description or the Create action commits one Task; an empty description fails, while Escape or closing hides the window, commits nothing, and the next Task Creation starts empty. Daily Tasks also accepts a Task Description inline: Enter creates an Unscheduled Task at the bottom of Daily Tasks and leaves the field ready for another; details and scheduling can be added through the Task Editor. Date is the prerequisite for time and recurrence; clearing it also clears time, and asks before stopping an existing recurrence.
 _Avoid_: Capture, task inference, draft
 
 **Open Task**:
@@ -72,8 +72,12 @@ Remove the recurrence rule from a Recurring Task while retaining its current Tas
 _Avoid_: End series, cancel repeat
 
 **Tasks View**:
-The Main Window section for creating and managing Tasks. Tasks are organized prospectively by state and schedule and Notes retrospectively by Journal Day, so Tasks View and History answer different questions — but they are sections of one window and are never on screen at once. Opens on Open Tasks grouped as Overdue, Today, Upcoming, and Unscheduled; Completed Tasks are a separate view, with no arbitrary filters. A checkbox completes a Task immediately without confirmation; Recurring Tasks advance and expose Undo Completion while safe. Scheduled groups sort earliest first, Unscheduled sorts newest Task Created At first, and Completed sorts newest Task Completed At first. Every Task surface observes the same journal state immediately, and group membership refreshes at local midnight and whenever the app wakes or regains focus.
+The Main Window section for creating and managing Tasks. Tasks are organized prospectively and Notes retrospectively by Journal Day, so Tasks View and History answer different questions — but they are sections of one window and are never on screen at once. Opens on Daily Tasks, with the broader Task list accessible in the same section. The broader list groups Open Tasks as Overdue, Today, Upcoming, and Unscheduled; Completed Tasks are a separate view, with no arbitrary filters. A checkbox completes a Task immediately without confirmation; Recurring Tasks advance and expose Undo Completion while safe. Completion removes the work from Daily Tasks, including when a Recurring Task advances; its next occurrence requires a new explicit selection. Scheduled groups sort earliest first, Unscheduled sorts newest Task Created At first, and Completed sorts newest Task Completed At first. Every Task surface observes the same journal state immediately, and group membership refreshes at local midnight and whenever the app wakes or regains focus.
 _Avoid_: Task History, Notes filter
+
+**Daily Tasks**:
+A persistent, explicitly chosen subset of Open Tasks the user intends to work through next, with unfinished work staying across days. Its manual order expresses priority from highest to lowest independently of Scheduled For, without separate urgency labels or priority levels.
+_Avoid_: Today's schedule, daily plan, task copies
 
 **Task Editor**:
 The sheet inside Tasks View that changes an existing Task, in the Main Window that section belongs to. Save commits the changes; Cancel or closing discards them. It never reuses the resident Task Creation window, whose unfinished new Task therefore remains untouched.
