@@ -2,11 +2,12 @@
 
 import { afterEach, describe, expect, it } from 'vitest'
 import userEvent from '@testing-library/user-event'
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { fakeDesktop } from '@/platform/testing/desktop'
 import { createJournal, type Task } from '@/journal/journal'
 import { fixedClock, occurrencesOf, openTestDatabase } from '@/journal/testing/database'
 import TasksView from './TasksView'
+import TaskCreationView from './TaskCreationView'
 
 // Tasks View as the user meets it: the two lists, the checkbox that completes
 // without asking, the Editor that discards on Cancel, and the confirmation on
@@ -115,6 +116,151 @@ function setTime(time: string) {
 }
 
 describe('Daily Tasks', () => {
+  it('captures consecutive inline tasks at the bottom, ready for the next entry, and persists their identities', async () => {
+    const { core, created, desktop, driver, clock } = await showTasks(['priority'])
+    await core.addDailyTask(created[0].id)
+    await desktop.announceTasksChanged()
+    await expect.poll(rows).toEqual(['priority'])
+    const user = userEvent.setup()
+    const input = screen.getByRole('textbox', { name: 'New Task Description' }) as HTMLInputElement
+    await user.type(input, 'first addition{Enter}')
+    await expect.poll(rows).toEqual(['priority', 'first addition'])
+    expect(input.value).toBe('')
+    expect(document.activeElement).toBe(input)
+    await user.type(input, 'tomorrow at noon{Enter}')
+    await expect.poll(rows).toEqual(['priority', 'first addition', 'tomorrow at noon'])
+    expect(input.value).toBe('')
+    expect(document.activeElement).toBe(input)
+    const selected = await core.dailyTasks()
+    expect(selected.slice(1).map(task => [task.scheduledDate, task.scheduledTime, task.recurrence])).toEqual([
+      [null, null, null], [null, null, null],
+    ])
+    expect(await core.openTasks()).toEqual(expect.arrayContaining(selected))
+    expect(await core.openTasks()).toHaveLength(3)
+    cleanup()
+    const restarted = createJournal({ driver, clock })
+    render(<TasksView desktop={desktop} journal={Promise.resolve(restarted)} clock={clock} />)
+    await expect.poll(rows).toEqual(['priority', 'first addition', 'tomorrow at noon'])
+    expect(await restarted.dailyTasks()).toEqual(selected)
+  })
+
+  it('rejects blank inline descriptions and preserves Unicode and internal whitespace without parsing schedule words', async () => {
+    const { core } = await showTasks()
+    const user = userEvent.setup()
+    const input = await screen.findByRole('textbox', { name: 'New Task Description' }) as HTMLInputElement
+    await user.type(input, '   {Enter}')
+    expect(await core.openTasks()).toEqual([])
+    expect(await core.dailyTasks()).toEqual([])
+    expect(input.value).toBe('   ')
+    await user.clear(input)
+    fireEvent.change(input, { target: { value: '\u00a0  amanhã  明日\t👩🏽‍💻 tomorrow at noon  \u00a0' } })
+    await user.keyboard('{Enter}')
+    await expect.poll(rows).toEqual(['amanhã  明日\t👩🏽‍💻 tomorrow at noon'])
+    expect(await core.dailyTasks()).toEqual([expect.objectContaining({
+      description: 'amanhã  明日\t👩🏽‍💻 tomorrow at noon', scheduledDate: null, scheduledTime: null,
+    })])
+    expect(input.value).toBe('')
+  })
+
+  it('rolls back failed inline creation, retains the description, and announces only a successful retry', async () => {
+    const { core, driver, desktop, created } = await showTasks(['priority'])
+    await core.addDailyTask(created[0].id)
+    await desktop.announceTasksChanged()
+    await expect.poll(rows).toEqual(['priority'])
+    const announced: Task[][] = []
+    await desktop.onTasksChanged(() => { void core.dailyTasks().then(tasks => announced.push(tasks)) })
+    const transaction = driver.transaction
+    // Fail inside SQLite after the requested writes, exercising real rollback.
+    driver.transaction = statements => transaction([
+      ...statements, { sql: 'SELECT * FROM unavailable_storage', params: [] },
+    ])
+    const user = userEvent.setup()
+    const input = screen.getByRole('textbox', { name: 'New Task Description' }) as HTMLInputElement
+    await user.type(input, '  retry me  {Enter}')
+    await screen.findByText('That Task could not be stored. Press Enter to retry.')
+    expect(input.value).toBe('  retry me  ')
+    expect(document.activeElement).toBe(input)
+    expect(await core.openTasks()).toEqual(created)
+    expect(await core.dailyTasks()).toEqual(created)
+    expect(announced).toEqual([])
+    driver.transaction = transaction
+    await user.keyboard('{Enter}')
+    await expect.poll(rows).toEqual(['priority', 'retry me'])
+    expect(await core.openTasks()).toHaveLength(2)
+    await expect.poll(() => announced.map(tasks => tasks.map(task => task.description))).toEqual([['priority', 'retry me']])
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(input.value).toBe('')
+  })
+
+  it('prevents repeated submissions and edits while inline storage is pending', async () => {
+    const { core, driver } = await showTasks()
+    const transaction = driver.transaction
+    let release!: () => void
+    const pending = new Promise<void>(resolve => { release = resolve })
+    driver.transaction = async statements => { await pending; await transaction(statements) }
+    const user = userEvent.setup()
+    const input = screen.getByRole('textbox', { name: 'New Task Description' }) as HTMLInputElement
+    await user.type(input, 'one commitment{Enter}')
+    expect(input.readOnly).toBe(true)
+    await user.keyboard('{Enter}{Enter}discarded')
+    fireEvent.submit(screen.getByRole('form', { name: 'Create a Daily Task' }))
+    expect(input.value).toBe('one commitment')
+    expect(await core.openTasks()).toEqual([])
+    await act(async () => release())
+    await expect.poll(rows).toEqual(['one commitment'])
+    expect(await core.openTasks()).toHaveLength(1)
+    expect(await core.dailyTasks()).toHaveLength(1)
+    expect(input.readOnly).toBe(false)
+    expect(document.activeElement).toBe(input)
+    expect(input.value).toBe('')
+  })
+
+  it('keeps unfinished inline and resident descriptions independent', async () => {
+    const { core, desktop } = await showTasks()
+    const user = userEvent.setup()
+    const inline = screen.getByRole('textbox', { name: 'New Task Description' }) as HTMLInputElement
+    await user.type(inline, 'unfinished inline')
+    const resident = render(<TaskCreationView desktop={desktop} journal={Promise.resolve(core)} />)
+    const residentInput = within(resident.container).getByRole('textbox', { name: 'What do you need to do?' }) as HTMLInputElement
+    await user.type(residentInput, 'unfinished resident')
+    await user.click(inline)
+    await user.keyboard('{Enter}')
+    await expect.poll(rows).toEqual(['unfinished inline'])
+    expect(residentInput.value).toBe('unfinished resident')
+    await user.type(inline, 'next inline draft')
+    await user.click(residentInput)
+    await user.keyboard('{Enter}')
+    await expect.poll(async () => (await core.openTasks()).length).toBe(2)
+    expect(inline.value).toBe('next inline draft')
+    expect(residentInput.value).toBe('')
+    expect((await core.dailyTasks()).map(task => task.description)).toEqual(['unfinished inline'])
+  })
+
+  it('edits details, scheduling and recurrence after inline creation while keeping its identity and position', async () => {
+    const { core } = await showTasks()
+    const user = userEvent.setup()
+    const input = screen.getByRole('textbox', { name: 'New Task Description' })
+    await user.type(input, 'quick commitment{Enter}')
+    await expect.poll(rows).toEqual(['quick commitment'])
+    const [created] = await core.dailyTasks()
+    await user.type(input, 'second commitment{Enter}')
+    await expect.poll(rows).toEqual(['quick commitment', 'second commitment'])
+    await user.click(screen.getByText('quick commitment'))
+    const editor = await screen.findByRole('dialog', { name: 'Edit Task' })
+    await user.type(within(editor).getByLabelText('Task Details (optional)'), 'supporting context')
+    await user.click(screen.getByRole('button', { name: 'Add a date' }))
+    fireEvent.change(screen.getByLabelText('Scheduled For'), { target: { value: '2026-04-01' } })
+    setTime('12:00')
+    fireEvent.change(screen.getByLabelText('Repeats'), { target: { value: 'day' } })
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+    await expect.poll(() => screen.queryByRole('dialog')).toBeNull()
+    await expect.poll(rows).toEqual(['quick commitment', 'second commitment'])
+    expect((await core.dailyTasks())[0]).toMatchObject({
+      id: created.id, details: 'supporting context', scheduledDate: '2026-04-01', scheduledTime: '12:00',
+      recurrence: { unit: 'day', interval: 1, weekdays: [] },
+    })
+  })
+
   it('searches eligible work and appends each choice once without leaving Daily Tasks', async () => {
     const { core, created, desktop } = await showTasks(['first', 'second', 'finished'])
     await core.completeTask(created[2].id)

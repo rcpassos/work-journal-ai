@@ -20,6 +20,7 @@ import SearchField from '@/components/SearchField'
 import { useOffScreen } from '@/components/on-screen-context'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
+import { Input } from '@/components/ui/input'
 import { Kbd, KbdGroup } from '@/components/ui/kbd'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import {
@@ -380,9 +381,7 @@ export default function TasksView({
           />
         )}
 
-        {/* One of the Task Entry Points, and it reaches the very same resident
-            window the Hotkey and the Tray Menu do — never a second creation
-            surface inside this one. */}
+        {/* The resident window retains its independent unfinished text. */}
         <Button
           variant="outline"
           size="sm"
@@ -425,7 +424,7 @@ export default function TasksView({
         )}
         {tasks.state === 'tasks' && list.length === 0 && showing === 'daily' && (
           <EmptyState icon={ListTodoIcon} heading="No Daily Tasks yet">
-            Choose Open Tasks with Add existing to start your working list.
+            Type a Task Description below or choose Open Tasks with Add existing.
           </EmptyState>
         )}
         {tasks.state === 'tasks' && list.length === 0 && showing === 'open' && (
@@ -475,6 +474,10 @@ export default function TasksView({
         {showing !== 'open' && list.length > 0 && (
           <ol className="flex flex-col gap-1">{list.map(line)}</ol>
         )}
+        <InlineTaskCreation
+          hidden={showing !== 'daily' || searching || editing !== null}
+          onCreate={(description) => session.createDaily(description)}
+        />
       </main>
 
       {editing !== null && (
@@ -499,6 +502,60 @@ export default function TasksView({
         onCancel={() => setDeleting(null)}
       />
     </div>
+  )
+}
+
+/** A draft belongs to this view, independently of the resident window. */
+function InlineTaskCreation({ hidden, onCreate }: {
+  hidden: boolean
+  onCreate: (description: string) => Promise<boolean>
+}) {
+  const [description, setDescription] = useState('')
+  const [saving, setSaving] = useState(false)
+  const submitting = useRef(false)
+  const input = useRef<HTMLInputElement>(null)
+
+  async function submit() {
+    if (submitting.current || description.trim().length === 0) return
+    submitting.current = true
+    setSaving(true)
+    try {
+      if (await onCreate(description)) {
+        setDescription('')
+        input.current?.focus()
+      }
+    } finally {
+      submitting.current = false
+      setSaving(false)
+    }
+  }
+
+  return (
+    <form
+      hidden={hidden}
+      className="pt-3"
+      aria-label="Create a Daily Task"
+      aria-busy={saving}
+      onSubmit={(event) => {
+        event.preventDefault()
+        void submit()
+      }}
+    >
+      <Input
+        ref={input}
+        aria-label="New Task Description"
+        placeholder="Add a Task — Enter to create"
+        value={description}
+        readOnly={saving}
+        onChange={(event) => setDescription(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter' && (event.nativeEvent.isComposing || event.keyCode === 229)) {
+            event.preventDefault()
+          }
+        }}
+        autoComplete="off"
+      />
+    </form>
   )
 }
 

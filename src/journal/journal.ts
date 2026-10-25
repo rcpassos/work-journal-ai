@@ -569,13 +569,15 @@ export interface Journal {
    * that says nothing is not a commitment. Duplicates are ordinary — two days
    * can owe the same thing — so nothing is checked against what is already
    * there. Optional details normalize line endings to LF and otherwise keep
-   * nonblank text verbatim; whitespace-only text is absent.
+   * nonblank text verbatim; whitespace-only text is absent. With addToDaily,
+   * creation and selection at the bottom commit together or neither does.
    */
   createTask(
     description: string,
     schedule?: TaskSchedule | null,
     recurrence?: Recurrence | null,
     details?: string | null,
+    options?: { addToDaily?: boolean },
   ): Promise<Task>
   /**
    * The commitments that remain: the scheduled ones earliest Scheduled For
@@ -1778,7 +1780,7 @@ export function createJournal({
       )
     },
 
-    async createTask(description, schedule = null, recurrence = null, details = null) {
+    async createTask(description, schedule = null, recurrence = null, details = null, { addToDaily = false } = {}) {
       const said = taskDescription(description)
       const scheduled = taskSchedule(schedule)
       const cadence = taskRecurrence(recurrence, scheduled)
@@ -1817,15 +1819,20 @@ export function createJournal({
         ],
       }
 
-      if (cadence === null) {
+      if (cadence === null && !addToDaily) {
         await driver.execute(stored.sql, stored.params)
         return task
       }
 
-      // The Task and its one Open occurrence come into existence together: a
-      // Recurring Task with no occurrence would be a series asking for
-      // nothing.
-      await driver.transaction([stored, opensOccurrence(task, now, null)])
+      // Creation, the Open occurrence (if recurring), and explicit selection
+      // must all land together. A failed selection cannot leave an orphan Task.
+      const statements = [stored]
+      if (cadence !== null) statements.push(opensOccurrence(task, now, null))
+      if (addToDaily) statements.push({
+        sql: 'INSERT INTO daily_tasks (task_id) VALUES (?)',
+        params: [task.id],
+      })
+      await driver.transaction(statements)
 
       return task
     },
