@@ -34,10 +34,11 @@ it('upgrades existing Tasks without selecting them and retains selection across 
     expect(await journal.openTasks()).toEqual([first, second])
     await journal.addDailyTask(second.id)
     await journal.addDailyTask(first.id)
+    await journal.reorderDailyTasks([first.id, second.id], [second.id, first.id])
     close()
     const restarted = await openTestDatabase({ filename, migrations: [] })
     close = restarted.close
-    expect(await createJournal({ driver: restarted.driver, clock }).dailyTasks()).toEqual([second, first])
+    expect(await createJournal({ driver: restarted.driver, clock }).dailyTasks()).toEqual([first, second])
   } finally { close(); rmSync(directory, { recursive: true, force: true }) }
 })
 
@@ -98,6 +99,55 @@ function racing(driver: SqlDriver, action: () => Promise<unknown>): SqlDriver {
     await driver.transaction(statements)
   } }
 }
+
+it.each(['remove', 'complete', 'delete', 'append', 'reorder', 'reselect'] as const)(
+  'refuses a reorder overtaken by a competing %s and preserves that decision', async action => {
+    const { driver, journal } = await setup()
+    const first = await journal.createTask('first', { date: '2026-03-09', time: '12:00' }, { unit: 'day', interval: 1, weekdays: [] }, 'details')
+    const second = await journal.createTask('second')
+    const third = await journal.createTask('third')
+    await journal.addDailyTask(first.id)
+    await journal.addDailyTask(second.id)
+    const expected = [first.id, second.id]
+    let winner: Awaited<ReturnType<typeof journal.dailyTasks>> = []
+    const stale = createJournal({ clock, driver: racing(driver, async () => {
+      switch (action) {
+        case 'remove': await journal.removeDailyTask(first.id); break
+        case 'complete': await journal.completeTask(first.id); break
+        case 'delete': await journal.deleteTask(first.id); break
+        case 'append': await journal.addDailyTask(third.id); break
+        case 'reorder': await journal.reorderDailyTasks([second.id, first.id], expected); break
+        case 'reselect':
+          await journal.removeDailyTask(second.id)
+          await journal.addDailyTask(second.id)
+      }
+      winner = await journal.dailyTasks()
+    }) })
+    await expect(stale.reorderDailyTasks([second.id, first.id], expected)).rejects.toThrow(TransactionGuardMiss)
+    expect(await journal.dailyTasks()).toEqual(winner)
+    if (action === 'complete') {
+      expect((await journal.openTasks()).find(task => task.id === first.id)).toEqual(expect.objectContaining({ scheduledDate: '2026-03-10', details: 'details' }))
+      expect((await occurrencesOf(journal, first.id)).filter(one => one.completedAt !== null)).toHaveLength(1)
+    }
+  },
+)
+
+it('rejects stale and invalid permutations without changing membership or priorities', async () => {
+  const { journal } = await setup()
+  await journal.reorderDailyTasks([], [])
+  const first = await journal.createTask('first')
+  const second = await journal.createTask('second')
+  await journal.addDailyTask(first.id)
+  await journal.addDailyTask(second.id)
+  const expected = [first.id, second.id]
+  await expect(journal.reorderDailyTasks([first.id, first.id], expected)).rejects.toThrow()
+  await expect(journal.reorderDailyTasks([first.id], expected)).rejects.toThrow()
+  await expect(journal.reorderDailyTasks(['missing', second.id], expected)).rejects.toThrow()
+  await expect(journal.reorderDailyTasks(expected, [second.id, first.id])).rejects.toThrow(TransactionGuardMiss)
+  expect(await journal.dailyTasks()).toEqual([first, second])
+  await journal.reorderDailyTasks(expected, expected)
+  expect(await journal.dailyTasks()).toEqual([first, second])
+})
 
 it.each(['complete', 'edit', 'delete', 'select'] as const)(
   'guards a selection against a competing %s without overwriting that decision', async action => {

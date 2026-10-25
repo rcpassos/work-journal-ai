@@ -116,6 +116,119 @@ function setTime(time: string) {
 }
 
 describe('Daily Tasks', () => {
+  it('reorders with the keyboard while retaining focus, respects boundaries, and keeps additions at the bottom', async () => {
+    const { core, created, desktop } = await showTasks(['first', 'second', 'third'])
+    for (const task of created) await core.addDailyTask(task.id)
+    await desktop.announceTasksChanged()
+    await expect.poll(rows).toEqual(['first', 'second', 'third'])
+    const user = userEvent.setup()
+    const handle = screen.getByRole('button', { name: 'Reorder “second”' })
+    handle.focus()
+    await user.keyboard('{Alt>}{ArrowUp}{/Alt}')
+    await expect.poll(rows).toEqual(['second', 'first', 'third'])
+    expect(document.activeElement).toBe(handle)
+    await user.keyboard('{Alt>}{ArrowUp}{/Alt}')
+    expect(await core.dailyTasks()).toEqual([created[1], created[0], created[2]])
+    await user.keyboard('{Alt>}{ArrowDown}{/Alt}')
+    await expect.poll(rows).toEqual(['first', 'second', 'third'])
+    expect(document.activeElement).toBe(handle)
+    await user.click(screen.getByRole('button', { name: 'Move “second” to bottom' }))
+    await expect.poll(rows).toEqual(['first', 'third', 'second'])
+    // A boundary action keeps a reachable focused control and does no write.
+    const bottom = screen.getByRole('button', { name: 'Move “second” to bottom' })
+    expect(document.activeElement).toBe(bottom)
+    await user.keyboard('{Enter}')
+    expect(await core.dailyTasks()).toEqual([created[0], created[2], created[1]])
+    await user.type(screen.getByRole('textbox', { name: 'New Task Description' }), 'addition{Enter}')
+    await expect.poll(rows).toEqual(['first', 'third', 'second', 'addition'])
+    await user.click(screen.getByRole('button', { name: 'Remove “third” from Daily Tasks' }))
+    await expect.poll(rows).toEqual(['first', 'second', 'addition'])
+  })
+
+  it('shows the saved order on a failed reorder and can retry without a false change announcement', async () => {
+    const { core, created, desktop, driver } = await showTasks(['first', 'second', 'third'])
+    for (const task of created) await core.addDailyTask(task.id)
+    await desktop.announceTasksChanged()
+    await expect.poll(rows).toEqual(['first', 'second', 'third'])
+    const announced: Task[][] = []
+    await desktop.onTasksChanged(() => { void core.dailyTasks().then(tasks => announced.push(tasks)) })
+    const transaction = driver.transaction
+    driver.transaction = statements => transaction([
+      ...statements, { sql: 'SELECT * FROM unavailable_storage', params: [] },
+    ])
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: 'Move “third” to top' }))
+    await screen.findByRole('alert')
+    expect(rows()).toEqual(['first', 'second', 'third'])
+    expect(await core.dailyTasks()).toEqual(created)
+    expect(announced).toEqual([])
+    driver.transaction = transaction
+    await user.click(screen.getByRole('button', { name: 'Move “third” to top' }))
+    await expect.poll(rows).toEqual(['third', 'first', 'second'])
+    expect(screen.queryByRole('alert')).toBeNull()
+    await expect.poll(() => announced).toEqual([[created[2], created[0], created[1]]])
+  })
+
+  it('keeps saved priorities visible while saving and ignores overlapping ordering requests', async () => {
+    const { core, created, desktop, driver } = await showTasks(['first', 'second', 'third'])
+    for (const task of created) await core.addDailyTask(task.id)
+    await desktop.announceTasksChanged()
+    await expect.poll(rows).toEqual(['first', 'second', 'third'])
+    const transaction = driver.transaction
+    let release!: () => void
+    const held = new Promise<void>(resolve => { release = resolve })
+    driver.transaction = async statements => { await held; return transaction(statements) }
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: 'Move “third” to top' }))
+    await screen.findByText('Saving Daily Tasks order.')
+    expect(rows()).toEqual(['first', 'second', 'third'])
+    expect(await core.dailyTasks()).toEqual(created)
+    await user.click(screen.getByRole('button', { name: 'Move “first” to bottom' }))
+    await act(async () => { release() })
+    await expect.poll(rows).toEqual(['third', 'first', 'second'])
+    expect(await core.dailyTasks()).toEqual([created[2], created[0], created[1]])
+  })
+
+  it('refreshes priorities from another surface and refuses an ordering overtaken by completion', async () => {
+    const { core, created, desktop, driver } = await showTasks(['first', 'second', 'third'])
+    for (const task of created) await core.addDailyTask(task.id)
+    await desktop.announceTasksChanged()
+    await expect.poll(rows).toEqual(['first', 'second', 'third'])
+    await core.reorderDailyTasks([created[2].id, created[0].id, created[1].id], created.map(task => task.id))
+    await desktop.announceTasksChanged()
+    await expect.poll(rows).toEqual(['third', 'first', 'second'])
+    const transaction = driver.transaction
+    driver.transaction = async statements => {
+      driver.transaction = transaction
+      await core.completeTask(created[0].id)
+      return transaction(statements)
+    }
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: 'Move “second” to top' }))
+    await screen.findByRole('alert')
+    await expect.poll(rows).toEqual(['third', 'second'])
+    expect((await core.dailyTasks()).map(task => task.id)).toEqual([created[2].id, created[1].id])
+    expect(await core.completedTasks()).toEqual([expect.objectContaining({ id: created[0].id })])
+  })
+
+  it('moves priorities to either end, retains task data and the broader sort, and reopens in the saved order', async () => {
+    const { core, created, desktop, clock, driver } = await showTasks(['first', 'second', 'third'])
+    for (const task of created) await core.addDailyTask(task.id)
+    await desktop.announceTasksChanged()
+    await expect.poll(rows).toEqual(['first', 'second', 'third'])
+    const broader = await core.openTasks()
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: 'Move “third” to top' }))
+    await expect.poll(rows).toEqual(['third', 'first', 'second'])
+    await user.click(screen.getByRole('button', { name: 'Move “first” to bottom' }))
+    await expect.poll(rows).toEqual(['third', 'second', 'first'])
+    expect(await core.dailyTasks()).toEqual([created[2], created[1], created[0]])
+    expect(await core.openTasks()).toEqual(broader)
+    cleanup()
+    render(<TasksView desktop={desktop} journal={Promise.resolve(createJournal({ driver, clock }))} clock={clock} />)
+    await expect.poll(rows).toEqual(['third', 'second', 'first'])
+  })
+
   it('captures consecutive inline tasks at the bottom, ready for the next entry, and persists their identities', async () => {
     const { core, created, desktop, driver, clock } = await showTasks(['priority'])
     await core.addDailyTask(created[0].id)
@@ -413,7 +526,7 @@ describe('Daily Tasks', () => {
     await screen.findByPlaceholderText('Search Open Tasks')
     await user.keyboard('{Escape}')
     expect(closed).toBe(false)
-    expect(screen.queryByPlaceholderText('Search Open Tasks')).toBeNull()
+    await expect.poll(() => screen.queryByPlaceholderText('Search Open Tasks')).toBeNull()
   })
 
   it('starts empty with an existing backlog and keeps the broader list available', async () => {

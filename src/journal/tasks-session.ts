@@ -175,6 +175,7 @@ export interface TasksSession {
   createDaily(description: string): Promise<boolean>
   addDaily(id: string): Promise<boolean>
   removeDaily(id: string): Promise<void>
+  reorderDaily(order: readonly string[], expected: readonly string[]): Promise<boolean>
   complete(id: string): Promise<void>
   reopen(id: string): Promise<void>
   /**
@@ -448,6 +449,10 @@ export function createTasksSession({
     addDaily: (id) => change(
       'That Task could not be added to Daily Tasks.',
       core => core.addDailyTask(id),
+    ),
+    reorderDaily: (order, expected) => change(
+      'Daily Tasks could not be reordered. The current saved list is shown; try again.',
+      core => core.reorderDailyTasks(order, expected),
     ),
     async removeDaily(id) {
       await change(

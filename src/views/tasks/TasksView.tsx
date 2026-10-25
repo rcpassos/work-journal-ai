@@ -63,6 +63,7 @@ import type { Desktop } from '@/platform/desktop'
 import { keysOfHotkey, type HotkeyStatuses } from '@/settings/hotkey'
 import TaskDetailsField from './TaskDetailsField'
 import ScheduleFields from './ScheduleFields'
+import DailyTaskList, { type DailyTaskControls } from './DailyTaskList'
 
 /**
  * What each group is called on screen. Overdue first because it is the one
@@ -244,6 +245,7 @@ export default function TasksView({
   // then the deletion, then a Search, and the Main Window when none has.
   // Dismissing that window closes it — it is not kept resident.
   function onKeyDown(event: React.KeyboardEvent<HTMLElement>) {
+    if (event.defaultPrevented) return
     if (event.key !== 'Escape') return
 
     if (editing !== null) {
@@ -304,11 +306,12 @@ export default function TasksView({
       : []
   const occurrences = tasks.state === 'tasks' ? tasks.occurrences : {}
 
-  function line(task: Task) {
+  function line(task: Task, ordering?: DailyTaskControls) {
     return (
       <TaskLine
         key={task.id}
         task={task}
+        ordering={ordering}
         occurrences={occurrences[task.id] ?? []}
         focused={task.id === focused}
         onToggle={(done) =>
@@ -466,13 +469,16 @@ export default function TasksView({
           <div className="flex flex-col gap-5">
             {groups.map((group) => (
               <TaskGroupSection key={group.name} name={group.name}>
-                {group.tasks.map(line)}
+                {group.tasks.map(task => line(task))}
               </TaskGroupSection>
             ))}
           </div>
         )}
-        {showing !== 'open' && list.length > 0 && (
-          <ol className="flex flex-col gap-1">{list.map(line)}</ol>
+        {showing === 'daily' && list.length > 0 && (
+          <DailyTaskList tasks={list} onReorder={session.reorderDaily}>{line}</DailyTaskList>
+        )}
+        {showing === 'completed' && list.length > 0 && (
+          <ol className="flex flex-col gap-1">{list.map(task => line(task))}</ol>
         )}
         <InlineTaskCreation
           hidden={showing !== 'daily' || searching || editing !== null}
@@ -689,6 +695,7 @@ function TaskResultLine({ task, onShow }: { task: Task; onShow: () => void }) {
  */
 function TaskLine({
   task,
+  ordering,
   occurrences,
   focused,
   onToggle,
@@ -699,6 +706,7 @@ function TaskLine({
   onDelete,
 }: {
   task: Task
+  ordering?: DailyTaskControls
   /** Every Task Occurrence of a Recurring Task, and none for any other. */
   occurrences: TaskOccurrence[]
   /** The one a clicked Task Alert was about, if this is it. */
@@ -726,13 +734,14 @@ function TaskLine({
 
   return (
     <li
-      ref={row}
+      ref={element => { row.current = element; ordering?.rowRef(element) }}
       aria-current={focused ? 'true' : undefined}
       className={`group rounded-md py-2 pl-2 pr-1 hover:bg-muted/40 focus-within:bg-muted/40 ${
         focused ? 'bg-muted/60 ring-2 ring-ring/40' : ''
       }`}
     >
       <div className="flex items-start gap-3">
+        {ordering?.handle}
         <span className="pt-1">
           <Checkbox
             checked={done}
@@ -781,6 +790,7 @@ function TaskLine({
         </div>
 
         <div className="flex shrink-0 items-center gap-0.5 pointer-events-none opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 focus-within:pointer-events-auto focus-within:opacity-100">
+          {ordering?.actions}
           {onRemoveDaily && (
             <Button
               variant="ghost"
