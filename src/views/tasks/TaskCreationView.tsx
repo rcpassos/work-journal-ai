@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import KeyHint from '@/components/KeyHint'
+import { Checkbox } from '@/components/ui/checkbox'
 import type { Journal, Recurrence, TaskSchedule } from '@/journal/journal'
 import { askAboutTaskAlerts } from '@/journal/task-alerts'
 import {
@@ -8,6 +9,7 @@ import {
   CAPTURE_PANEL_BORDER,
   CAPTURE_REFUSAL_HEIGHT,
   CAPTURE_SHADOW_GUTTER,
+  TASK_CREATION_DAILY_ROW,
   TASK_CREATION_RECURRENCE_ROW,
   TASK_CREATION_SCHEDULE_ROW,
   type Desktop,
@@ -47,6 +49,7 @@ export default function TaskCreationView({
 }) {
   const [description, setDescription] = useState('')
   const [details, setDetails] = useState('')
+  const [addToDailyTasks, setAddToDailyTasks] = useState(false)
   // Scheduled For as the row under the field has it. Null is Unscheduled,
   // which is where every Task Creation starts: a Task without a date is a
   // complete Task, not a draft waiting for one.
@@ -73,6 +76,7 @@ export default function TaskCreationView({
     // chosen.
     setDescription('')
     setDetails('')
+    setAddToDailyTasks(false)
     setSchedule(null)
     setRecurrence(null)
     setRefusals(0)
@@ -94,7 +98,7 @@ export default function TaskCreationView({
       const submittedShowing = showing.current
       try {
         try {
-          await (await journal).createTask(said, scheduledFor, repeats, details)
+          await (await journal).createTask(said, scheduledFor, repeats, details, addToDailyTasks)
         } catch (error) {
           // A Task that could not be stored must not vanish: leave the window
           // open with the description still in it, and say so, since a window
@@ -140,7 +144,7 @@ export default function TaskCreationView({
         submitting.current = false
       }
     },
-    [desktop, journal, dismiss, details],
+    [desktop, journal, dismiss, details, addToDailyTasks],
   )
 
   useEffect(() => {
@@ -262,6 +266,14 @@ export default function TaskCreationView({
             }}
           />
         </div>
+
+        <label
+          style={{ height: TASK_CREATION_DAILY_ROW }}
+          className="flex shrink-0 items-center gap-2 px-5 type-meta"
+        >
+          <Checkbox checked={addToDailyTasks} onCheckedChange={setAddToDailyTasks} />
+          Add to Daily Tasks
+        </label>
 
         {refusals > 0 && (
           <p

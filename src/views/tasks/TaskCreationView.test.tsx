@@ -2,21 +2,25 @@
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import userEvent from '@testing-library/user-event'
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { fakeDesktop, type FakeDesktop } from '@/platform/testing/desktop'
 import { createJournal, type Journal } from '@/journal/journal'
-import { fixedClock, openTestDatabase } from '@/journal/testing/database'
+import { fixedClock, occurrencesOf, openTestDatabase } from '@/journal/testing/database'
 import CaptureView from '../capture/CaptureView'
 import TaskCreationView from './TaskCreationView'
+import TasksView from './TasksView'
 
 // The Task Creation as the user meets it. What Enter and Escape mean, what a
 // refusal leaves on screen, and that an unfinished Capture is untouched by any
 // of it are all decided here, so this is where they have to be pressed.
 
 afterEach(cleanup)
+const openDatabases: Array<() => void> = []
+afterEach(() => { for (const close of openDatabases.splice(0)) close() })
 
 async function openJournal(): Promise<Journal> {
-  const { driver } = await openTestDatabase()
+  const { driver, close } = await openTestDatabase()
+  openDatabases.push(close)
   return createJournal({ clock: fixedClock('2026-03-02T09:00:00'), driver })
 }
 
@@ -593,4 +597,145 @@ it('discards details on Escape and retains them after a refused create or reside
   expect(details.value).toBe('')
   expect(field().value).toBe('')
   expect(await journal.openTasks()).toEqual([])
+})
+
+
+describe('choosing Daily Tasks during resident creation', () => {
+  it('starts unchecked and leaves the working list unchanged unless chosen', async () => {
+    const journal = await openJournal()
+    const first = await journal.createTask('first priority')
+    await journal.addDailyTask(first.id)
+    const desktop = fakeDesktop()
+    showTaskCreation(desktop, journal)
+
+    expect(screen.getByRole('checkbox', { name: 'Add to Daily Tasks' }).getAttribute('aria-checked')).toBe('false')
+    type('future work')
+    pressEnter()
+
+    await expect.poll(() => desktop.taskCreationsDismissed).toBe(1)
+    expect((await journal.openTasks()).map(task => task.description)).toContain('future work')
+    expect(await journal.dailyTasks()).toEqual([first])
+
+    type('next priority')
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Add to Daily Tasks' }))
+    pressEnter()
+
+    await expect.poll(() => desktop.taskCreationsDismissed).toBe(2)
+    expect((await journal.dailyTasks()).map(task => task.description)).toEqual(['first priority', 'next priority'])
+    expect(screen.getByRole('checkbox', { name: 'Add to Daily Tasks' }).getAttribute('aria-checked')).toBe('false')
+    expect(field().value).toBe('')
+  })
+})
+
+
+it.each(['date', 'time', 'recurring'] as const)('selects a %s Task at the bottom and retains scheduling and details', async kind => {
+  const journal = await openJournal()
+  const first = await journal.createTask('first priority')
+  await journal.addDailyTask(first.id)
+  const desktop = fakeDesktop({ alertPermission: 'undetermined' })
+  showTaskCreation(desktop, journal)
+  type('new work')
+  fireEvent.change(screen.getByLabelText('Task Details (optional)'), { target: { value: 'supporting context' } })
+  pick(dateField(), '2026-03-16')
+  if (kind !== 'date') pick(timeField(), '14:00')
+  if (kind === 'recurring') fireEvent.change(screen.getByLabelText('Repeats'), { target: { value: 'day' } })
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Add to Daily Tasks' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Create Task' }))
+
+  await expect.poll(() => desktop.taskCreationsDismissed).toBe(1)
+  const tasks = await journal.dailyTasks()
+  expect(tasks.map(task => task.description)).toEqual(['first priority', 'new work'])
+  expect(tasks[1]).toMatchObject({ details: 'supporting context', scheduledDate: '2026-03-16', scheduledTime: kind === 'date' ? null : '14:00', recurrence: kind === 'recurring' ? { unit: 'day', interval: 1, weekdays: [] } : null })
+  expect(await occurrencesOf(journal, tasks[1].id)).toHaveLength(kind === 'recurring' ? 1 : 0)
+  await expect.poll(() => desktop.alertPrompted).toBe(kind !== 'date')
+})
+
+it.each([false, true])('rolls back a checked creation entirely and preserves entered values for retry (recurring: %s)', async recurring => {
+  vi.spyOn(console, 'error').mockImplementation(() => {})
+  const { driver, close } = await openTestDatabase()
+  openDatabases.push(close)
+  const clock = fixedClock('2026-03-02T09:00:00')
+  const journal = createJournal({ driver, clock })
+  const first = await journal.createTask('first priority')
+  await journal.addDailyTask(first.id)
+  let fail = true
+  const creating = createJournal({ clock, driver: {
+    ...driver,
+    transaction: statements => driver.transaction(fail ? [
+      ...statements, { sql: 'INSERT INTO missing_table VALUES (1)', params: [] },
+    ] : statements),
+  } })
+  const desktop = fakeDesktop({ alertPermission: 'undetermined' })
+  showTaskCreation(desktop, creating)
+  type('retry this work')
+  fireEvent.change(screen.getByLabelText('Task Details (optional)'), { target: { value: 'keep this context' } })
+  pick(dateField(), '2026-03-16')
+  pick(timeField(), '14:00')
+  if (recurring) fireEvent.change(screen.getByLabelText('Repeats'), { target: { value: 'day' } })
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Add to Daily Tasks' }))
+  pressEnter()
+
+  expect((await screen.findByRole('alert')).textContent).toContain('could not be stored')
+  expect(await journal.openTasks()).toEqual([first])
+  expect(await journal.dailyTasks()).toEqual([first])
+  expect(await journal.occurrencesKeptIn({ from: '2026-03-01', to: '2026-03-31' })).toEqual([])
+  expect(field().value).toBe('retry this work')
+  expect((screen.getByLabelText('Task Details (optional)') as HTMLTextAreaElement).value).toBe('keep this context')
+  expect(dateField().value).toBe('2026-03-16')
+  expect(timeField().value).toBe('14:00')
+  expect((screen.getByLabelText('Repeats') as HTMLSelectElement).value).toBe(recurring ? 'day' : 'none')
+  expect(screen.getByRole('checkbox', { name: 'Add to Daily Tasks' }).getAttribute('aria-checked')).toBe('true')
+  expect(desktop.taskCreationsDismissed).toBe(0)
+  expect(desktop.alertPrompted).toBe(false)
+
+  fail = false
+  pressEnter()
+  await expect.poll(() => desktop.taskCreationsDismissed).toBe(1)
+  expect((await journal.dailyTasks()).map(task => task.description)).toEqual(['first priority', 'retry this work'])
+  expect(await journal.openTasks()).toHaveLength(2)
+})
+
+it('keeps the Daily Tasks choice on refocus and handoff, and clears it on abandon', async () => {
+  const journal = await openJournal()
+  const desktop = fakeDesktop()
+  showTaskCreation(desktop, journal)
+  type('unfinished work')
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Add to Daily Tasks' }))
+  await act(async () => desktop.showTaskCreation())
+  expect(field().value).toBe('unfinished work')
+  expect(document.activeElement).toBe(field())
+  desktop.windowVisible = false
+  await act(async () => desktop.blur())
+  desktop.windowVisible = true
+  await act(async () => desktop.showTaskCreation())
+  expect(screen.getByRole('checkbox', { name: 'Add to Daily Tasks' }).getAttribute('aria-checked')).toBe('true')
+  pressEscape()
+  await expect.poll(() => desktop.taskCreationsDismissed).toBe(1)
+  expect(screen.getByRole('checkbox', { name: 'Add to Daily Tasks' }).getAttribute('aria-checked')).toBe('false')
+  expect(await journal.openTasks()).toEqual([])
+})
+
+it('announces selection before dismissal and refreshes an open Tasks View without reload', async () => {
+  const journal = await openJournal()
+  const first = await journal.createTask('first priority')
+  await journal.addDailyTask(first.id)
+  const desktop = fakeDesktop()
+  const clock = fixedClock('2026-03-02T09:00:00')
+  const tasks = render(<TasksView desktop={desktop} journal={Promise.resolve(journal)} clock={clock} />)
+  await within(tasks.container).findByText('first priority')
+  let announced = false
+  await desktop.onTasksChanged(() => { announced = true })
+  const dismiss = desktop.dismissTaskCreation
+  desktop.dismissTaskCreation = async () => {
+    expect(announced).toBe(true)
+    expect((await journal.dailyTasks()).map(task => task.description)).toEqual(['first priority', 'new work'])
+    await dismiss()
+  }
+  showTaskCreation(desktop, journal)
+  type('new work')
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Add to Daily Tasks' }))
+  pressEnter()
+  await expect.poll(() => desktop.taskCreationsDismissed).toBe(1)
+  await within(tasks.container).findByText('new work')
+  expect([...tasks.container.querySelectorAll('li')].map(row => row.querySelector('button[type="button"]')?.textContent)).toEqual(['first priority', 'new work'])
 })

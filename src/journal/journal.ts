@@ -570,12 +570,14 @@ export interface Journal {
    * can owe the same thing — so nothing is checked against what is already
    * there. Optional details normalize line endings to LF and otherwise keep
    * nonblank text verbatim; whitespace-only text is absent.
+   * Optional Daily Tasks selection is appended atomically with creation.
    */
   createTask(
     description: string,
     schedule?: TaskSchedule | null,
     recurrence?: Recurrence | null,
     details?: string | null,
+    addToDailyTasks?: boolean,
   ): Promise<Task>
   /**
    * The commitments that remain: the scheduled ones earliest Scheduled For
@@ -1778,7 +1780,7 @@ export function createJournal({
       )
     },
 
-    async createTask(description, schedule = null, recurrence = null, details = null) {
+    async createTask(description, schedule = null, recurrence = null, details = null, addToDailyTasks = false) {
       const said = taskDescription(description)
       const scheduled = taskSchedule(schedule)
       const cadence = taskRecurrence(recurrence, scheduled)
@@ -1817,15 +1819,22 @@ export function createJournal({
         ],
       }
 
-      if (cadence === null) {
+      if (cadence === null && !addToDailyTasks) {
         await driver.execute(stored.sql, stored.params)
         return task
       }
 
-      // The Task and its one Open occurrence come into existence together: a
-      // Recurring Task with no occurrence would be a series asking for
-      // nothing.
-      await driver.transaction([stored, opensOccurrence(task, now, null)])
+      // Creation, its optional Open occurrence and explicit Daily Tasks
+      // selection must all succeed together.
+      await driver.transaction([
+        stored,
+        ...(cadence === null ? [] : [opensOccurrence(task, now, null)]),
+        ...(addToDailyTasks ? [{
+          sql: INSERT_DAILY_TASK,
+          params: [...completionGuardParams(task), null, null],
+          expectedRows: 1,
+        }] : []),
+      ])
 
       return task
     },
