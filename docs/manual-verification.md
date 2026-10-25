@@ -102,6 +102,13 @@ The palette is the point of this section, and the moment to watch is the one the
 - [ ] Re-opening **New Note** straight after committing a Note shows an empty field too — the committed text is not still sitting there.
 - [ ] Notes committed before quitting are still there after relaunching the app, and after a restart of the machine.
 
+## Daily Tasks from the resident Task Creation window
+
+- [ ] Open Task Creation through the Task Hotkey, Tray Menu **New Task**, and Tasks View **New Task**. Each reaches the same resident window with **Add to Daily Tasks** initially unchecked; all controls, including the choice and refusal message, fit without clipping.
+- [ ] With Daily Tasks open and existing priorities selected, create a Task without checking the choice. It appears in the broader Open list and leaves Daily Tasks unchanged. Create another with the choice checked: it appears at the bottom of Daily Tasks without reloading, and the next creation starts empty and unchecked.
+- [ ] Repeat checked creation with a date, a date and time, and a recurrence. Schedules, details and recurrence remain intact, and the normal Task Alert permission behavior still applies.
+- [ ] Check the choice and enter unfinished text, then invoke the Task Hotkey again or switch to another Work Journal window and return. The text and choice survive and the description regains focus. Escape abandons both and the next creation is unchecked.
+
 ## A Capture survives the Main Window opening
 
 Start each of these with **New Note**, half a Note typed and the field never left.
@@ -470,6 +477,7 @@ One line per end-to-end walk: the date, the build, and what it turned up. "Nothi
 | Date | Build | Findings |
 | ---- | ----- | -------- |
 | 2026-07-27 | `pnpm tauri build --bundles app`, 0.1.0 | Partial — only the items checkable without a person at the keyboard were run: the bundle builds, launches, and a second launch leaves exactly one process. The release build logs nothing, so the log item moved to a development build. The rest of the list is unwalked. |
+| 2026-10-25 | #349, release-mode build with `tauri.dev.conf.json`, 0.18.1 | Partial — release app bundle built and ad-hoc signed; updater archive signing stopped because no private key was available. Native walkthrough could not start: computer-use access reported “Computer Use permissions are not granted.” Daily Tasks checkbox layout, native entry points and focus checks above remain unverified. |
 
 ## Task Details (#276)
 

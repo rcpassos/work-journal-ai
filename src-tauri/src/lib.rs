@@ -200,7 +200,7 @@ const TASK_ALERT_COMPLETED_EVENT: &str = "task-alert://completed";
 /// rows under its field. Must match `CAPTURE_HEIGHT` and
 /// `taskCreationWindowHeight(false)` in `src/platform/desktop.ts`.
 const CAPTURE_HEIGHT: f64 = 130.0;
-const TASK_CREATION_HEIGHT: f64 = 347.0;
+const TASK_CREATION_HEIGHT: f64 = 387.0;
 
 /// Both resident windows are this wide. Must match `CAPTURE_WIDTH` in
 /// `src/platform/desktop.ts`.
