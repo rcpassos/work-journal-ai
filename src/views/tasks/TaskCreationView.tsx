@@ -98,7 +98,7 @@ export default function TaskCreationView({
       const submittedShowing = showing.current
       try {
         try {
-          await (await journal).createTask(said, scheduledFor, repeats, details, addToDailyTasks)
+          await (await journal).createTask(said, scheduledFor, repeats, details, { addToDaily: addToDailyTasks })
         } catch (error) {
           // A Task that could not be stored must not vanish: leave the window
           // open with the description still in it, and say so, since a window

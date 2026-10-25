@@ -172,6 +172,7 @@ export interface TasksSession {
       recurrence?: Recurrence | null
     },
   ): Promise<boolean>
+  createDaily(description: string): Promise<boolean>
   addDaily(id: string): Promise<boolean>
   removeDaily(id: string): Promise<void>
   complete(id: string): Promise<void>
@@ -440,6 +441,10 @@ export function createTasksSession({
       return saved
     },
 
+    createDaily: (description) => change(
+      'That Task could not be stored. Press Enter to retry.',
+      core => core.createTask(description, null, null, null, { addToDaily: true }),
+    ),
     addDaily: (id) => change(
       'That Task could not be added to Daily Tasks.',
       core => core.addDailyTask(id),

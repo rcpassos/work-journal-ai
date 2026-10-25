@@ -569,15 +569,15 @@ export interface Journal {
    * that says nothing is not a commitment. Duplicates are ordinary — two days
    * can owe the same thing — so nothing is checked against what is already
    * there. Optional details normalize line endings to LF and otherwise keep
-   * nonblank text verbatim; whitespace-only text is absent.
-   * Optional Daily Tasks selection is appended atomically with creation.
+   * nonblank text verbatim; whitespace-only text is absent. With addToDaily,
+   * creation and selection at the bottom commit together or neither does.
    */
   createTask(
     description: string,
     schedule?: TaskSchedule | null,
     recurrence?: Recurrence | null,
     details?: string | null,
-    addToDailyTasks?: boolean,
+    options?: { addToDaily?: boolean },
   ): Promise<Task>
   /**
    * The commitments that remain: the scheduled ones earliest Scheduled For
@@ -1780,7 +1780,7 @@ export function createJournal({
       )
     },
 
-    async createTask(description, schedule = null, recurrence = null, details = null, addToDailyTasks = false) {
+    async createTask(description, schedule = null, recurrence = null, details = null, { addToDaily = false } = {}) {
       const said = taskDescription(description)
       const scheduled = taskSchedule(schedule)
       const cadence = taskRecurrence(recurrence, scheduled)
@@ -1819,22 +1819,20 @@ export function createJournal({
         ],
       }
 
-      if (cadence === null && !addToDailyTasks) {
+      if (cadence === null && !addToDaily) {
         await driver.execute(stored.sql, stored.params)
         return task
       }
 
-      // Creation, its optional Open occurrence and explicit Daily Tasks
-      // selection must all succeed together.
-      await driver.transaction([
-        stored,
-        ...(cadence === null ? [] : [opensOccurrence(task, now, null)]),
-        ...(addToDailyTasks ? [{
-          sql: INSERT_DAILY_TASK,
-          params: [...completionGuardParams(task), null, null],
-          expectedRows: 1,
-        }] : []),
-      ])
+      // Creation, the Open occurrence (if recurring), and explicit selection
+      // must all land together. A failed selection cannot leave an orphan Task.
+      const statements = [stored]
+      if (cadence !== null) statements.push(opensOccurrence(task, now, null))
+      if (addToDaily) statements.push({
+        sql: 'INSERT INTO daily_tasks (task_id) VALUES (?)',
+        params: [task.id],
+      })
+      await driver.transaction(statements)
 
       return task
     },
