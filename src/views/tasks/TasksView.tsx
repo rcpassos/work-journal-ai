@@ -123,6 +123,14 @@ export default function TasksView({
   // than the session: a list only ever has one change in progress.
   const [editing, setEditing] = useState<Task | null>(null)
   const [deleting, setDeleting] = useState<Task | null>(null)
+  // The work last completed from Daily Tasks. The row has already gone, so
+  // this is what keeps an accidental tick recoverable without leaving the
+  // list. Only the latest completion made here is offered; a later one
+  // replaces it, and a completion made elsewhere leaves it untouched.
+  const [lastCompletion, setLastCompletion] = useState<{
+    id: string
+    description: string
+  } | null>(null)
   // The Task a clicked Task Alert was about. Null until one is clicked: the
   // window opens on the whole list, not on one row.
   const [focused, setFocused] = useState<string | null>(null)
@@ -313,6 +321,28 @@ export default function TasksView({
       : []
   const occurrences = tasks.state === 'tasks' ? tasks.occurrences : {}
 
+  /**
+   * Completing from Daily Tasks takes the row away at once, so the way back is
+   * an action beside the list rather than the row that just went. A failure
+   * already has the session's refusal line; it never leaves work to undo.
+   */
+  async function completeFromList(task: Task) {
+    const completed = await session.complete(task.id)
+    if (completed && showing === 'daily') {
+      setLastCompletion({ id: task.id, description: task.description })
+    }
+  }
+
+  /** The Undo the completion above offered, against whatever the record says now. */
+  async function undoLastCompletion() {
+    if (lastCompletion === null) return
+    const { id } = lastCompletion
+    // Gone before the write lands: the record refuses it outright when the
+    // completion is no longer the latest safe one, and the refusal says so.
+    setLastCompletion(null)
+    await session.undoCompletion(id)
+  }
+
   function line(task: Task, ordering?: DailyTaskControls) {
     return (
       <TaskLine
@@ -322,7 +352,7 @@ export default function TasksView({
         occurrences={occurrences[task.id] ?? []}
         focused={task.id === focused}
         onToggle={(done) =>
-          void (done ? session.complete(task.id) : session.reopen(task.id))
+          void (done ? completeFromList(task) : session.reopen(task.id))
         }
         onEdit={() => setEditing(task)}
         onUndoCompletion={() => void session.undoCompletion(task.id)}
@@ -423,6 +453,25 @@ export default function TasksView({
         <p role="status" className="shrink-0 px-6 pb-3 type-meta text-muted-foreground">
           {alertProblem}
         </p>
+      )}
+
+      {/* The work just completed, said where it left a gap. Daily Tasks is
+          where the completion happened, so the way back belongs there too. */}
+      {lastCompletion !== null && showing === 'daily' && (
+        <div className="flex shrink-0 items-center gap-2 px-6 pb-3 type-meta text-muted-foreground">
+          <span role="status">
+            “{lastCompletion.description}” completed.
+            <span className="sr-only"> Undo is available.</span>
+          </span>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => void undoLastCompletion()}
+            aria-label={`Undo completing “${lastCompletion.description}”`}
+          >
+            Undo
+          </Button>
+        </div>
       )}
 
       <main className="flex-1 overflow-y-auto px-6 pb-5">

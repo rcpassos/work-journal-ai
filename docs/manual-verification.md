@@ -317,7 +317,9 @@ Against a release build and a repository with commits of your own from today.
 - [ ] **Add existing** searches Open Tasks by description and details, excludes selected Tasks, and appends each choice once. Escape dismisses the picker without closing the window, and keyboard selection works.
 - [ ] Removing a Daily Task keeps its schedule and its row in **Open**; adding it again puts it last. Closing the Main Window and restarting the app preserves the chosen list and order.
 - [ ] Editing or rescheduling selected work keeps its position and displays its updated schedule. Midnight, wake and focus changes preserve selection while **Open** continues to refresh its schedule groups.
-- [ ] Completion from Daily Tasks or another surface removes selection immediately; ordinary work stays in **Completed**, recurring work retains history and advances outside Daily Tasks. Later reopening and safe recurring Undo do not reselect work.
+- [ ] Completion from Daily Tasks or another surface removes selection immediately; ordinary work stays in **Completed**, recurring work retains history and advances outside Daily Tasks.
+- [ ] After completing from Daily Tasks, an immediate Undo beside the list restores the Task to its previous position, at the top, middle and bottom of a long list. Later reopening from **Completed** leaves it in the broader **Open** list until it is selected again.
+- [ ] Immediate Undo of a recurring completion restores the completed occurrence and its previous position while safe Undo permits it. Once an edit has replaced the successor, or another completion has intervened, the row no longer offers safe Undo and an immediate Undo is refused with the reason stated, restoring neither the selection nor the occurrence.
 - [ ] Confirmed deletion of selected work removes its row from Daily Tasks and Open; cancelling leaves both intact.
 - [ ] A Task's checkbox completes it immediately, with no confirmation, and it leaves the Open list at once.
 - [ ] **Completed** lists it, newest completed first; its checkbox reopens it and it returns to **Open**.

@@ -911,6 +911,27 @@ const INSERT_DAILY_TASK = `
 /** Selection ends with completion, including a recurring advance. */
 const DELETE_DAILY_TASK = `DELETE FROM daily_tasks WHERE task_id = ?`
 
+/** Where the latest completion found the Task, if it found it selected. */
+const SELECT_PREVIOUS_DAILY_POSITION = `
+  SELECT previous_daily_position FROM tasks WHERE id = ?
+`
+
+/**
+ * Puts a completed Task back where its completion found it. The selection is
+ * skipped when the Task is already there, because a membership decision made
+ * after the completion is the user's and Undo only takes back the completion.
+ */
+const RESTORE_DAILY_TASK = `
+  INSERT INTO daily_tasks (position, task_id)
+  SELECT ?, id FROM tasks
+  WHERE id = ?
+    AND NOT EXISTS (SELECT 1 FROM daily_tasks WHERE task_id = ?)
+`
+
+/** The selection's rowid, read in the same write that removes it. */
+const DAILY_TASK_POSITION =
+  '(SELECT position FROM daily_tasks WHERE task_id = tasks.id)'
+
 /** Most recently kept first — a different question, and a different order. */
 const SELECT_COMPLETED_TASKS = `
   ${SELECT_TASKS}
@@ -985,23 +1006,42 @@ const TASK_COMPLETION_GUARD = `
     AND description = ? AND details IS ?
 `
 
+/**
+ * Completion remembers where Daily Tasks held the Task in the same write that
+ * removes it, so an immediate Undo has somewhere to put it back. The subquery
+ * reads the selection while it is still there; a Task the list never held
+ * records NULL, which is what keeps reopening from reselecting it later.
+ */
 const COMPLETE_TASK = `
-  UPDATE tasks SET completed_at = ? ${TASK_COMPLETION_GUARD}
+  UPDATE tasks
+  SET
+    completed_at = ?,
+    previous_daily_position = ${DAILY_TASK_POSITION}
+  ${TASK_COMPLETION_GUARD}
 `
 
 /** Where the series now stands: the slot its one Open occurrence asks for. */
 const ADVANCE_TASK = `
-  UPDATE tasks SET scheduled_date = ?, scheduled_time = ? ${TASK_COMPLETION_GUARD}
+  UPDATE tasks
+  SET
+    scheduled_date = ?,
+    scheduled_time = ?,
+    previous_daily_position = ${DAILY_TASK_POSITION}
+  ${TASK_COMPLETION_GUARD}
 `
 
 /**
  * The same, but only while the occurrence it is meant to follow really is the
  * Open one again. Undo removes a successor and reopens its predecessor, and a
- * head moved without them would point at a slot no occurrence holds.
+ * head moved without them would point at a slot no occurrence holds. The
+ * remembered position is consumed here too: it belonged to that completion.
  */
 const UPDATE_TASK_SCHEDULE_IF_OPEN = `
   UPDATE tasks
-  SET scheduled_date = ?, scheduled_time = ?
+  SET
+    scheduled_date = ?,
+    scheduled_time = ?,
+    previous_daily_position = NULL
   WHERE id = ?
     AND EXISTS (
       SELECT 1 FROM task_occurrences
@@ -1009,8 +1049,20 @@ const UPDATE_TASK_SCHEDULE_IF_OPEN = `
     )
 `
 
+/** Reopening is the later path, and it never reclaims a priority by itself. */
 const UPDATE_TASK_COMPLETED_AT = `
-  UPDATE tasks SET completed_at = ? WHERE id = ?
+  UPDATE tasks SET completed_at = ?, previous_daily_position = NULL WHERE id = ?
+`
+
+/**
+ * Undo of an ordinary completion, against the completion it read. The one
+ * selected row goes back in the same transaction as the reopening, so an
+ * interruption cannot leave the Task open without the priority it removed.
+ */
+const REOPEN_TASK_IF_COMPLETED = `
+  UPDATE tasks
+  SET completed_at = NULL, previous_daily_position = NULL
+  WHERE id = ? AND completed_at = ?
 `
 
 const DELETE_TASK = `
@@ -1509,6 +1561,35 @@ export function createJournal({
     ])
 
     return note
+  }
+
+  /**
+   * Taking back an ordinary completion: the Task is opened again and put back
+   * where Daily Tasks held it, in one transaction, or nothing about it changes.
+   * A completion that removed nothing has nothing to take back.
+   */
+  async function undoOrdinaryCompletion(
+    task: Task,
+    completedAt: string,
+  ): Promise<Task> {
+    const position = await readPreviousDailyPosition(driver, task.id)
+
+    if (position === null) {
+      throw new Error(
+        'Only the latest completion, which removed the Task from Daily Tasks, can be undone.',
+      )
+    }
+
+    await driver.transaction([
+      {
+        sql: REOPEN_TASK_IF_COMPLETED,
+        params: [task.id, completedAt],
+        expectedRows: 1,
+      },
+      { sql: RESTORE_DAILY_TASK, params: [position, task.id, task.id] },
+    ])
+
+    return readTask(driver, task.id)
   }
 
   /**
@@ -2160,7 +2241,12 @@ export function createJournal({
     },
 
     async undoCompletion(id) {
-      await readTask(driver, id)
+      const task = await readTask(driver, id)
+
+      if (task.completedAt !== null) {
+        return undoOrdinaryCompletion(task, task.completedAt)
+      }
+
       const occurrences = await readOccurrences(driver, id)
 
       if (!canUndoCompletion(occurrences)) {
@@ -2171,13 +2257,14 @@ export function createJournal({
 
       const successor = openOccurrence(occurrences)!
       const restored = completedOccurrences(occurrences)[0]
+      const position = await readPreviousDailyPosition(driver, id)
 
       // Removed before reopened, and never the other way round: the one-Open
       // index would refuse the moment in between, and a transaction that
       // cannot hold its own middle is not one. Each step must accept exactly
       // one row: a successor removed or replaced since the read refuses the
       // whole Undo before any completion history can be changed.
-      await driver.transaction([
+      const statements: SqlStatement[] = [
         {
           sql: DELETE_ADVANCED_OCCURRENCE,
           params: [successor.id, restored.id, restored.id],
@@ -2198,7 +2285,16 @@ export function createJournal({
           ],
           expectedRows: 1,
         },
-      ])
+      ]
+
+      // The position the completion removed goes back with it, unless another
+      // membership decision has selected the Task since. The update above
+      // consumed the remembered position either way.
+      if (position !== null) {
+        statements.push({ sql: RESTORE_DAILY_TASK, params: [position, id, id] })
+      }
+
+      await driver.transaction(statements)
 
       return readTask(driver, id)
     },
@@ -3776,6 +3872,27 @@ async function readTask(driver: SqlDriver, id: string): Promise<Task> {
   }
 
   return toTask(row)
+}
+
+/**
+ * The Daily Tasks position the latest completion took the Task from, or null
+ * when it took it from nowhere. Read before an Undo writes, so the statements
+ * it builds and the row they restore come from one answer.
+ */
+async function readPreviousDailyPosition(
+  driver: SqlDriver,
+  taskId: string,
+): Promise<number | null> {
+  const [row] = await driver.select<{ previous_daily_position: number | null }>(
+    SELECT_PREVIOUS_DAILY_POSITION,
+    [taskId],
+  )
+
+  if (row === undefined) {
+    throw new Error(`No such Task: ${taskId}.`)
+  }
+
+  return row.previous_daily_position
 }
 
 /**

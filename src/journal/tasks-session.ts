@@ -176,12 +176,14 @@ export interface TasksSession {
   addDaily(id: string): Promise<boolean>
   removeDaily(id: string): Promise<void>
   reorderDaily(order: readonly string[], expected: readonly string[]): Promise<boolean>
-  complete(id: string): Promise<void>
+  /** Whether the completion landed, so the view can offer its immediate Undo. */
+  complete(id: string): Promise<boolean>
   reopen(id: string): Promise<void>
   /**
-   * Takes back the most recent completion of a Recurring Task, while that is
-   * still safe. Refused rather than hidden when it is not: a list that moved
-   * under the user between the offer and the click has to say so.
+   * Takes back the most recent completion, restoring its Daily Tasks position
+   * where it had one, while that is still safe. Refused rather than hidden
+   * when it is not: a list that moved under the user between the offer and the
+   * click has to say so.
    */
   undoCompletion(id: string): Promise<void>
   /**
@@ -460,11 +462,9 @@ export function createTasksSession({
         core => core.removeDailyTask(id),
       )
     },
-    async complete(id) {
-      await change('That Task could not be completed.', (core) =>
-        core.completeTask(id),
-      )
-    },
+    complete: (id) => change('That Task could not be completed.', (core) =>
+      core.completeTask(id),
+    ),
     async reopen(id) {
       await change('That Task could not be reopened.', (core) =>
         core.reopenTask(id),
@@ -472,7 +472,7 @@ export function createTasksSession({
     },
     async undoCompletion(id) {
       await change(
-        'That completion could not be undone: only the latest one can be, and only while what it advanced to is untouched.',
+        'That completion could not be undone: only the latest safe one can be taken back.',
         (core) => core.undoCompletion(id),
       )
     },
