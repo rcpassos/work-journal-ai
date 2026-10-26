@@ -233,6 +233,81 @@ it('keeps a newer selection when undoing a recurring completion', async () => {
   expect((await occurrencesOf(journal, recurring.id)).filter(one => one.completedAt === null)).toHaveLength(1)
 })
 
+it('refuses an immediate Undo of an ordinary completion that was superseded', async () => {
+  const { journal } = await setup()
+  const first = await journal.createTask('first')
+  const second = await journal.createTask('second')
+  await selectAll(journal, first, second)
+
+  const receipt = await journal.completeTaskWithReceipt(second.id)
+  expect(receipt).toMatchObject({ kind: 'task' })
+
+  await journal.reopenTask(second.id)
+  await journal.addDailyTask(second.id)
+  await journal.completeTask(second.id)
+
+  await expect(journal.undoCompletion(second.id, receipt!)).rejects.toThrow(TransactionGuardMiss)
+  expect((await journal.completedTasks()).map(task => task.id)).toEqual([second.id])
+  expect((await journal.dailyTasks()).map(task => task.id)).toEqual([first.id])
+})
+
+it('refuses an immediate Undo of a recurring completion that was superseded', async () => {
+  const { driver } = await setup()
+  const local = fixedClock('2026-03-09T09:00:00')
+  const journal = createJournal({ driver, clock: local })
+  const recurring = await journal.createTask('daily report', { date: '2026-03-09', time: '12:00' }, {
+    unit: 'day', interval: 1, weekdays: [],
+  })
+  await journal.addDailyTask(recurring.id)
+
+  const receipt = await journal.completeTaskWithReceipt(recurring.id)
+  expect(receipt).toMatchObject({ kind: 'occurrence' })
+
+  local.set(new Date('2026-03-10T09:00:00'))
+  await journal.completeTask(recurring.id)
+
+  await expect(journal.undoCompletion(recurring.id, receipt!)).rejects.toThrow(TransactionGuardMiss)
+  expect((await occurrencesOf(journal, recurring.id)).filter(one => one.completedAt !== null)).toHaveLength(2)
+  expect((await occurrencesOf(journal, recurring.id)).filter(one => one.completedAt === null)).toHaveLength(1)
+  expect(await journal.dailyTasks()).toEqual([])
+})
+
+it('retains a later explicit removal when undoing a recurring completion', async () => {
+  const { journal } = await setup()
+  const first = await journal.createTask('first')
+  const recurring = await journal.createTask('daily report', { date: '2026-03-09', time: '12:00' }, {
+    unit: 'day', interval: 1, weekdays: [],
+  })
+  await selectAll(journal, first, recurring)
+
+  await journal.completeTask(recurring.id)
+  await journal.addDailyTask(recurring.id)
+  await journal.removeDailyTask(recurring.id)
+  expect((await journal.dailyTasks()).map(task => task.id)).toEqual([first.id])
+
+  await journal.undoCompletion(recurring.id)
+  expect((await journal.dailyTasks()).map(task => task.id)).toEqual([first.id])
+  expect((await journal.openTasks()).find(task => task.id === recurring.id)?.scheduledDate).toBe('2026-03-09')
+  expect((await occurrencesOf(journal, recurring.id)).filter(one => one.completedAt === null)).toHaveLength(1)
+})
+
+it('refuses a recurring Undo overtaken by a later membership decision', async () => {
+  const { driver, journal } = await setup()
+  const recurring = await journal.createTask('daily report', { date: '2026-03-09', time: '12:00' }, {
+    unit: 'day', interval: 1, weekdays: [],
+  })
+  await journal.addDailyTask(recurring.id)
+  await journal.completeTask(recurring.id)
+
+  const stale = createJournal({ clock, driver: racing(driver, async () => {
+    await journal.addDailyTask(recurring.id)
+    await journal.removeDailyTask(recurring.id)
+  }) })
+  await expect(stale.undoCompletion(recurring.id)).rejects.toThrow(TransactionGuardMiss)
+  expect(await journal.dailyTasks()).toEqual([])
+  expect((await occurrencesOf(journal, recurring.id)).filter(one => one.completedAt !== null)).toHaveLength(1)
+})
+
 it('refuses an unsafe recurring Undo without restoring the selection or discarding the edit', async () => {
   const { journal } = await setup()
   const recurring = await journal.createTask('daily report', { date: '2026-03-09', time: '12:00' }, {

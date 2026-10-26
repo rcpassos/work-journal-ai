@@ -245,6 +245,18 @@ export type CompletionAtSlot =
   | { outcome: 'completed'; task: Task }
   | { outcome: 'stale'; task: Task | null }
 
+/**
+ * What an immediate Undo must still find true before it takes a completion
+ * back. An ordinary completion is identified by the instant it was kept and
+ * the position it removed, so reopening or completing it again makes the
+ * offer stale. A recurring completion is identified by the successor
+ * occurrence it created: a later completion advances to another one, and no
+ * edit can reanchor back onto it.
+ */
+export type CompletionReceipt =
+  | { kind: 'task'; completedAt: string; position: number }
+  | { kind: 'occurrence'; successorId: string }
+
 /** Whether a Task is still a commitment, or a record that one was kept. */
 export function isOpen(task: Task): boolean {
   return task.completedAt === null
@@ -670,6 +682,12 @@ export interface Journal {
    */
   completeTask(id: string): Promise<Task>
   /**
+   * The same completion, answering with what an immediate Undo needs to find
+   * it again — and null when this call did not complete the Task here, or the
+   * completion removed no Daily Tasks position.
+   */
+  completeTaskWithReceipt(id: string): Promise<CompletionReceipt | null>
+  /**
    * Completes a Task only if it still stands at the slot the caller was told
    * about — the guarded twin of `completeTask`, for an actor holding a copy of
    * a schedule that may have moved under it.
@@ -689,8 +707,13 @@ export interface Journal {
    * at once or throw away a later decision. `canUndoCompletion` is the same
    * question asked without changing anything, which is what a screen offering
    * the action needs.
+   *
+   * A receipt names the completion an immediate offer was made for, so an
+   * offer left standing after a later completion refuses instead of taking the
+   * newer one back. Without one, the latest safe completion is taken back —
+   * the row action's question.
    */
-  undoCompletion(id: string): Promise<Task>
+  undoCompletion(id: string, receipt?: CompletionReceipt): Promise<Task>
   /**
    * Removes the recurrence rule while retaining the Task itself, exactly where
    * the series left it, and every completed Task Occurrence under it. There
@@ -928,6 +951,15 @@ const RESTORE_DAILY_TASK = `
     AND NOT EXISTS (SELECT 1 FROM daily_tasks WHERE task_id = ?)
 `
 
+/**
+ * A later explicit membership decision is the user's, and invalidates the
+ * position a completion remembered: Undo may still take the completion back,
+ * but it may not overrule an add or remove made after it.
+ */
+const CLEAR_PREVIOUS_DAILY_POSITION = `
+  UPDATE tasks SET previous_daily_position = NULL WHERE id = ?
+`
+
 /** The selection's rowid, read in the same write that removes it. */
 const DAILY_TASK_POSITION =
   '(SELECT position FROM daily_tasks WHERE task_id = tasks.id)'
@@ -1043,6 +1075,7 @@ const UPDATE_TASK_SCHEDULE_IF_OPEN = `
     scheduled_time = ?,
     previous_daily_position = NULL
   WHERE id = ?
+    AND previous_daily_position IS ?
     AND EXISTS (
       SELECT 1 FROM task_occurrences
       WHERE id = ? AND completed_at IS NULL
@@ -1062,7 +1095,7 @@ const UPDATE_TASK_COMPLETED_AT = `
 const REOPEN_TASK_IF_COMPLETED = `
   UPDATE tasks
   SET completed_at = NULL, previous_daily_position = NULL
-  WHERE id = ? AND completed_at = ?
+  WHERE id = ? AND completed_at = ? AND previous_daily_position = ?
 `
 
 const DELETE_TASK = `
@@ -1566,13 +1599,26 @@ export function createJournal({
   /**
    * Taking back an ordinary completion: the Task is opened again and put back
    * where Daily Tasks held it, in one transaction, or nothing about it changes.
-   * A completion that removed nothing has nothing to take back.
+   * A completion that removed nothing has nothing to take back. A receipt
+   * makes the write conditional on the exact completion offered, so a later
+   * reopening or completion cannot be mistaken for the one being taken back.
    */
   async function undoOrdinaryCompletion(
     task: Task,
-    completedAt: string,
+    receipt?: CompletionReceipt,
   ): Promise<Task> {
-    const position = await readPreviousDailyPosition(driver, task.id)
+    if (receipt !== undefined && receipt.kind !== 'task') {
+      throw new TransactionGuardMiss()
+    }
+
+    const completedAt = receipt?.kind === 'task' ? receipt.completedAt : task.completedAt
+    const position = receipt?.kind === 'task'
+      ? receipt.position
+      : await readPreviousDailyPosition(driver, task.id)
+
+    if (completedAt === null) {
+      throw new TransactionGuardMiss()
+    }
 
     if (position === null) {
       throw new Error(
@@ -1583,7 +1629,7 @@ export function createJournal({
     await driver.transaction([
       {
         sql: REOPEN_TASK_IF_COMPLETED,
-        params: [task.id, completedAt],
+        params: [task.id, completedAt, position],
         expectedRows: 1,
       },
       { sql: RESTORE_DAILY_TASK, params: [position, task.id, task.id] },
@@ -1598,7 +1644,9 @@ export function createJournal({
    * somewhere the user cannot see both keep the same transactional promises.
    * The caller has already established that the Task is Open.
    */
-  async function completeOpen(task: Task): Promise<Task> {
+  async function completeOpen(
+    task: Task,
+  ): Promise<{ task: Task; successorId: string | null }> {
     const now = clock.now()
 
     if (task.recurrence === null || task.recurrenceAnchor === null) {
@@ -1611,7 +1659,7 @@ export function createJournal({
         },
         { sql: DELETE_DAILY_TASK, params: [task.id] },
       ])
-      return { ...task, completedAt }
+      return { task: { ...task, completedAt }, successorId: null }
     }
 
     // A Recurring Task is never itself Completed: the occurrence is kept,
@@ -1630,6 +1678,9 @@ export function createJournal({
       scheduledDate: next,
       scheduledTime: open.scheduledTime,
     }
+    // The successor is this completion's identity for an immediate Undo: a
+    // later completion advances to another occurrence, never this one again.
+    const successorId = crypto.randomUUID()
 
     await driver.transaction([
       {
@@ -1640,7 +1691,7 @@ export function createJournal({
         ],
         expectedRows: 1,
       },
-      { ...opensOccurrence(advanced, now, open.id), expectedRows: 1 },
+      { ...opensOccurrence(advanced, now, open.id, successorId), expectedRows: 1 },
       {
         sql: ADVANCE_TASK,
         params: [next, open.scheduledTime, ...completionGuardParams(task)],
@@ -1649,7 +1700,36 @@ export function createJournal({
       { sql: DELETE_DAILY_TASK, params: [task.id] },
     ])
 
-    return advanced
+    return { task: advanced, successorId }
+  }
+
+  /**
+   * The checkbox's completion: retry a changed commitment, with the identity
+   * of the completion it actually made. An Alert completes its exact slot and
+   * never retries, which is why it reaches `completeOpen` directly.
+   */
+  async function completeWithRetry(id: string): Promise<{
+    task: Task
+    successorId: string | null
+    completed: boolean
+  }> {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const task = await readTask(driver, id)
+      if (!isOpen(task)) {
+        return { task, successorId: null, completed: false }
+      }
+      try {
+        return { ...(await completeOpen(task)), completed: true }
+      } catch (error) {
+        if (!(error instanceof TransactionGuardMiss)) throw error
+      }
+    }
+
+    const task = await readTask(driver, id)
+    if (!isOpen(task)) {
+      return { task, successorId: null, completed: false }
+    }
+    throw new TransactionGuardMiss()
   }
 
   return {
@@ -1941,17 +2021,27 @@ export function createJournal({
       const open = task.recurrence === null
         ? null
         : await readOpenOccurrence(driver, task)
-      // Eligibility and append happen in one write. A completion or replacement
-      // since the read cannot silently select a recurring successor.
-      await driver.transaction([{
-        sql: INSERT_DAILY_TASK,
-        params: [...completionGuardParams(task), open?.id ?? null, open?.id ?? null],
-        expectedRows: 1,
-      }])
+      // Eligibility, append and the end of any remembered completion position
+      // happen in one write. A completion or replacement since the read cannot
+      // silently select a recurring successor, and a later selection is the
+      // user's decision rather than something an older Undo may overrule.
+      await driver.transaction([
+        {
+          sql: INSERT_DAILY_TASK,
+          params: [...completionGuardParams(task), open?.id ?? null, open?.id ?? null],
+          expectedRows: 1,
+        },
+        { sql: CLEAR_PREVIOUS_DAILY_POSITION, params: [id] },
+      ])
     },
 
     async removeDailyTask(id) {
-      await driver.execute(DELETE_DAILY_TASK, [id])
+      // Removing is a membership decision too, so it ends the position an
+      // earlier completion might otherwise restore.
+      await driver.transaction([
+        { sql: DELETE_DAILY_TASK, params: [id] },
+        { sql: CLEAR_PREVIOUS_DAILY_POSITION, params: [id] },
+      ])
     },
 
     async reorderDailyTasks(order, expected) {
@@ -2182,23 +2272,33 @@ export function createJournal({
     },
 
     async completeTask(id) {
-      // A checkbox means this Task, so retry a changed commitment. An alert
-      // means its exact slot and never retries. Bound retries across windows.
-      for (let attempt = 0; attempt < 3; attempt++) {
-        const task = await readTask(driver, id)
-        if (!isOpen(task)) return task
-        try {
-          return await completeOpen(task)
-        } catch (error) {
-          if (!(error instanceof TransactionGuardMiss)) throw error
-        }
-      }
-
-      const task = await readTask(driver, id)
-      if (!isOpen(task)) return task
-      throw new TransactionGuardMiss()
+      return (await completeWithRetry(id)).task
     },
 
+    async completeTaskWithReceipt(id) {
+      const completed = await completeWithRetry(id)
+
+      if (!completed.completed) {
+        return null
+      }
+
+      if (completed.successorId !== null) {
+        return { kind: 'occurrence', successorId: completed.successorId }
+      }
+
+      if (completed.task.completedAt === null) {
+        return null
+      }
+
+      const position = await readPreviousDailyPosition(driver, id)
+      return position === null
+        ? null
+        : {
+            kind: 'task',
+            completedAt: completed.task.completedAt,
+            position,
+          }
+    },
 
     async completeTaskAt(id, slot) {
       // A deleted Task is stale rather than a failure: the caller is holding a
@@ -2221,7 +2321,8 @@ export function createJournal({
       }
 
       try {
-        return { outcome: 'completed', task: await completeOpen(task) }
+        const done = await completeOpen(task)
+        return { outcome: 'completed', task: done.task }
       } catch (error) {
         if (!(error instanceof TransactionGuardMiss)) throw error
         return { outcome: 'stale', task: await findTask(driver, id) }
@@ -2240,11 +2341,11 @@ export function createJournal({
       return { ...task, completedAt: null }
     },
 
-    async undoCompletion(id) {
+    async undoCompletion(id, receipt) {
       const task = await readTask(driver, id)
 
       if (task.completedAt !== null) {
-        return undoOrdinaryCompletion(task, task.completedAt)
+        return undoOrdinaryCompletion(task, receipt)
       }
 
       const occurrences = await readOccurrences(driver, id)
@@ -2257,13 +2358,26 @@ export function createJournal({
 
       const successor = openOccurrence(occurrences)!
       const restored = completedOccurrences(occurrences)[0]
+
+      // An offer made for one completion must not take back another. The
+      // successor occurrence is that completion's identity: a later
+      // completion advances to a new one, and an edit cannot reanchor onto it.
+      if (
+        receipt !== undefined &&
+        (receipt.kind !== 'occurrence' || receipt.successorId !== successor.id)
+      ) {
+        throw new TransactionGuardMiss()
+      }
+
       const position = await readPreviousDailyPosition(driver, id)
 
       // Removed before reopened, and never the other way round: the one-Open
       // index would refuse the moment in between, and a transaction that
       // cannot hold its own middle is not one. Each step must accept exactly
       // one row: a successor removed or replaced since the read refuses the
-      // whole Undo before any completion history can be changed.
+      // whole Undo before any completion history can be changed. The head
+      // update also requires the position still read here, so a membership
+      // decision made after the read refuses rather than being overwritten.
       const statements: SqlStatement[] = [
         {
           sql: DELETE_ADVANCED_OCCURRENCE,
@@ -2281,6 +2395,7 @@ export function createJournal({
             restored.scheduledDate,
             restored.scheduledTime,
             id,
+            position,
             restored.id,
           ],
           expectedRows: 1,
@@ -3941,11 +4056,12 @@ function opensOccurrence(
   task: Task,
   createdAt: Date,
   advancedFrom: string | null,
+  id = crypto.randomUUID(),
 ): SqlStatement {
   return {
     sql: INSERT_TASK_OCCURRENCE,
     params: [
-      crypto.randomUUID(),
+      id,
       task.id,
       task.scheduledDate,
       task.scheduledTime,

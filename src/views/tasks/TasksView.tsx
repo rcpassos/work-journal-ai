@@ -51,6 +51,7 @@ import {
   slotOf,
   taskIdOfAlert,
   type Clock,
+  type CompletionReceipt,
   type Journal,
   type Recurrence,
   type Task,
@@ -128,8 +129,9 @@ export default function TasksView({
   // list. Only the latest completion made here is offered; a later one
   // replaces it, and a completion made elsewhere leaves it untouched.
   const [lastCompletion, setLastCompletion] = useState<{
-    id: string
+    taskId: string
     description: string
+    receipt: CompletionReceipt
   } | null>(null)
   // The Task a clicked Task Alert was about. Null until one is clicked: the
   // window opens on the whole list, not on one row.
@@ -327,20 +329,24 @@ export default function TasksView({
    * already has the session's refusal line; it never leaves work to undo.
    */
   async function completeFromList(task: Task) {
-    const completed = await session.complete(task.id)
-    if (completed && showing === 'daily') {
-      setLastCompletion({ id: task.id, description: task.description })
+    const receipt = await session.complete(task.id)
+    if (receipt !== null && showing === 'daily') {
+      setLastCompletion({
+        taskId: task.id,
+        description: task.description,
+        receipt,
+      })
     }
   }
 
-  /** The Undo the completion above offered, against whatever the record says now. */
+  /** The Undo the completion above offered, against the exact completion it named. */
   async function undoLastCompletion() {
     if (lastCompletion === null) return
-    const { id } = lastCompletion
+    const { taskId, receipt } = lastCompletion
     // Gone before the write lands: the record refuses it outright when the
-    // completion is no longer the latest safe one, and the refusal says so.
+    // completion is no longer the one offered, and the refusal says so.
     setLastCompletion(null)
-    await session.undoCompletion(id)
+    await session.undoCompletion(taskId, receipt)
   }
 
   function line(task: Task, ordering?: DailyTaskControls) {

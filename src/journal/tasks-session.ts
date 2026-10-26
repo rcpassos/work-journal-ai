@@ -26,6 +26,7 @@ import {
   groupOpenTasks,
   isOpen,
   type Clock,
+  type CompletionReceipt,
   type Journal,
   type Recurrence,
   type Task,
@@ -176,16 +177,21 @@ export interface TasksSession {
   addDaily(id: string): Promise<boolean>
   removeDaily(id: string): Promise<void>
   reorderDaily(order: readonly string[], expected: readonly string[]): Promise<boolean>
-  /** Whether the completion landed, so the view can offer its immediate Undo. */
-  complete(id: string): Promise<boolean>
+  /**
+   * Completes the Task and answers with what its immediate Undo must still
+   * find true, or null when this call did not complete it here or it removed
+   * no Daily Tasks position. That is what keeps an offer from undoing a newer
+   * completion made elsewhere.
+   */
+  complete(id: string): Promise<CompletionReceipt | null>
   reopen(id: string): Promise<void>
   /**
-   * Takes back the most recent completion, restoring its Daily Tasks position
-   * where it had one, while that is still safe. Refused rather than hidden
-   * when it is not: a list that moved under the user between the offer and the
-   * click has to say so.
+   * Takes back the completion an immediate offer named, or the latest safe
+   * one when the row itself offered it, restoring its Daily Tasks position
+   * where it had one. Refused rather than hidden when it is not: a list that
+   * moved under the user between the offer and the click has to say so.
    */
-  undoCompletion(id: string): Promise<void>
+  undoCompletion(id: string, receipt?: CompletionReceipt): Promise<void>
   /**
    * Removes the cadence and keeps the Task and its history. Confirmed by the
    * view rather than here — a session says what happened, not what to ask.
@@ -462,18 +468,25 @@ export function createTasksSession({
         core => core.removeDailyTask(id),
       )
     },
-    complete: (id) => change('That Task could not be completed.', (core) =>
-      core.completeTask(id),
-    ),
+    async complete(id) {
+      let receipt: CompletionReceipt | null = null
+      const completed = await change(
+        'That Task could not be completed.',
+        async (core) => {
+          receipt = await core.completeTaskWithReceipt(id)
+        },
+      )
+      return completed ? receipt : null
+    },
     async reopen(id) {
       await change('That Task could not be reopened.', (core) =>
         core.reopenTask(id),
       )
     },
-    async undoCompletion(id) {
+    async undoCompletion(id, receipt) {
       await change(
         'That completion could not be undone: only the latest safe one can be taken back.',
-        (core) => core.undoCompletion(id),
+        (core) => core.undoCompletion(id, receipt),
       )
     },
     async stopRecurrence(id) {

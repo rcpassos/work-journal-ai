@@ -578,6 +578,30 @@ describe('Daily Tasks', () => {
     expect((await occurrencesOf(core, task.id)).filter(occurrence => occurrence.completedAt === null)).toHaveLength(1)
   })
 
+  it('refuses a stale immediate Undo after a later completion of the successor', async () => {
+    const { core, desktop, clock } = await showTasks()
+    const task = await core.createTask('daily report', { date: '2026-03-09', time: '12:00' }, {
+      unit: 'day', interval: 1, weekdays: [],
+    })
+    await core.addDailyTask(task.id)
+    await desktop.announceTasksChanged()
+    await screen.findByText('daily report')
+
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Complete “daily report”' }))
+    await expect.poll(rows).toEqual([])
+    clock.set(new Date('2026-03-10T09:00:00'))
+    fireEvent.click(tab('Open'))
+    fireEvent.click(await screen.findByRole('checkbox', { name: 'Complete “daily report”' }))
+    await desktop.announceTasksChanged()
+    fireEvent.click(tab('Daily Tasks'))
+    fireEvent.click(await screen.findByRole('button', { name: 'Undo completing “daily report”' }))
+
+    await screen.findByText(/That completion could not be undone/)
+    expect((await occurrencesOf(core, task.id)).filter(occurrence => occurrence.completedAt !== null)).toHaveLength(2)
+    expect((await occurrencesOf(core, task.id)).filter(occurrence => occurrence.completedAt === null)).toHaveLength(1)
+    expect(await core.dailyTasks()).toEqual([])
+  })
+
   it('removes recurring work completed through a Task Alert and safe Undo restores it to its previous position', async () => {
     const { core, desktop, clock } = await showTasks()
     const task = await core.createTask('daily report', { date: '2026-03-09', time: '12:00' }, {
