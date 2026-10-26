@@ -31,11 +31,12 @@ import {
   type Task,
   type TaskGroup,
   type TaskOccurrence,
+  type TaskPlacement,
   type TaskSchedule,
 } from './journal'
 
 /** Daily Tasks opens first; the broader Open and Completed lists stay available. */
-export type TasksTab = 'daily' | 'open' | 'completed'
+export type TasksTab = TaskPlacement
 
 /**
  * What Tasks View has to show, once the core has been asked. One arm at a
@@ -126,6 +127,17 @@ export interface TasksSession {
    * so asking again costs no retyping.
    */
   show(tab: TasksTab): Promise<void>
+  /**
+   * Shows the list the Task is in now: Daily Tasks when it is selected there,
+   * Completed when it has been kept, and otherwise the broader Open list. A
+   * Task that is gone keeps the Open list, as a clicked Alert always has.
+   *
+   * Navigation never adds, removes or reorders Daily Tasks membership, never
+   * changes a schedule, and never creates a Task. Resolves to the list shown,
+   * or null when it could not be read or a newer read took the screen first —
+   * which is when the reader's focus has nowhere honest to land.
+   */
+  showTask(id: string): Promise<TasksTab | null>
   /**
    * The Tasks are no longer what they were, and not because of anything this
    * window did: one was created in the Task Creation window, or changed in
@@ -292,6 +304,18 @@ export function createTasksSession({
   }
 
   /**
+   * One list on screen, whichever was showing before. A problem is about the
+   * list it was raised over, and this is a different one. Answering a result
+   * and moving lists are both this, so both end the Search; the term stays in
+   * the field either way.
+   */
+  async function switchTo(tab: TasksTab): Promise<void> {
+    abandonWaitingTerm()
+    show({ showing: tab, searching: false, problem: null })
+    await read(tab)
+  }
+
+  /**
    * Whether the question a read went to answer is still the one on screen: the
    * reader has neither typed on nor moved lists since it was asked.
    */
@@ -377,13 +401,27 @@ export function createTasksSession({
 
     open: () => read('daily'),
 
-    async show(tab) {
-      // A problem is about the list it was raised over, and this is a
-      // different one. Answering a result and moving lists are both this, so
-      // both end the Search; the term stays in the field either way.
-      abandonWaitingTerm()
-      show({ showing: tab, searching: false, problem: null })
-      await read(tab)
+    show: switchTo,
+
+    async showTask(id) {
+      // One question of the record, so a Task that moved on since a result or
+      // an Alert was read cannot be sent to a list it no longer belongs to.
+      const ticket = ++latestRead
+      let destination: TasksTab
+      try {
+        const core = await journal
+        destination = await core.taskPlacement(id)
+      } catch (error) {
+        giveUp(error, ticket)
+        return null
+      }
+
+      // A newer read took the screen while this one was asked: it is the later
+      // word, and singling the Task out over it would be the stale one.
+      if (latestRead !== ticket) return null
+
+      await switchTo(destination)
+      return destination
     },
 
     async refresh() {

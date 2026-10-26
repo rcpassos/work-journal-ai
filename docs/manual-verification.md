@@ -319,6 +319,9 @@ Against a release build and a repository with commits of your own from today.
 - [ ] Editing or rescheduling selected work keeps its position and displays its updated schedule. Midnight, wake and focus changes preserve selection while **Open** continues to refresh its schedule groups.
 - [ ] Completion from Daily Tasks or another surface removes selection immediately; ordinary work stays in **Completed**, recurring work retains history and advances outside Daily Tasks. Later reopening and safe recurring Undo do not reselect work.
 - [ ] Confirmed deletion of selected work removes its row from Daily Tasks and Open; cancelling leaves both intact.
+- [ ] Choosing a Search result for a selected Open Task switches to **Daily Tasks** and visibly singles it out; an unselected Open Task opens in **Open**, and a Completed Task opens in **Completed**. The term stays in the Search field.
+- [ ] Opening a Task Alert follows the same selected-versus-broader rule, both with the Main Window already open and after a cold launch, and never adds the Task to Daily Tasks. A Task completed, removed from Daily Tasks, rescheduled or deleted before opening appears in the list its current state belongs to; a deleted Task opens **Open** with nothing singled out.
+- [ ] Navigating from Search or a Task Alert leaves Daily Tasks membership and order, schedules, and the Task itself unchanged, and creates no duplicate Task.
 - [ ] A Task's checkbox completes it immediately, with no confirmation, and it leaves the Open list at once.
 - [ ] **Completed** lists it, newest completed first; its checkbox reopens it and it returns to **Open**.
 - [ ] Clicking a Task's description opens the Editor; **Save** commits the new wording, and the list shows it.

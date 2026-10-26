@@ -183,6 +183,13 @@ export interface Task {
   recurrenceAnchor: string | null
 }
 
+/**
+ * Where navigation should take the reader for a Task: Daily Tasks when it is
+ * selected there, Completed when it has been kept, and the broader Open list
+ * otherwise — including when the Task is gone, which a clicked Alert may name.
+ */
+export type TaskPlacement = 'daily' | 'open' | 'completed'
+
 /** The calendar units a cadence counts in, and there is no fifth. */
 export type RecurrenceUnit = 'day' | 'week' | 'month' | 'year'
 
@@ -586,6 +593,13 @@ export interface Journal {
    * list — the order here is already the order inside every group.
    */
   openTasks(): Promise<Task[]>
+  /**
+   * The list navigation should show for a Task, from one read of its current
+   * state and Daily Tasks membership: selected work is in Daily Tasks, kept
+   * work in Completed, and everything else — including a Task that is gone —
+   * in the broader Open list.
+   */
+  taskPlacement(id: string): Promise<TaskPlacement>
   /** Explicitly selected Open work, highest priority first. */
   dailyTasks(): Promise<Task[]>
   /** Open Tasks outside the working list, offered by Add existing. */
@@ -816,6 +830,11 @@ interface TaskRow {
   recurrence_anchor_date: string | null
 }
 
+interface TaskPlacementRow extends TaskRow {
+  /** SQLite's 0 or 1: whether this Task is selected in Daily Tasks. */
+  in_daily: number
+}
+
 interface TaskOccurrenceRow {
   id: string
   task_id: string
@@ -856,6 +875,20 @@ const SELECT_TASKS = `
 
 const SELECT_TASK = `
   ${SELECT_TASKS}
+  WHERE id = ?
+`
+
+/**
+ * One Task and whether it is selected, read together: a Search result or an
+ * Alert can name work that changed after it was read, and navigation must not
+ * split its answer across two moments.
+ */
+const SELECT_TASK_PLACEMENT = `
+  SELECT
+    id, description, details, created_at, completed_at, scheduled_date, scheduled_time,
+    ${RECURRENCE_COLUMNS},
+    EXISTS (SELECT 1 FROM daily_tasks WHERE task_id = tasks.id) AS in_daily
+  FROM tasks
   WHERE id = ?
 `
 
@@ -1842,6 +1875,15 @@ export function createJournal({
     async openTasks() {
       const rows = await driver.select<TaskRow>(SELECT_OPEN_TASKS, [])
       return rows.map(toTask)
+    },
+
+    async taskPlacement(id) {
+      const [row] = await driver.select<TaskPlacementRow>(SELECT_TASK_PLACEMENT, [id])
+      // A Task that is gone keeps the list a clicked Alert has always opened.
+      if (row === undefined) return 'open'
+      if (!isOpen(toTask(row))) return 'completed'
+
+      return row.in_daily === 1 ? 'daily' : 'open'
     },
 
     async dailyTasks() {

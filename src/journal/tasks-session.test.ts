@@ -834,3 +834,83 @@ describe('searching the Tasks', () => {
     expect(descriptionsOf(now())).toEqual(['beta'])
   })
 })
+
+describe('going to where a Task is', () => {
+  it('takes a selected Task to Daily Tasks', async () => {
+    const { session, core, created, now } = await tasksSession([
+      'selected',
+      'backlog',
+    ])
+    await core.addDailyTask(created[0].id)
+    await session.show('open')
+
+    await session.showTask(created[0].id)
+
+    expect(now().showing).toBe('daily')
+    expect(descriptionsOf(now())).toEqual(['selected'])
+  })
+
+  it('takes an unselected Open Task to the broader Open list', async () => {
+    const { session, core, created, now } = await tasksSession([
+      'selected',
+      'backlog',
+    ])
+    await core.addDailyTask(created[0].id)
+    await session.show('daily')
+
+    await session.showTask(created[1].id)
+
+    expect(now().showing).toBe('open')
+    expect(descriptionsOf(now())).toEqual(['backlog', 'selected'])
+  })
+
+  it('takes a Completed Task to Completed', async () => {
+    const { session, core, created, now } = await tasksSession(['kept'])
+    await core.completeTask(created[0].id)
+    await session.show('daily')
+
+    await session.showTask(created[0].id)
+
+    expect(now().showing).toBe('completed')
+    expect(descriptionsOf(now())).toEqual(['kept'])
+  })
+
+  it('follows where the Task is now, not where a result said it was', async () => {
+    const { session, core, created, now } = await tasksSession(['moved'])
+    await session.show('open')
+
+    // Read as unselected, selected by the time the result is chosen.
+    await core.addDailyTask(created[0].id)
+    await session.showTask(created[0].id)
+
+    expect(now().showing).toBe('daily')
+    expect(descriptionsOf(now())).toEqual(['moved'])
+  })
+
+  it('takes a Task that is gone to the broader Open list', async () => {
+    const { session, core, created, now } = await tasksSession(['deleted'])
+    await core.deleteTask(created[0].id)
+    await session.show('completed')
+
+    await session.showTask(created[0].id)
+
+    expect(now().showing).toBe('open')
+    expect(descriptionsOf(now())).toEqual([])
+  })
+
+  it('never changes membership, order, schedule, or the Task itself', async () => {
+    const { session, core, created } = await tasksSession([
+      'selected',
+      'backlog',
+    ])
+    await core.addDailyTask(created[0].id)
+    const selected = await core.dailyTasks()
+    const backlog = await core.openTasks()
+
+    await session.showTask(created[1].id)
+
+    expect(await core.dailyTasks()).toEqual(selected)
+    expect(await core.openTasks()).toEqual(backlog)
+    expect(await core.openTasks()).toHaveLength(2)
+  })
+})

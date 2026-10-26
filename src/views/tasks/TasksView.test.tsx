@@ -32,8 +32,12 @@ afterEach(() => {
 /** Tasks View over a real journal, already showing its first list. */
 async function showTasks(
   descriptions: string[] = [],
-  /** The Alert that opened the window, as a click that built it would leave. */
-  { pendingTaskAlert = null as string | null } = {},
+  {
+    /** The Alert that opened the window, by position in `descriptions`. */
+    pendingAlertFor = null as number | null,
+    /** Tasks selected for Daily Tasks before the view opens, by position. */
+    selected = [] as number[],
+  } = {},
 ) {
   const { driver, close } = await openTestDatabase()
   openDatabases.push(close)
@@ -46,9 +50,11 @@ async function showTasks(
     clock.set(new Date(`2026-03-09T${String(9 + index).padStart(2, '0')}:00:00`))
     created.push(await core.createTask(description))
   }
+  for (const index of selected) await core.addDailyTask(created[index].id)
 
   const desktop = fakeDesktop({ driver })
-  desktop.pendingTaskAlert = pendingTaskAlert
+  desktop.pendingTaskAlert =
+    pendingAlertFor === null ? null : `task:${created[pendingAlertFor].id}`
   render(
     <TasksView desktop={desktop} journal={Promise.resolve(core)} clock={clock} />,
   )
@@ -111,6 +117,16 @@ function tab(name: 'Daily Tasks' | 'Open' | 'Completed'): HTMLElement {
 /** What the reader is looking for, anywhere in the journal. */
 function searchBox(): HTMLInputElement {
   return screen.getByPlaceholderText('Search') as HTMLInputElement
+}
+
+/** Whether the row for a Task is the one singled out. */
+function singledOut(description: string): string | null {
+  return (
+    screen
+      .queryByText(description)
+      ?.closest('li')
+      ?.getAttribute('aria-current') ?? null
+  )
 }
 
 /**
@@ -1051,14 +1067,7 @@ describe('searching the Tasks', () => {
       await screen.findByRole('button', { name: /renew the cert/ }),
     )
 
-    await expect
-      .poll(() =>
-        screen
-          .queryByText('renew the cert')
-          ?.closest('li')
-          ?.getAttribute('aria-current'),
-      )
-      .toBe('true')
+    await expect.poll(() => singledOut('renew the cert')).toBe('true')
     await screen.findByRole('checkbox', {
       name: 'Reopen “renew the cert”',
     })
@@ -1075,14 +1084,7 @@ describe('searching the Tasks', () => {
       await screen.findByRole('button', { name: /chase the invoice/ }),
     )
 
-    await expect
-      .poll(() =>
-        screen
-          .queryByText('chase the invoice')
-          ?.closest('li')
-          ?.getAttribute('aria-current'),
-      )
-      .toBe('true')
+    await expect.poll(() => singledOut('chase the invoice')).toBe('true')
     await screen.findByRole('checkbox', {
       name: 'Complete “chase the invoice”',
     })
@@ -1116,6 +1118,68 @@ describe('searching the Tasks', () => {
     expect(closed).toBe(0)
     expect(searchBox().value).toBe('')
   })
+
+  it('answers a selected result in Daily Tasks, with that Task singled out', async () => {
+    const { core, created, desktop } = await showTasks(['renew the cert'])
+    await core.addDailyTask(created[0].id)
+    await desktop.announceTasksChanged()
+    await expect.poll(rows).toEqual(['renew the cert'])
+
+    fireEvent.change(searchBox(), { target: { value: 'renew' } })
+    fireEvent.click(
+      await screen.findByRole('button', { name: /renew the cert/ }),
+    )
+
+    await expect.poll(() => tab('Daily Tasks').getAttribute('aria-pressed')).toBe('true')
+    await expect.poll(() => singledOut('renew the cert')).toBe('true')
+    // Asking where a Task is never changes the working list.
+    expect((await core.dailyTasks()).map((task) => task.id)).toEqual([
+      created[0].id,
+    ])
+  })
+
+  it('answers an unselected Open result in the broader Open list', async () => {
+    const { core } = await showTasks(['renew the cert'])
+    await screen.findByRole('heading', { name: 'No Daily Tasks yet' })
+
+    fireEvent.change(searchBox(), { target: { value: 'renew' } })
+    fireEvent.click(
+      await screen.findByRole('button', { name: /renew the cert/ }),
+    )
+
+    await expect.poll(() => tab('Open').getAttribute('aria-pressed')).toBe('true')
+    await expect.poll(() => singledOut('renew the cert')).toBe('true')
+    expect(await core.dailyTasks()).toEqual([])
+  })
+
+  it('follows a Task that changed after its result was read', async () => {
+    const { core, created } = await showTasks(['renew the cert'])
+
+    fireEvent.change(searchBox(), { target: { value: 'renew' } })
+    const result = await screen.findByRole('button', { name: /renew the cert/ })
+    // The result was read while the Task was Open; it is chosen after it was kept.
+    await core.completeTask(created[0].id)
+    fireEvent.click(result)
+
+    await expect.poll(() => tab('Completed').getAttribute('aria-pressed')).toBe('true')
+    await expect.poll(() => singledOut('renew the cert')).toBe('true')
+    expect(searchBox().value).toBe('renew')
+  })
+
+  it('follows a Task selected after its result was read', async () => {
+    const { core, created } = await showTasks(['renew the cert'])
+
+    fireEvent.change(searchBox(), { target: { value: 'renew' } })
+    const result = await screen.findByRole('button', { name: /renew the cert/ })
+    await core.addDailyTask(created[0].id)
+    fireEvent.click(result)
+
+    await expect.poll(() => tab('Daily Tasks').getAttribute('aria-pressed')).toBe('true')
+    await expect.poll(() => singledOut('renew the cert')).toBe('true')
+    expect((await core.dailyTasks()).map((task) => task.id)).toEqual([
+      created[0].id,
+    ])
+  })
 })
 
 describe('a clicked Task Alert', () => {  it('singles out the Task even when the click built the window', async () => {
@@ -1141,14 +1205,7 @@ describe('a clicked Task Alert', () => {  it('singles out the Task even when the
       />,
     )
 
-    await expect
-      .poll(() =>
-        screen
-          .queryByText('renew the cert')
-          ?.closest('li')
-          ?.getAttribute('aria-current'),
-      )
-      .toBe('true')
+    await expect.poll(() => singledOut('renew the cert')).toBe('true')
     // Claimed once: a window opened any other way must not inherit the click.
     expect(await desktop.openedTaskAlert()).toBeNull()
   })
@@ -1157,26 +1214,12 @@ describe('a clicked Task Alert', () => {  it('singles out the Task even when the
     const { desktop, created } = await showOpenTasks(['renew the cert'])
     await screen.findByText('renew the cert')
     desktop.openTaskAlert(`task:${created[0].id}`)
-    await expect
-      .poll(() =>
-        screen
-          .queryByText('renew the cert')
-          ?.closest('li')
-          ?.getAttribute('aria-current'),
-      )
-      .toBe('true')
+    await expect.poll(() => singledOut('renew the cert')).toBe('true')
 
     fireEvent.click(tab('Completed'))
     fireEvent.click(tab('Open'))
 
-    await expect
-      .poll(() =>
-        screen
-          .queryByText('renew the cert')
-          ?.closest('li')
-          ?.getAttribute('aria-current'),
-      )
-      .toBeNull()
+    await expect.poll(() => singledOut('renew the cert')).toBeNull()
   })
 
   it('leaves nothing behind for the next window when it was announced', async () => {
@@ -1188,14 +1231,7 @@ describe('a clicked Task Alert', () => {  it('singles out the Task even when the
     // there for the next Tasks View to inherit.
     desktop.openTaskAlert(`task:${created[0].id}`)
 
-    await expect
-      .poll(() =>
-        screen
-          .queryByText('renew the cert')
-          ?.closest('li')
-          ?.getAttribute('aria-current'),
-      )
-      .toBe('true')
+    await expect.poll(() => singledOut('renew the cert')).toBe('true')
     // Read rather than claimed: asking would empty it and prove nothing.
     await expect.poll(() => desktop.pendingTaskAlert).toBeNull()
   })
@@ -1214,20 +1250,69 @@ describe('a clicked Task Alert', () => {  it('singles out the Task even when the
 
     desktop.openTaskAlert(`task:${created[0].id}`)
 
-    await expect
-      .poll(() =>
-        screen
-          .queryByText('renew the cert')
-          ?.closest('li')
-          ?.getAttribute('aria-current'),
-      )
-      .toBe('true')
-    expect(
-      screen
-        .getByText('chase the invoice')
-        .closest('li')
-        ?.getAttribute('aria-current'),
-    ).toBeNull()
+    await expect.poll(() => singledOut('renew the cert')).toBe('true')
+    expect(singledOut('chase the invoice')).toBeNull()
+  })
+
+  it('shows Daily Tasks when the Alert names selected work', async () => {
+    const { core, created, desktop } = await showTasks(['renew the cert'])
+    await core.addDailyTask(created[0].id)
+    await desktop.announceTasksChanged()
+    await expect.poll(rows).toEqual(['renew the cert'])
+    // Somewhere the Task is not, so the destination the Alert chooses is visible.
+    fireEvent.click(tab('Completed'))
+    await expect.poll(() => tab('Completed').getAttribute('aria-pressed')).toBe('true')
+
+    desktop.openTaskAlert(`task:${created[0].id}`)
+
+    await expect.poll(() => tab('Daily Tasks').getAttribute('aria-pressed')).toBe('true')
+    await expect.poll(() => singledOut('renew the cert')).toBe('true')
+    // Opening an Alert never selects the work it is about.
+    expect((await core.dailyTasks()).map((task) => task.id)).toEqual([
+      created[0].id,
+    ])
+  })
+
+  it('lands on Daily Tasks when the click built the window', async () => {
+    const { desktop } = await showTasks(['renew the cert'], {
+      selected: [0],
+      pendingAlertFor: 0,
+    })
+
+    // Claiming the written-down click is what sets the destination, so the
+    // Task has been singled out exactly once the claim has happened.
+    await expect.poll(() => desktop.pendingTaskAlert).toBeNull()
+    await expect.poll(() => tab('Daily Tasks').getAttribute('aria-pressed')).toBe('true')
+    await expect.poll(() => singledOut('renew the cert')).toBe('true')
+  })
+
+  it('follows a Task completed before the Alert was opened', async () => {
+    const { core, created, desktop } = await showTasks(['renew the cert'])
+    await core.addDailyTask(created[0].id)
+    await desktop.announceTasksChanged()
+    await expect.poll(rows).toEqual(['renew the cert'])
+    // The banner named work that has since been kept, not a Task still owed.
+    await core.completeTask(created[0].id)
+
+    desktop.openTaskAlert(`task:${created[0].id}`)
+
+    await expect.poll(() => tab('Completed').getAttribute('aria-pressed')).toBe('true')
+    await expect.poll(() => singledOut('renew the cert')).toBe('true')
+  })
+
+  it('shows the Open list when the Alert names a Task that is gone', async () => {
+    const { core, created, desktop } = await showTasks(['renew the cert'])
+    await core.deleteTask(created[0].id)
+    await desktop.announceTasksChanged()
+    await expect.poll(rows).toEqual([])
+    fireEvent.click(tab('Completed'))
+    await expect.poll(() => tab('Completed').getAttribute('aria-pressed')).toBe('true')
+
+    desktop.openTaskAlert(`task:${created[0].id}`)
+
+    await expect.poll(() => tab('Open').getAttribute('aria-pressed')).toBe('true')
+    expect(rows()).toEqual([])
+    expect(singledOut('renew the cert')).toBeNull()
   })
 })
 

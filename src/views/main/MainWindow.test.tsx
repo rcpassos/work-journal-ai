@@ -2317,6 +2317,11 @@ describe('Escape', () => {
 })
 
 describe('a clicked Task Alert', () => {
+  /** The Tasks View list the Task was taken to. */
+  function listShown(name: 'Daily Tasks' | 'Open' | 'Completed'): HTMLElement {
+    return screen.getByRole('button', { name })
+  }
+
   it('opens the window on Tasks View, focused on that Task', async () => {
     const { created } = await showMainWindow({
       captured: [MONDAY],
@@ -2330,6 +2335,9 @@ describe('a clicked Task Alert', () => {
 
     await showsTasks()
     await singlesOut(created[0])
+    await expect
+      .poll(() => listShown('Open').getAttribute('aria-pressed'))
+      .toBe('true')
   })
 
   it('switches a window already on History, and focuses the Task', async () => {
@@ -2344,6 +2352,64 @@ describe('a clicked Task Alert', () => {
 
     await showsTasks()
     await singlesOut(created[0])
+    await expect
+      .poll(() => listShown('Open').getAttribute('aria-pressed'))
+      .toBe('true')
+  })
+
+  it('lands selected work in Daily Tasks', async () => {
+    const { desktop, created } = await showMainWindow({
+      captured: [MONDAY],
+      tasks: ['renew the cert'],
+      dailyTasks: [0],
+    })
+    await showsHistory()
+
+    desktop.requestSection('tasks')
+    desktop.openTaskAlert(`task:${created[0].id}`)
+
+    await showsTasks()
+    await singlesOut(created[0])
+    await expect
+      .poll(() => listShown('Daily Tasks').getAttribute('aria-pressed'))
+      .toBe('true')
+  })
+
+  it('lands work completed since the Alert in Completed', async () => {
+    const { desktop, core, created } = await showMainWindow({
+      captured: [MONDAY],
+      tasks: ['renew the cert'],
+      dailyTasks: [0],
+    })
+    await showsHistory()
+    await core.completeTask(created[0].id)
+
+    desktop.requestSection('tasks')
+    desktop.openTaskAlert(`task:${created[0].id}`)
+
+    await showsTasks()
+    await singlesOut(created[0])
+    await expect
+      .poll(() => listShown('Completed').getAttribute('aria-pressed'))
+      .toBe('true')
+  })
+
+  it('shows the Open list when the Alert names a Task that is gone', async () => {
+    const { desktop, core, created } = await showMainWindow({
+      captured: [MONDAY],
+      tasks: ['renew the cert'],
+    })
+    await showsHistory()
+    await core.deleteTask(created[0].id)
+
+    desktop.requestSection('tasks')
+    desktop.openTaskAlert(`task:${created[0].id}`)
+
+    await showsTasks()
+    await expect.poll(() => screen.queryByText('renew the cert')).toBeNull()
+    await expect
+      .poll(() => listShown('Open').getAttribute('aria-pressed'))
+      .toBe('true')
   })
 })
 
@@ -2357,6 +2423,7 @@ async function showMainWindow({
   tab,
   whileStartingUp,
   alertFor,
+  dailyTasks,
   stored = { startAtLogin: false },
   onboarding,
   access,
@@ -2380,6 +2447,8 @@ async function showMainWindow({
   whileStartingUp?: (desktop: FakeDesktop) => void
   /** The Task a clicked Alert was about, as its position in `tasks`. */
   alertFor?: number
+  /** Tasks selected for Daily Tasks before the window opens, by position. */
+  dailyTasks?: number[]
   /** Values in the settings store. */
   stored?: Record<string, unknown>
   /**
@@ -2406,6 +2475,7 @@ async function showMainWindow({
   for (const description of tasks) {
     created.push(await core.createTask(description))
   }
+  for (const index of dailyTasks ?? []) await core.addDailyTask(created[index].id)
 
   const desktop = fakeDesktop({
     driver,
