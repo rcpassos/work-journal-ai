@@ -737,5 +737,5 @@ it('announces selection before dismissal and refreshes an open Tasks View withou
   pressEnter()
   await expect.poll(() => desktop.taskCreationsDismissed).toBe(1)
   await within(tasks.container).findByText('new work')
-  expect([...tasks.container.querySelectorAll('li')].map(row => row.querySelector('button[type="button"]')?.textContent)).toEqual(['first priority', 'new work'])
+  expect([...tasks.container.querySelectorAll('li')].map(row => row.querySelector('button[type="button"]:not([aria-label])')?.textContent)).toEqual(['first priority', 'new work'])
 })

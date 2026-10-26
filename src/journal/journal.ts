@@ -586,7 +586,7 @@ export interface Journal {
    * list — the order here is already the order inside every group.
    */
   openTasks(): Promise<Task[]>
-  /** Explicitly selected Open work, in append order. */
+  /** Explicitly selected Open work, highest priority first. */
   dailyTasks(): Promise<Task[]>
   /** Open Tasks outside the working list, offered by Add existing. */
   dailyTaskCandidates(): Promise<Task[]>
@@ -594,6 +594,8 @@ export interface Journal {
   addDailyTask(id: string): Promise<void>
   /** Remove selection without deleting or rescheduling the Task. */
   removeDailyTask(id: string): Promise<void>
+  /** Save a permutation only while the working list still has the expected order. */
+  reorderDailyTasks(order: readonly string[], expected: readonly string[]): Promise<void>
   /** The commitments that were kept, most recently completed first. */
   completedTasks(): Promise<Task[]>
   /**
@@ -1869,6 +1871,41 @@ export function createJournal({
 
     async removeDailyTask(id) {
       await driver.execute(DELETE_DAILY_TASK, [id])
+    },
+
+    async reorderDailyTasks(order, expected) {
+      if (order.length !== expected.length || new Set(order).size !== order.length ||
+          order.some(id => !expected.includes(id))) {
+        throw new Error('Reordering must preserve Daily Tasks membership.')
+      }
+      const selected = await driver.select<{ task_id: string; position: number }>(
+        'SELECT task_id, position FROM daily_tasks ORDER BY position', [],
+      )
+      if (selected.length !== expected.length || selected.some((row, index) => row.task_id !== expected[index])) {
+        throw new TransactionGuardMiss()
+      }
+      if (selected.length === 0) return
+      // Keep the existing positive slots (and the append high-water mark).
+      // Negative slots free the unique keys during the permutation. Each old
+      // identity/slot and the membership count are guarded in the transaction;
+      // another window's removal, completion, addition or reorder wins safely.
+      await driver.transaction([
+        {
+          sql: 'UPDATE daily_tasks SET position = position WHERE task_id = ? AND (SELECT COUNT(*) FROM daily_tasks) = ?',
+          params: [selected[0].task_id, selected.length],
+          expectedRows: 1,
+        },
+        ...selected.map(row => ({
+          sql: 'UPDATE daily_tasks SET position = -position WHERE task_id = ? AND position = ?',
+          params: [row.task_id, row.position],
+          expectedRows: 1,
+        })),
+        ...order.map((id, index) => ({
+          sql: 'UPDATE daily_tasks SET position = ? WHERE task_id = ?',
+          params: [selected[index].position, id],
+          expectedRows: 1,
+        })),
+      ])
     },
 
     async completedTasks() {

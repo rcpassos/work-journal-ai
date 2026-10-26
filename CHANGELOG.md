@@ -4,6 +4,8 @@ What changed in each released version, newest first. Every `vX.Y.Z` section here
 
 ## Unreleased
 
+- Daily Tasks can now be prioritized with drag handles, keyboard controls, and Move to top or Move to bottom actions, with the saved order retained across restarts.
+
 - The Task Creation window now offers Add to Daily Tasks, initially unchecked, so you can capture work directly into the bottom of your working list.
 
 - Tasks View now opens on a persistent Daily Tasks list, where you can select existing Open Tasks, keep them in your chosen append order across days and restarts, and remove or complete work without losing the broader task lists.

@@ -102,6 +102,16 @@ The palette is the point of this section, and the moment to watch is the one the
 - [ ] Re-opening **New Note** straight after committing a Note shows an empty field too — the committed text is not still sitting there.
 - [ ] Notes committed before quitting are still there after relaunching the app, and after a restart of the machine.
 
+## Daily Tasks priority (#350)
+
+These layout and focus checks may use a bundled development build from the current source, with its separate `.dev` journal.
+
+- [ ] Fill Daily Tasks beyond one screen. Drag a handle to a chosen position, then drag towards the scrolling edge to move through the long list. The saved sequence matches the drop, and no Task is lost or duplicated.
+- [ ] Start a drag and cancel with Escape. Repeat after focusing the inline description and leaving an unfinished draft, dragging a different Task while the input retains focus. The saved order and draft stay unchanged, the window remains open, and the drag ends. A subsequent Escape can close the window normally.
+- [ ] Focus a handle and use Alt+Arrow Up / Alt+Arrow Down repeatedly. The Task moves one place per command, keeps usable focus, and stays in view. First/last boundary commands leave the list intact. Also try Space, arrows, Space to drop, and Escape to cancel a keyboard drag.
+- [ ] Use Move to top and Move to bottom on a middle Task. Focus follows the moved row, and repeating the boundary action changes nothing. New additions still enter at the bottom; removing work preserves the surviving order.
+- [ ] Close/reopen the Main Window, then quit/relaunch the app. Priorities survive. Schedules, descriptions, details, recurrence/history and the broader Open/Completed ordering remain intact.
+
 ## Daily Tasks from the resident Task Creation window
 
 - [ ] Open Task Creation through the Task Hotkey, Tray Menu **New Task**, and Tasks View **New Task**. Each reaches the same resident window with **Add to Daily Tasks** initially unchecked; all controls, including the choice and refusal message, fit without clipping.
@@ -478,6 +488,9 @@ One line per end-to-end walk: the date, the build, and what it turned up. "Nothi
 | ---- | ----- | -------- |
 | 2026-07-27 | `pnpm tauri build --bundles app`, 0.1.0 | Partial — only the items checkable without a person at the keyboard were run: the bundle builds, launches, and a second launch leaves exactly one process. The release build logs nothing, so the log item moved to a development build. The rest of the list is unwalked. |
 | 2026-10-25 | #349, release-mode build with `tauri.dev.conf.json`, 0.18.1 | Partial — release app bundle built and ad-hoc signed; updater archive signing stopped because no private key was available. Native walkthrough could not start: computer-use access reported “Computer Use permissions are not granted.” Daily Tasks checkbox layout, native entry points and focus checks above remain unverified. |
+| 2026-10-25 | #350, bundled debug `.dev` app, 0.18.1 | User confirmed pointer dragging to another row and edge scrolling through the long Daily Tasks list: “all ok”. Native Alt+Arrow reordering, Space/arrow/Space dropping and Escape cancellation retained usable handle focus. |
+| 2026-10-26 | #350, rebuilt bundled debug `.dev` app, 0.18.1 | Verified keyboard drag/drop with saved-order feedback, a stale drop after a competing selection removal, and a successful retry: the refusal showed the saved surviving sequence, retained handle focus and cleared on retry. Physical Move to top and keyboard Move to bottom saved the expected endpoints and retained focus. Quit/relaunch retained the previously saved priorities. Automated pointer gestures still did not reproduce a successful move; successful long-list pointer/edge-scroll evidence is the user's walkthrough above. |
+| 2026-10-26 | #350, final bundled debug `.dev` app with saved-order feedback, 0.18.1 | User repeated the long-list pointer and edge-scroll check against the final rebuilt bundle and confirmed: “Dragging and scrolling work; order saves”. |
 
 ## Task Details (#276)
 
