@@ -571,7 +571,7 @@ describe('a Recurring Task in the session', () => {
 
     // Nothing left to take back.
     await session.undoCompletion(task.id)
-    expect(now().problem).toMatch(/only the latest one can be/)
+    expect(now().problem).toMatch(/only the latest safe one can be taken back/)
   })
 
   it('stops the recurrence and keeps the Task and its history', async () => {

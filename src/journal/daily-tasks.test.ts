@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, it } from 'vitest'
-import { createJournal, TransactionGuardMiss, type SqlDriver } from './journal'
+import { createJournal, TransactionGuardMiss, type Journal, type SqlDriver, type Task } from './journal'
 import { fixedClock, migrationSql, occurrencesOf, openTestDatabase } from './testing/database'
 
 const closers: Array<() => void> = []
@@ -13,6 +13,10 @@ async function setup() {
   const { driver, close } = await openTestDatabase()
   closers.push(close)
   return { driver, journal: createJournal({ driver, clock }) }
+}
+
+async function selectAll(journal: Journal, ...tasks: Task[]) {
+  for (const task of tasks) await journal.addDailyTask(task.id)
 }
 
 it('upgrades existing Tasks without selecting them and retains selection across database restarts', async () => {
@@ -73,6 +77,256 @@ it.each([false, true])('rolls back completion and selection together (recurring:
   expect(await journal.dailyTasks()).toEqual([task])
   expect(await journal.openTasks()).toEqual([task])
   expect(await occurrencesOf(journal, task.id)).toEqual(history)
+})
+
+it('restores an ordinary Task to its previous position through Undo and leaves a later reopening outside the selection', async () => {
+  const { journal } = await setup()
+  const first = await journal.createTask('first')
+  const second = await journal.createTask('second', { date: '2026-04-01', time: '12:00' }, null, 'context')
+  const third = await journal.createTask('third')
+  await selectAll(journal, first, second, third)
+
+  await journal.completeTask(second.id)
+  expect(await journal.dailyTasks()).toEqual([first, third])
+  expect(await journal.completedTasks()).toEqual([expect.objectContaining({
+    id: second.id, scheduledDate: '2026-04-01', scheduledTime: '12:00', details: 'context',
+  })])
+
+  await journal.undoCompletion(second.id)
+  expect(await journal.dailyTasks()).toEqual([first, second, third])
+  expect(await journal.completedTasks()).toEqual([])
+  expect((await journal.openTasks()).map(task => task.id).sort()).toEqual([first, second, third].map(task => task.id).sort())
+
+  // The immediate Undo is consumed. Reopening later restores only the
+  // broader list, and another completion is needed to select it again.
+  await journal.completeTask(second.id)
+  expect(await journal.dailyTasks()).toEqual([first, third])
+  await journal.reopenTask(second.id)
+  expect(await journal.dailyTasks()).toEqual([first, third])
+  expect((await journal.openTasks()).map(task => task.id)).toContain(second.id)
+  await expect(journal.undoCompletion(second.id)).rejects.toThrow()
+})
+
+it('restores a completion to its earlier slot after the remaining work is reordered', async () => {
+  const { journal } = await setup()
+  const first = await journal.createTask('first')
+  const second = await journal.createTask('second')
+  const third = await journal.createTask('third')
+  await selectAll(journal, first, second, third)
+
+  await journal.completeTask(second.id)
+  expect((await journal.dailyTasks()).map(task => task.id)).toEqual([first.id, third.id])
+
+  await journal.reorderDailyTasks([third.id, first.id], [first.id, third.id])
+  expect((await journal.dailyTasks()).map(task => task.id)).toEqual([third.id, first.id])
+
+  await journal.undoCompletion(second.id)
+  expect((await journal.dailyTasks()).map(task => task.id)).toEqual([third.id, second.id, first.id])
+})
+
+it('rolls back an Undo that cannot restore the position, leaving the completion intact', async () => {
+  const { driver, journal } = await setup()
+  const first = await journal.createTask('first')
+  const second = await journal.createTask('second')
+  const third = await journal.createTask('third')
+  await selectAll(journal, first, second, third)
+  await journal.completeTask(second.id)
+
+  const broken = createJournal({ clock, driver: {
+    ...driver,
+    transaction: statements => driver.transaction([
+      ...statements, { sql: 'INSERT INTO missing_table VALUES (1)', params: [] },
+    ]),
+  } })
+  await expect(broken.undoCompletion(second.id)).rejects.toThrow()
+  expect(await journal.dailyTasks()).toEqual([first, third])
+  expect((await journal.completedTasks()).map(task => task.id)).toEqual([second.id])
+
+  await journal.undoCompletion(second.id)
+  expect(await journal.dailyTasks()).toEqual([first, second, third])
+})
+
+it('lets only one of two competing Undos restore an ordinary completion', async () => {
+  const { driver, journal } = await setup()
+  const first = await journal.createTask('first')
+  const second = await journal.createTask('second')
+  const third = await journal.createTask('third')
+  await selectAll(journal, first, second, third)
+  await journal.completeTask(second.id)
+
+  const stale = createJournal({ clock, driver: racing(driver, () => journal.undoCompletion(second.id)) })
+  await expect(stale.undoCompletion(second.id)).rejects.toThrow(TransactionGuardMiss)
+  expect(await journal.dailyTasks()).toEqual([first, second, third])
+  expect(await journal.completedTasks()).toEqual([])
+})
+
+it('lets only one of two competing Undos restore a recurring completion', async () => {
+  const { driver, journal } = await setup()
+  const recurring = await journal.createTask('daily report', { date: '2026-03-09', time: '12:00' }, {
+    unit: 'day', interval: 1, weekdays: [],
+  })
+  await journal.addDailyTask(recurring.id)
+  await journal.completeTask(recurring.id)
+
+  const stale = createJournal({ clock, driver: racing(driver, () => journal.undoCompletion(recurring.id)) })
+  await expect(stale.undoCompletion(recurring.id)).rejects.toThrow(TransactionGuardMiss)
+  expect(await journal.dailyTasks()).toEqual([recurring])
+  expect((await occurrencesOf(journal, recurring.id)).filter(one => one.completedAt === null)).toHaveLength(1)
+})
+
+it('refuses an Undo whose work was deleted, restoring nothing', async () => {
+  const { journal } = await setup()
+  const first = await journal.createTask('first')
+  const second = await journal.createTask('second')
+  await journal.addDailyTask(first.id)
+  await journal.addDailyTask(second.id)
+  await journal.completeTask(second.id)
+  await journal.deleteTask(second.id)
+
+  await expect(journal.undoCompletion(second.id)).rejects.toThrow(/No such Task/)
+  expect(await journal.dailyTasks()).toEqual([first])
+})
+
+it('offers no Undo for a completion that never removed work from Daily Tasks', async () => {
+  const { journal } = await setup()
+  const task = await journal.createTask('not selected')
+  await journal.completeTask(task.id)
+
+  await expect(journal.undoCompletion(task.id)).rejects.toThrow()
+  expect(await journal.dailyTasks()).toEqual([])
+})
+
+it('restores a recurring completion and its previous position on a safe Undo', async () => {
+  const { journal } = await setup()
+  const first = await journal.createTask('first')
+  const recurring = await journal.createTask('daily report', { date: '2026-03-09', time: '12:00' }, {
+    unit: 'day', interval: 1, weekdays: [],
+  })
+  const last = await journal.createTask('last')
+  await selectAll(journal, first, recurring, last)
+
+  await journal.completeTask(recurring.id)
+  expect(await journal.dailyTasks()).toEqual([first, last])
+
+  await journal.undoCompletion(recurring.id)
+  expect(await journal.dailyTasks()).toEqual([first, recurring, last])
+  expect((await journal.openTasks()).find(task => task.id === recurring.id)?.scheduledDate).toBe('2026-03-09')
+  expect((await occurrencesOf(journal, recurring.id)).filter(one => one.completedAt === null)).toHaveLength(1)
+})
+
+it('keeps a newer selection when undoing a recurring completion', async () => {
+  const { journal } = await setup()
+  const first = await journal.createTask('first')
+  const recurring = await journal.createTask('daily report', { date: '2026-03-09', time: '12:00' }, {
+    unit: 'day', interval: 1, weekdays: [],
+  })
+  const last = await journal.createTask('last')
+  await selectAll(journal, first, recurring, last)
+
+  await journal.completeTask(recurring.id)
+  await journal.addDailyTask(recurring.id)
+  expect((await journal.dailyTasks()).map(task => task.id)).toEqual([first.id, last.id, recurring.id])
+
+  await journal.undoCompletion(recurring.id)
+  expect((await journal.dailyTasks()).map(task => task.id)).toEqual([first.id, last.id, recurring.id])
+  expect((await journal.openTasks()).find(task => task.id === recurring.id)?.scheduledDate).toBe('2026-03-09')
+  expect((await occurrencesOf(journal, recurring.id)).filter(one => one.completedAt === null)).toHaveLength(1)
+})
+
+it('refuses an immediate Undo of an ordinary completion that was superseded', async () => {
+  const { journal } = await setup()
+  const first = await journal.createTask('first')
+  const second = await journal.createTask('second')
+  await selectAll(journal, first, second)
+
+  const receipt = await journal.completeTaskWithReceipt(second.id)
+  expect(receipt).toMatchObject({ kind: 'task' })
+
+  await journal.reopenTask(second.id)
+  await journal.addDailyTask(second.id)
+  await journal.completeTask(second.id)
+
+  await expect(journal.undoCompletion(second.id, receipt!)).rejects.toThrow(TransactionGuardMiss)
+  expect((await journal.completedTasks()).map(task => task.id)).toEqual([second.id])
+  expect((await journal.dailyTasks()).map(task => task.id)).toEqual([first.id])
+})
+
+it('refuses an immediate Undo of a recurring completion that was superseded', async () => {
+  const { driver } = await setup()
+  const local = fixedClock('2026-03-09T09:00:00')
+  const journal = createJournal({ driver, clock: local })
+  const recurring = await journal.createTask('daily report', { date: '2026-03-09', time: '12:00' }, {
+    unit: 'day', interval: 1, weekdays: [],
+  })
+  await journal.addDailyTask(recurring.id)
+
+  const receipt = await journal.completeTaskWithReceipt(recurring.id)
+  expect(receipt).toMatchObject({ kind: 'occurrence' })
+
+  local.set(new Date('2026-03-10T09:00:00'))
+  await journal.completeTask(recurring.id)
+
+  await expect(journal.undoCompletion(recurring.id, receipt!)).rejects.toThrow(TransactionGuardMiss)
+  expect((await occurrencesOf(journal, recurring.id)).filter(one => one.completedAt !== null)).toHaveLength(2)
+  expect((await occurrencesOf(journal, recurring.id)).filter(one => one.completedAt === null)).toHaveLength(1)
+  expect(await journal.dailyTasks()).toEqual([])
+})
+
+it('retains a later explicit removal when undoing a recurring completion', async () => {
+  const { journal } = await setup()
+  const first = await journal.createTask('first')
+  const recurring = await journal.createTask('daily report', { date: '2026-03-09', time: '12:00' }, {
+    unit: 'day', interval: 1, weekdays: [],
+  })
+  await selectAll(journal, first, recurring)
+
+  await journal.completeTask(recurring.id)
+  await journal.addDailyTask(recurring.id)
+  await journal.removeDailyTask(recurring.id)
+  expect((await journal.dailyTasks()).map(task => task.id)).toEqual([first.id])
+
+  await journal.undoCompletion(recurring.id)
+  expect((await journal.dailyTasks()).map(task => task.id)).toEqual([first.id])
+  expect((await journal.openTasks()).find(task => task.id === recurring.id)?.scheduledDate).toBe('2026-03-09')
+  expect((await occurrencesOf(journal, recurring.id)).filter(one => one.completedAt === null)).toHaveLength(1)
+})
+
+it('refuses a recurring Undo overtaken by a later membership decision', async () => {
+  const { driver, journal } = await setup()
+  const recurring = await journal.createTask('daily report', { date: '2026-03-09', time: '12:00' }, {
+    unit: 'day', interval: 1, weekdays: [],
+  })
+  await journal.addDailyTask(recurring.id)
+  await journal.completeTask(recurring.id)
+
+  const stale = createJournal({ clock, driver: racing(driver, async () => {
+    await journal.addDailyTask(recurring.id)
+    await journal.removeDailyTask(recurring.id)
+  }) })
+  await expect(stale.undoCompletion(recurring.id)).rejects.toThrow(TransactionGuardMiss)
+  expect(await journal.dailyTasks()).toEqual([])
+  expect((await occurrencesOf(journal, recurring.id)).filter(one => one.completedAt !== null)).toHaveLength(1)
+})
+
+it('refuses an unsafe recurring Undo without restoring the selection or discarding the edit', async () => {
+  const { journal } = await setup()
+  const recurring = await journal.createTask('daily report', { date: '2026-03-09', time: '12:00' }, {
+    unit: 'day', interval: 1, weekdays: [],
+  })
+  await journal.addDailyTask(recurring.id)
+  await journal.completeTask(recurring.id)
+  expect(await journal.dailyTasks()).toEqual([])
+
+  await journal.editTask(recurring.id, {
+    description: 'daily report',
+    schedule: { date: '2026-03-20', time: '12:00' },
+    recurrence: { unit: 'day', interval: 1, weekdays: [] },
+  })
+  await expect(journal.undoCompletion(recurring.id)).rejects.toThrow()
+
+  expect(await journal.dailyTasks()).toEqual([])
+  expect((await journal.openTasks()).find(task => task.id === recurring.id)?.scheduledDate).toBe('2026-03-20')
+  expect(await occurrencesOf(journal, recurring.id)).toHaveLength(2)
 })
 
 it('leaves membership intact when removal fails and leaves no partial selection when addition fails', async () => {

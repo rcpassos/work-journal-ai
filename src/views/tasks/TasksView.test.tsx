@@ -478,6 +478,52 @@ describe('Daily Tasks', () => {
     expect((await core.openTasks()).map(task => task.description)).toContain('second')
   })
 
+  it('restores a completed Task to its previous position through immediate Undo, while a later reopening stays outside', async () => {
+    const { core, created, desktop } = await showTasks(['first', 'second', 'third'])
+    for (const task of created) await core.addDailyTask(task.id)
+    await desktop.announceTasksChanged()
+    await expect.poll(rows).toEqual(['first', 'second', 'third'])
+
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Complete “second”' }))
+    await expect.poll(rows).toEqual(['first', 'third'])
+    expect((await core.dailyTasks()).map(task => task.id)).toEqual([created[0].id, created[2].id])
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Undo completing “second”' }))
+    await expect.poll(rows).toEqual(['first', 'second', 'third'])
+    expect(await core.dailyTasks()).toEqual(created)
+    expect(await core.completedTasks()).toEqual([])
+    expect(screen.queryByRole('button', { name: 'Undo completing “second”' })).toBeNull()
+
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Complete “second”' }))
+    await expect.poll(rows).toEqual(['first', 'third'])
+    fireEvent.click(tab('Completed'))
+    fireEvent.click(await screen.findByRole('checkbox', { name: 'Reopen “second”' }))
+    await expect.poll(rows).toEqual([])
+    fireEvent.click(tab('Daily Tasks'))
+    await expect.poll(rows).toEqual(['first', 'third'])
+    expect((await core.dailyTasks()).map(task => task.description)).toEqual(['first', 'third'])
+    expect((await core.openTasks()).map(task => task.description)).toContain('second')
+  })
+
+  it('reports an immediate Undo the record refuses instead of restoring the Task', async () => {
+    const { core, created, desktop } = await showTasks(['first', 'second', 'third'])
+    for (const task of created) await core.addDailyTask(task.id)
+    await desktop.announceTasksChanged()
+    await expect.poll(rows).toEqual(['first', 'second', 'third'])
+
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Complete “second”' }))
+    await expect.poll(rows).toEqual(['first', 'third'])
+
+    await core.reopenTask(created[1].id)
+    await desktop.announceTasksChanged()
+    fireEvent.click(await screen.findByRole('button', { name: 'Undo completing “second”' }))
+
+    await screen.findByText(/That completion could not be undone/)
+    expect((await core.dailyTasks()).map(task => task.id)).toEqual([created[0].id, created[2].id])
+    expect((await core.openTasks()).map(task => task.description)).toContain('second')
+    expect(screen.queryByRole('button', { name: 'Undo completing “second”' })).toBeNull()
+  })
+
   it('keeps selection and its order through editing, clock changes and reopening the view', async () => {
     const { core, created, desktop, clock, driver } = await showTasks(['first', 'second', 'backlog'])
     await core.addDailyTask(created[0].id)
@@ -508,7 +554,7 @@ describe('Daily Tasks', () => {
     expect((await reconstructed.dailyTasks())[0].details).toBe('keep this context')
   })
 
-  it.each(['checkbox', 'alert'] as const)('removes recurring work completed through %s and keeps safe Undo outside the selection', async surface => {
+  it('removes recurring work completed through the checkbox and restores it to its previous position', async () => {
     const { core, desktop, clock } = await showTasks()
     const task = await core.createTask('daily report', { date: '2026-03-09', time: '12:00' }, {
       unit: 'day', interval: 1, weekdays: [],
@@ -516,21 +562,70 @@ describe('Daily Tasks', () => {
     await core.addDailyTask(task.id)
     await desktop.announceTasksChanged()
     await screen.findByText('daily report')
-    if (surface === 'checkbox') {
-      fireEvent.click(screen.getByRole('checkbox', { name: 'Complete “daily report”' }))
-    } else {
-      await core.completeTaskAt(task.id, { date: '2026-03-09', time: '12:00' })
-      await desktop.announceTasksChanged()
-    }
+
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Complete “daily report”' }))
     await expect.poll(rows).toEqual([])
     expect((await occurrencesOf(core, task.id)).filter(occurrence => occurrence.completedAt !== null)).toHaveLength(1)
     clock.set(new Date('2026-03-10T13:00:00'))
     act(() => { desktop.wake(); desktop.focus() })
     expect(await core.dailyTasks()).toEqual([])
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Undo completing “daily report”' }))
+
+    await expect.poll(rows).toEqual(['daily report'])
+    await expect.poll(async () => (await core.openTasks()).find(open => open.id === task.id)?.scheduledDate).toBe('2026-03-09')
+    expect((await core.dailyTasks()).map(open => open.id)).toEqual([task.id])
+    expect((await occurrencesOf(core, task.id)).filter(occurrence => occurrence.completedAt === null)).toHaveLength(1)
+  })
+
+  it('refuses a stale immediate Undo after a later completion of the successor', async () => {
+    const { core, desktop, clock } = await showTasks()
+    const task = await core.createTask('daily report', { date: '2026-03-09', time: '12:00' }, {
+      unit: 'day', interval: 1, weekdays: [],
+    })
+    await core.addDailyTask(task.id)
+    await desktop.announceTasksChanged()
+    await screen.findByText('daily report')
+
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Complete “daily report”' }))
+    await expect.poll(rows).toEqual([])
+    clock.set(new Date('2026-03-10T09:00:00'))
+    fireEvent.click(tab('Open'))
+    fireEvent.click(await screen.findByRole('checkbox', { name: 'Complete “daily report”' }))
+    await desktop.announceTasksChanged()
+    fireEvent.click(tab('Daily Tasks'))
+    fireEvent.click(await screen.findByRole('button', { name: 'Undo completing “daily report”' }))
+
+    await screen.findByText(/That completion could not be undone/)
+    expect((await occurrencesOf(core, task.id)).filter(occurrence => occurrence.completedAt !== null)).toHaveLength(2)
+    expect((await occurrencesOf(core, task.id)).filter(occurrence => occurrence.completedAt === null)).toHaveLength(1)
+    expect(await core.dailyTasks()).toEqual([])
+  })
+
+  it('removes recurring work completed through a Task Alert and safe Undo restores it to its previous position', async () => {
+    const { core, desktop, clock } = await showTasks()
+    const task = await core.createTask('daily report', { date: '2026-03-09', time: '12:00' }, {
+      unit: 'day', interval: 1, weekdays: [],
+    })
+    await core.addDailyTask(task.id)
+    await desktop.announceTasksChanged()
+    await screen.findByText('daily report')
+
+    await core.completeTaskAt(task.id, { date: '2026-03-09', time: '12:00' })
+    await desktop.announceTasksChanged()
+    await expect.poll(rows).toEqual([])
+    expect((await occurrencesOf(core, task.id)).filter(occurrence => occurrence.completedAt !== null)).toHaveLength(1)
+    clock.set(new Date('2026-03-10T13:00:00'))
+    act(() => { desktop.wake(); desktop.focus() })
+    expect(await core.dailyTasks()).toEqual([])
+    // The Alert completed it, not this list, so the immediate Undo is not offered here.
+    expect(screen.queryByRole('button', { name: 'Undo completing “daily report”' })).toBeNull()
+
     fireEvent.click(tab('Open'))
     fireEvent.click(await screen.findByRole('button', { name: 'Undo the last completion of “daily report”' }))
-    await expect.poll(async () => (await core.openTasks())[0].scheduledDate).toBe('2026-03-09')
-    expect(await core.dailyTasks()).toEqual([])
+
+    await expect.poll(async () => (await core.openTasks()).find(open => open.id === task.id)?.scheduledDate).toBe('2026-03-09')
+    expect((await core.dailyTasks()).map(open => open.id)).toEqual([task.id])
     expect((await occurrencesOf(core, task.id)).filter(occurrence => occurrence.completedAt === null)).toHaveLength(1)
   })
 
