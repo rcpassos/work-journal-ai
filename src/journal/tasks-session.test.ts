@@ -1005,4 +1005,43 @@ describe('going to where a Task is', () => {
     expect(await navigating).toBe('daily')
     expect(now().showing).toBe('daily')
   })
+
+  it('keeps the navigation when a refresh supersedes its destination read', async () => {
+    let holdNextRead = false
+    let release!: () => void
+    const held = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let reading!: () => void
+    const reached = new Promise<void>((resolve) => {
+      reading = resolve
+    })
+
+    const { session, created, now } = await tasksSession(['one'], {
+      journal: (core) => ({
+        ...core,
+        async occurrencesOfEach(ids) {
+          const occurrences = await core.occurrencesOfEach(ids)
+          if (holdNextRead) {
+            holdNextRead = false
+            reading()
+            await held
+          }
+          return occurrences
+        },
+      }),
+    })
+    await session.show('completed')
+
+    holdNextRead = true
+    const navigating = session.showTask(created[0].id)
+    await reached
+    // The destination list is already showing; an ordinary refresh reads it
+    // again and takes the newer read ticket.
+    await session.refresh()
+    release()
+
+    expect(await navigating).toBe('open')
+    expect(now().showing).toBe('open')
+  })
 })

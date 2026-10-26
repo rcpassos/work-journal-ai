@@ -39,6 +39,13 @@ import {
 export type TasksTab = TaskPlacement
 
 /**
+ * How one list read ended, for the navigation that may have to single a Task
+ * out of it: this read reached the view, a newer read overtook it, or it could
+ * not be read at all.
+ */
+type ReadOutcome = 'landed' | 'superseded' | 'failed'
+
+/**
  * What Tasks View has to show, once the core has been asked. One arm at a
  * time, which is what makes the screen either a list or a Search's results
  * and never both — see
@@ -266,11 +273,11 @@ export function createTasksSession({
    * completing a Task moves it out of the Open list entirely, so what a change
    * leaves behind is a question for the record rather than for the array.
    *
-   * Says whether this read was the one that reached the view. A newer read
-   * wins as everywhere else, and a caller that was going to single something
-   * out needs to know its own read was overtaken.
+   * Says how this read ended. A newer read wins as everywhere else, and a
+   * caller that was going to single something out needs to know whether its
+   * own read reached the view.
    */
-  async function read(tab: TasksTab): Promise<boolean> {
+  async function read(tab: TasksTab): Promise<ReadOutcome> {
     const ticket = ++latestRead
     try {
       const core = await journal
@@ -284,7 +291,7 @@ export function createTasksSession({
       const occurrences = await core.occurrencesOfEach(
         tasks.map((task) => task.id),
       )
-      if (latestRead !== ticket) return false
+      if (latestRead !== ticket) return 'superseded'
       show({
         candidates,
         tasks: {
@@ -294,10 +301,10 @@ export function createTasksSession({
           occurrences,
         },
       })
-      return true
+      return 'landed'
     } catch (error) {
       giveUp(error, ticket)
-      return false
+      return 'failed'
     }
   }
 
@@ -323,9 +330,9 @@ export function createTasksSession({
    * and moving lists are both this, so both end the Search; the term stays in
    * the field either way.
    *
-   * Says whether the list it asked for is the one that reached the view.
+   * Says how the list read it asked for ended.
    */
-  async function switchTo(tab: TasksTab): Promise<boolean> {
+  async function switchTo(tab: TasksTab): Promise<ReadOutcome> {
     abandonWaitingTerm()
     show({ showing: tab, searching: false, problem: null })
     return read(tab)
@@ -443,11 +450,18 @@ export function createTasksSession({
       // or choosing another list is intent before its read is even made.
       if (latestNavigation !== navigation) return null
 
-      const landed = await switchTo(destination)
-      // The list read may itself have been overtaken, or the reader moved on
-      // while it was in flight. Either way this navigation is not the one on
-      // screen, so it must not single the Task out over the newer one.
-      if (!landed || latestNavigation !== navigation) return null
+      const outcome = await switchTo(destination)
+      // The reader moved on while the list was in flight, or it could not be
+      // read at all: neither is somewhere to single a Task out.
+      if (latestNavigation !== navigation || outcome === 'failed') return null
+
+      // An ordinary read — a refresh from another Task surface — may have
+      // overtaken this one. The list it leaves on screen is still the
+      // destination, so the Task is where the reader asked to see it; a
+      // different list means this navigation lost to something else.
+      if (outcome === 'superseded' && snapshot.showing !== destination) {
+        return null
+      }
 
       return destination
     },
