@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import userEvent from '@testing-library/user-event'
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { fakeDesktop } from '@/platform/testing/desktop'
-import { createJournal, type Task } from '@/journal/journal'
+import { createJournal, type Journal, type Task } from '@/journal/journal'
 import { fixedClock, occurrencesOf, openTestDatabase } from '@/journal/testing/database'
 import TasksView from './TasksView'
 import TaskCreationView from './TaskCreationView'
@@ -37,6 +37,8 @@ async function showTasks(
     pendingAlertFor = null as number | null,
     /** Tasks selected for Daily Tasks before the view opens, by position. */
     selected = [] as number[],
+    /** Wraps the journal the view asks, to hold a read open. */
+    journal = (core: Journal) => core,
   } = {},
 ) {
   const { driver, close } = await openTestDatabase()
@@ -56,7 +58,11 @@ async function showTasks(
   desktop.pendingTaskAlert =
     pendingAlertFor === null ? null : `task:${created[pendingAlertFor].id}`
   render(
-    <TasksView desktop={desktop} journal={Promise.resolve(core)} clock={clock} />,
+    <TasksView
+      desktop={desktop}
+      journal={Promise.resolve(journal(core))}
+      clock={clock}
+    />,
   )
 
   return { desktop, core, clock, created, driver }
@@ -1179,6 +1185,51 @@ describe('searching the Tasks', () => {
     expect((await core.dailyTasks()).map((task) => task.id)).toEqual([
       created[0].id,
     ])
+  })
+
+  it('leaves the newer result singled out when an older navigation finishes last', async () => {
+    let holdNextRead = false
+    let release!: () => void
+    const held = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let reading!: () => void
+    const reached = new Promise<void>((resolve) => {
+      reading = resolve
+    })
+
+    await showTasks(['first task', 'second task'], {
+      journal: (core) => ({
+        ...core,
+        async occurrencesOfEach(ids) {
+          const occurrences = await core.occurrencesOfEach(ids)
+          if (holdNextRead) {
+            holdNextRead = false
+            reading()
+            await held
+          }
+          return occurrences
+        },
+      }),
+    })
+    await screen.findByRole('heading', { name: 'No Daily Tasks yet' })
+
+    fireEvent.change(searchBox(), { target: { value: 'task' } })
+    const first = await screen.findByRole('button', { name: /first task/ })
+    await screen.findByRole('button', { name: /second task/ })
+    holdNextRead = true
+    fireEvent.click(first)
+    // The first navigation is now holding its Open list read.
+    await reached
+    fireEvent.click(screen.getByRole('button', { name: /second task/ }))
+    await expect.poll(() => singledOut('second task')).toBe('true')
+
+    await act(async () => {
+      release()
+    })
+
+    expect(singledOut('second task')).toBe('true')
+    expect(singledOut('first task')).toBeNull()
   })
 })
 

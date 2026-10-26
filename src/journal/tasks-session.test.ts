@@ -913,4 +913,96 @@ describe('going to where a Task is', () => {
     expect(await core.openTasks()).toEqual(backlog)
     expect(await core.openTasks()).toHaveLength(2)
   })
+
+  it('leaves the newer navigation standing when an older one finishes last', async () => {
+    let holdNextRead = false
+    let release!: () => void
+    const held = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let reading!: () => void
+    const reached = new Promise<void>((resolve) => {
+      reading = resolve
+    })
+
+    const { session, created, now } = await tasksSession(['first', 'second'], {
+      journal: (core) => ({
+        ...core,
+        async occurrencesOfEach(ids) {
+          const occurrences = await core.occurrencesOfEach(ids)
+          if (holdNextRead) {
+            holdNextRead = false
+            reading()
+            await held
+          }
+          return occurrences
+        },
+      }),
+    })
+    await session.show('open')
+
+    holdNextRead = true
+    const older = session.showTask(created[0].id)
+    await reached
+    const newer = session.showTask(created[1].id)
+
+    expect(await newer).toBe('open')
+    release()
+    expect(await older).toBeNull()
+    expect(now().showing).toBe('open')
+  })
+
+  it('keeps a newer Search when an older navigation finishes after it', async () => {
+    let release!: () => void
+    const held = new Promise<void>((resolve) => {
+      release = resolve
+    })
+
+    const { session, created, now } = await tasksSession(['one'], {
+      journal: (core) => ({
+        ...core,
+        async taskPlacement(id) {
+          await held
+          return core.taskPlacement(id)
+        },
+      }),
+    })
+    await session.show('open')
+
+    const navigating = session.showTask(created[0].id)
+    const searching = session.search('newer')
+    release()
+
+    expect(await navigating).toBeNull()
+    await searching
+    expect(now().term).toBe('newer')
+    expect(now().searching).toBe(true)
+    expect(now().tasks.state).toBe('results')
+  })
+
+  it('keeps a navigation when the list is refreshed underneath it', async () => {
+    let release!: () => void
+    const held = new Promise<void>((resolve) => {
+      release = resolve
+    })
+
+    const { session, core, created, now } = await tasksSession(['selected'], {
+      journal: (core) => ({
+        ...core,
+        async taskPlacement(id) {
+          await held
+          return core.taskPlacement(id)
+        },
+      }),
+    })
+    await core.addDailyTask(created[0].id)
+    await session.show('completed')
+
+    const navigating = session.showTask(created[0].id)
+    await session.refresh()
+    release()
+
+    expect(await navigating).toBe('daily')
+    expect(now().showing).toBe('daily')
+  })
 })
