@@ -32,11 +32,19 @@ import {
   type Task,
   type TaskGroup,
   type TaskOccurrence,
+  type TaskPlacement,
   type TaskSchedule,
 } from './journal'
 
 /** Daily Tasks opens first; the broader Open and Completed lists stay available. */
-export type TasksTab = 'daily' | 'open' | 'completed'
+export type TasksTab = TaskPlacement
+
+/**
+ * How one list read ended, for the navigation that may have to single a Task
+ * out of it: this read reached the view, a newer read overtook it, or it could
+ * not be read at all.
+ */
+type ReadOutcome = 'landed' | 'superseded' | 'failed'
 
 /**
  * What Tasks View has to show, once the core has been asked. One arm at a
@@ -121,12 +129,23 @@ export interface TasksSession {
   /** The first read: the persistent Daily Tasks selection. */
   open(): Promise<void>
   /**
-   * The other list, or back again. Nothing else narrows either one. Also how
-   * a Search ends: answering a result is this with the Task singled out, so
-   * it inherits everything a move already does. The term stays in the field,
-   * so asking again costs no retyping.
+   * The other list, or back again. Nothing else narrows either one. Choosing a
+   * list is newer than any navigation still in flight; answering a result ends
+   * the Search the same way. The term stays in the field, so asking again
+   * costs no retyping.
    */
   show(tab: TasksTab): Promise<void>
+  /**
+   * Shows the list the Task is in now: Daily Tasks when it is selected there,
+   * Completed when it has been kept, and otherwise the broader Open list. A
+   * Task that is gone keeps the Open list, as a clicked Alert always has.
+   *
+   * Navigation never adds, removes or reorders Daily Tasks membership, never
+   * changes a schedule, and never creates a Task. Resolves to the list shown,
+   * or null when it could not be read or a newer read took the screen first —
+   * which is when the reader's focus has nowhere honest to land.
+   */
+  showTask(id: string): Promise<TasksTab | null>
   /**
    * The Tasks are no longer what they were, and not because of anything this
    * window did: one was created in the Task Creation window, or changed in
@@ -227,13 +246,21 @@ export function createTasksSession({
   // Reads can overlap — a completion while a tab change is still in flight —
   // and only the newest one may reach the view.
   let latestRead = 0
+  // The navigation the reader last asked for, kept apart from which read
+  // lands. A background refresh advances `latestRead` without being a newer
+  // intent, while typing a Search is one before its debounced read is asked.
+  let latestNavigation = 0
 
   // The half of a Search Tasks View shares with History — the thresholds, the
   // debounce, which read may land — held in common rather than copied, so the
   // two cannot drift apart. What a settled term lands on stays here. See
   // `src/journal/search.ts`.
   const { search, abandonWaitingTerm } = createSearch({
-    showTerm: (term, searching) => show({ term, searching }),
+    showTerm: (term, searching) => {
+      // Typing is a newer question than any navigation still in flight.
+      latestNavigation += 1
+      show({ term, searching })
+    },
     run,
     stop: stopShowingResults,
   })
@@ -253,8 +280,12 @@ export function createTasksSession({
    * One list, asked of the core. The list on screen is never patched in place:
    * completing a Task moves it out of the Open list entirely, so what a change
    * leaves behind is a question for the record rather than for the array.
+   *
+   * Says how this read ended. A newer read wins as everywhere else, and a
+   * caller that was going to single something out needs to know whether its
+   * own read reached the view.
    */
-  async function read(tab: TasksTab): Promise<void> {
+  async function read(tab: TasksTab): Promise<ReadOutcome> {
     const ticket = ++latestRead
     try {
       const core = await journal
@@ -268,7 +299,7 @@ export function createTasksSession({
       const occurrences = await core.occurrencesOfEach(
         tasks.map((task) => task.id),
       )
-      if (latestRead !== ticket) return
+      if (latestRead !== ticket) return 'superseded'
       show({
         candidates,
         tasks: {
@@ -278,8 +309,10 @@ export function createTasksSession({
           occurrences,
         },
       })
+      return 'landed'
     } catch (error) {
       giveUp(error, ticket)
+      return 'failed'
     }
   }
 
@@ -300,6 +333,20 @@ export function createTasksSession({
   }
 
   /**
+   * One list on screen, whichever was showing before. A problem is about the
+   * list it was raised over, and this is a different one. Answering a result
+   * and moving lists are both this, so both end the Search; the term stays in
+   * the field either way.
+   *
+   * Says how the list read it asked for ended.
+   */
+  async function switchTo(tab: TasksTab): Promise<ReadOutcome> {
+    abandonWaitingTerm()
+    show({ showing: tab, searching: false, problem: null })
+    return read(tab)
+  }
+
+  /**
    * Whether the question a read went to answer is still the one on screen: the
    * reader has neither typed on nor moved lists since it was asked.
    */
@@ -314,7 +361,7 @@ export function createTasksSession({
    */
   function stopShowingResults(): Promise<void> {
     if (snapshot.tasks.state !== 'results') return Promise.resolve()
-    return read(snapshot.showing)
+    return read(snapshot.showing).then(() => undefined)
   }
 
   /**
@@ -383,15 +430,48 @@ export function createTasksSession({
   return {
     snapshot: () => snapshot,
 
-    open: () => read('daily'),
+    open: async () => {
+      await read('daily')
+    },
 
     async show(tab) {
-      // A problem is about the list it was raised over, and this is a
-      // different one. Answering a result and moving lists are both this, so
-      // both end the Search; the term stays in the field either way.
-      abandonWaitingTerm()
-      show({ showing: tab, searching: false, problem: null })
-      await read(tab)
+      // Choosing a list is a newer intent than any navigation still in flight.
+      latestNavigation += 1
+      await switchTo(tab)
+    },
+
+    async showTask(id) {
+      // One question of the record, so a Task that moved on since a result or
+      // an Alert was read cannot be sent to a list it no longer belongs to.
+      const navigation = ++latestNavigation
+      const ticket = ++latestRead
+      let destination: TasksTab
+      try {
+        const core = await journal
+        destination = await core.taskPlacement(id)
+      } catch (error) {
+        giveUp(error, ticket)
+        return null
+      }
+
+      // A newer question took over while this one was asked: typing a Search
+      // or choosing another list is intent before its read is even made.
+      if (latestNavigation !== navigation) return null
+
+      const outcome = await switchTo(destination)
+      // The reader moved on while the list was in flight, or it could not be
+      // read at all: neither is somewhere to single a Task out.
+      if (latestNavigation !== navigation || outcome === 'failed') return null
+
+      // An ordinary read — a refresh from another Task surface — may have
+      // overtaken this one. The list it leaves on screen is still the
+      // destination, so the Task is where the reader asked to see it; a
+      // different list means this navigation lost to something else.
+      if (outcome === 'superseded' && snapshot.showing !== destination) {
+        return null
+      }
+
+      return destination
     },
 
     async refresh() {

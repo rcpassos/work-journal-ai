@@ -61,6 +61,24 @@ it('accepts each Open Task once, excludes completed work and rejects missing Tas
   expect(await journal.dailyTaskCandidates()).toEqual([task])
 })
 
+it('answers where navigation should take the reader from the Task as it is now', async () => {
+  const { journal } = await setup()
+  const selected = await journal.createTask('selected')
+  const open = await journal.createTask('open')
+  const kept = await journal.createTask('kept')
+  await journal.addDailyTask(selected.id)
+  await journal.completeTask(kept.id)
+
+  expect(await journal.taskPlacement(selected.id)).toBe('daily')
+  expect(await journal.taskPlacement(open.id)).toBe('open')
+  expect(await journal.taskPlacement(kept.id)).toBe('completed')
+  // A clicked Alert may name work that has since been deleted.
+  expect(await journal.taskPlacement('missing')).toBe('open')
+
+  await journal.completeTask(selected.id)
+  expect(await journal.taskPlacement(selected.id)).toBe('completed')
+})
+
 it.each([false, true])('rolls back completion and selection together (recurring: %s)', async recurring => {
   const { driver, journal } = await setup()
   const task = await journal.createTask('work', { date: '2026-03-09', time: '12:00' },

@@ -145,6 +145,20 @@ export default function TasksView({
     dragging.current = active
   }, [])
 
+  /**
+   * Sends the reader to where a Task is now and singles it out there. Focus
+   * waits for the destination list, so a Task appears in the list that holds
+   * it rather than flashing in whichever list happened to be showing.
+   */
+  const goToTask = useCallback((taskId: string) => {
+    void session.showTask(taskId).then((destination) => {
+      // A newer read took the screen: the Task is not what is being looked at.
+      if (destination !== null && session.snapshot().showing === destination) {
+        setFocused(taskId)
+      }
+    })
+  }, [session])
+
   // A confirmation is portalled to the end of the document, so hiding this
   // section leaves it standing over whatever is showing instead — see
   // docs/adr/0024-a-view-is-told-whether-it-is-on-screen.md. It goes with the
@@ -215,8 +229,7 @@ export default function TasksView({
     function single(alertId: string) {
       const taskId = taskIdOfAlert(alertId)
       if (taskId === null) return
-      setFocused(taskId)
-      void session.show('open')
+      goToTask(taskId)
     }
 
     // The Alert that opened this window, if a click on one did. Asked for
@@ -253,7 +266,7 @@ export default function TasksView({
       void opened.then((stop) => stop())
       void reconciled.then((stop) => stop())
     }
-  }, [desktop, session])
+  }, [desktop, session, goToTask])
 
   // Escape belongs to whatever has taken the screen over: the Editor first,
   // then the deletion, then a Search, and the Main Window when none has.
@@ -307,13 +320,12 @@ export default function TasksView({
   }
 
   /**
-   * Answering a Search result focuses the Task where it already sits,
-   * switching to the Completed list first if that is where it lives — the
-   * same singling-out a clicked Task Alert performs.
+   * Answering a Search result focuses the Task where it already sits — Daily
+   * Tasks when it is selected there, otherwise the appropriate broader list —
+   * the same singling-out a clicked Task Alert performs.
    */
   function answerResult(task: Task) {
-    setFocused(task.id)
-    void session.show(isOpen(task) ? 'open' : 'completed')
+    goToTask(task.id)
   }
 
   const list = tasks.state === 'tasks' ? tasks.tasks : []

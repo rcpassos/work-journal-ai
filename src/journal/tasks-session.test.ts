@@ -834,3 +834,214 @@ describe('searching the Tasks', () => {
     expect(descriptionsOf(now())).toEqual(['beta'])
   })
 })
+
+describe('going to where a Task is', () => {
+  it('takes a selected Task to Daily Tasks', async () => {
+    const { session, core, created, now } = await tasksSession([
+      'selected',
+      'backlog',
+    ])
+    await core.addDailyTask(created[0].id)
+    await session.show('open')
+
+    await session.showTask(created[0].id)
+
+    expect(now().showing).toBe('daily')
+    expect(descriptionsOf(now())).toEqual(['selected'])
+  })
+
+  it('takes an unselected Open Task to the broader Open list', async () => {
+    const { session, core, created, now } = await tasksSession([
+      'selected',
+      'backlog',
+    ])
+    await core.addDailyTask(created[0].id)
+    await session.show('daily')
+
+    await session.showTask(created[1].id)
+
+    expect(now().showing).toBe('open')
+    expect(descriptionsOf(now())).toEqual(['backlog', 'selected'])
+  })
+
+  it('takes a Completed Task to Completed', async () => {
+    const { session, core, created, now } = await tasksSession(['kept'])
+    await core.completeTask(created[0].id)
+    await session.show('daily')
+
+    await session.showTask(created[0].id)
+
+    expect(now().showing).toBe('completed')
+    expect(descriptionsOf(now())).toEqual(['kept'])
+  })
+
+  it('follows where the Task is now, not where a result said it was', async () => {
+    const { session, core, created, now } = await tasksSession(['moved'])
+    await session.show('open')
+
+    // Read as unselected, selected by the time the result is chosen.
+    await core.addDailyTask(created[0].id)
+    await session.showTask(created[0].id)
+
+    expect(now().showing).toBe('daily')
+    expect(descriptionsOf(now())).toEqual(['moved'])
+  })
+
+  it('takes a Task that is gone to the broader Open list', async () => {
+    const { session, core, created, now } = await tasksSession(['deleted'])
+    await core.deleteTask(created[0].id)
+    await session.show('completed')
+
+    await session.showTask(created[0].id)
+
+    expect(now().showing).toBe('open')
+    expect(descriptionsOf(now())).toEqual([])
+  })
+
+  it('never changes membership, order, schedule, or the Task itself', async () => {
+    const { session, core, created } = await tasksSession([
+      'selected',
+      'backlog',
+    ])
+    await core.addDailyTask(created[0].id)
+    const selected = await core.dailyTasks()
+    const backlog = await core.openTasks()
+
+    await session.showTask(created[1].id)
+
+    expect(await core.dailyTasks()).toEqual(selected)
+    expect(await core.openTasks()).toEqual(backlog)
+    expect(await core.openTasks()).toHaveLength(2)
+  })
+
+  it('leaves the newer navigation standing when an older one finishes last', async () => {
+    let holdNextRead = false
+    let release!: () => void
+    const held = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let reading!: () => void
+    const reached = new Promise<void>((resolve) => {
+      reading = resolve
+    })
+
+    const { session, created, now } = await tasksSession(['first', 'second'], {
+      journal: (core) => ({
+        ...core,
+        async occurrencesOfEach(ids) {
+          const occurrences = await core.occurrencesOfEach(ids)
+          if (holdNextRead) {
+            holdNextRead = false
+            reading()
+            await held
+          }
+          return occurrences
+        },
+      }),
+    })
+    await session.show('open')
+
+    holdNextRead = true
+    const older = session.showTask(created[0].id)
+    await reached
+    const newer = session.showTask(created[1].id)
+
+    expect(await newer).toBe('open')
+    release()
+    expect(await older).toBeNull()
+    expect(now().showing).toBe('open')
+  })
+
+  it('keeps a newer Search when an older navigation finishes after it', async () => {
+    let release!: () => void
+    const held = new Promise<void>((resolve) => {
+      release = resolve
+    })
+
+    const { session, created, now } = await tasksSession(['one'], {
+      journal: (core) => ({
+        ...core,
+        async taskPlacement(id) {
+          await held
+          return core.taskPlacement(id)
+        },
+      }),
+    })
+    await session.show('open')
+
+    const navigating = session.showTask(created[0].id)
+    const searching = session.search('newer')
+    release()
+
+    expect(await navigating).toBeNull()
+    await searching
+    expect(now().term).toBe('newer')
+    expect(now().searching).toBe(true)
+    expect(now().tasks.state).toBe('results')
+  })
+
+  it('keeps a navigation when the list is refreshed underneath it', async () => {
+    let release!: () => void
+    const held = new Promise<void>((resolve) => {
+      release = resolve
+    })
+
+    const { session, core, created, now } = await tasksSession(['selected'], {
+      journal: (core) => ({
+        ...core,
+        async taskPlacement(id) {
+          await held
+          return core.taskPlacement(id)
+        },
+      }),
+    })
+    await core.addDailyTask(created[0].id)
+    await session.show('completed')
+
+    const navigating = session.showTask(created[0].id)
+    await session.refresh()
+    release()
+
+    expect(await navigating).toBe('daily')
+    expect(now().showing).toBe('daily')
+  })
+
+  it('keeps the navigation when a refresh supersedes its destination read', async () => {
+    let holdNextRead = false
+    let release!: () => void
+    const held = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let reading!: () => void
+    const reached = new Promise<void>((resolve) => {
+      reading = resolve
+    })
+
+    const { session, created, now } = await tasksSession(['one'], {
+      journal: (core) => ({
+        ...core,
+        async occurrencesOfEach(ids) {
+          const occurrences = await core.occurrencesOfEach(ids)
+          if (holdNextRead) {
+            holdNextRead = false
+            reading()
+            await held
+          }
+          return occurrences
+        },
+      }),
+    })
+    await session.show('completed')
+
+    holdNextRead = true
+    const navigating = session.showTask(created[0].id)
+    await reached
+    // The destination list is already showing; an ordinary refresh reads it
+    // again and takes the newer read ticket.
+    await session.refresh()
+    release()
+
+    expect(await navigating).toBe('open')
+    expect(now().showing).toBe('open')
+  })
+})
