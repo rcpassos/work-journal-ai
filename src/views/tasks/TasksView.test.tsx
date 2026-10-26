@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import userEvent from '@testing-library/user-event'
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { fakeDesktop } from '@/platform/testing/desktop'
@@ -14,6 +14,14 @@ import TaskCreationView from './TaskCreationView'
 // the one thing that cannot be undone.
 
 afterEach(cleanup)
+afterEach(() => {
+  vi.unstubAllGlobals()
+  Reflect.deleteProperty(document, 'getAnimations')
+  Reflect.deleteProperty(document, 'elementFromPoint')
+  Reflect.deleteProperty(Element.prototype, 'getAnimations')
+  Reflect.deleteProperty(Element.prototype, 'setPointerCapture')
+  Reflect.deleteProperty(Element.prototype, 'releasePointerCapture')
+})
 
 const openDatabases: Array<() => void> = []
 
@@ -116,6 +124,47 @@ function setTime(time: string) {
 }
 
 describe('Daily Tasks', () => {
+  it('cancels a pointer drag on Escape without closing the window when the inline input retains focus', async () => {
+    // jsdom has no layout observers. This scenario checks event ownership,
+    // not drag geometry; actual layout remains a desktop verification.
+    class LayoutObserver {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    }
+    vi.stubGlobal('IntersectionObserver', LayoutObserver)
+    vi.stubGlobal('ResizeObserver', LayoutObserver)
+    vi.stubGlobal('matchMedia', (media: string) => ({
+      media, matches: media === '(prefers-reduced-motion: reduce)',
+      addEventListener() {}, removeEventListener() {},
+    }))
+    Object.defineProperty(document, 'getAnimations', { configurable: true, value: () => [] })
+    Object.defineProperty(document, 'elementFromPoint', { configurable: true, value: () => null })
+    Object.defineProperty(Element.prototype, 'getAnimations', { configurable: true, value: () => [] })
+    Object.defineProperty(Element.prototype, 'setPointerCapture', { configurable: true, value() {} })
+    Object.defineProperty(Element.prototype, 'releasePointerCapture', { configurable: true, value() {} })
+    const { core, created, desktop } = await showTasks(['first', 'second'])
+    for (const task of created) await core.addDailyTask(task.id)
+    await desktop.announceTasksChanged()
+    await expect.poll(rows).toEqual(['first', 'second'])
+    let closed = false
+    desktop.closeWindow = async () => { closed = true }
+    const user = userEvent.setup()
+    const input = screen.getByRole('textbox', { name: 'New Task Description' })
+    await user.type(input, 'unfinished')
+    const handle = screen.getByRole('button', { name: 'Reorder “first”' })
+    await user.pointer({ target: handle, keys: '[MouseLeft>]' })
+    expect(document.activeElement).toBe(input)
+    await user.keyboard('{Escape}')
+    expect(closed).toBe(false)
+    expect(rows()).toEqual(['first', 'second'])
+    expect(await core.dailyTasks()).toEqual(created)
+    expect((input as HTMLInputElement).value).toBe('unfinished')
+    await user.keyboard('{Escape}')
+    expect(closed).toBe(true)
+    await user.pointer({ target: document.body, keys: '[/MouseLeft]' })
+  })
+
   it('reorders with the keyboard while retaining focus, respects boundaries, and keeps additions at the bottom', async () => {
     const { core, created, desktop } = await showTasks(['first', 'second', 'third'])
     for (const task of created) await core.addDailyTask(task.id)

@@ -1,6 +1,6 @@
 import { Combobox as ComboboxPrimitive } from '@base-ui/react/combobox'
 import { Combobox, ComboboxContent, ComboboxInput, ComboboxItem, ComboboxList, ComboboxEmpty } from '@/components/ui/combobox'
-import { useEffect, useId, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import {
   CheckCircle2Icon,
   ChevronRightIcon,
@@ -130,6 +130,10 @@ export default function TasksView({
   // Null until the OS has been asked, and after a question it refused.
   const [hotkeys, setHotkeys] = useState<HotkeyStatuses | null>(null)
   const page = useRef<HTMLDivElement>(null)
+  const dragging = useRef(false)
+  const onDraggingChange = useCallback((active: boolean) => {
+    dragging.current = active
+  }, [])
 
   // A confirmation is portalled to the end of the document, so hiding this
   // section leaves it standing over whatever is showing instead — see
@@ -245,6 +249,9 @@ export default function TasksView({
   // then the deletion, then a Search, and the Main Window when none has.
   // Dismissing that window closes it — it is not kept resident.
   function onKeyDown(event: React.KeyboardEvent<HTMLElement>) {
+    // The pointer sensor cancels Escape later, at body bubble phase. Keep
+    // dismissal out of its way without stopping the event from reaching it.
+    if (dragging.current) return
     if (event.defaultPrevented) return
     if (event.key !== 'Escape') return
 
@@ -475,7 +482,7 @@ export default function TasksView({
           </div>
         )}
         {showing === 'daily' && list.length > 0 && (
-          <DailyTaskList tasks={list} onReorder={session.reorderDaily}>{line}</DailyTaskList>
+          <DailyTaskList tasks={list} onReorder={session.reorderDaily} onDraggingChange={onDraggingChange}>{line}</DailyTaskList>
         )}
         {showing === 'completed' && list.length > 0 && (
           <ol className="flex flex-col gap-1">{list.map(task => line(task))}</ol>

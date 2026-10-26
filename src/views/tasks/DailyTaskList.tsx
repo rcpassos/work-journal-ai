@@ -1,6 +1,6 @@
 import { DragDropProvider } from '@dnd-kit/react'
 import { useSortable } from '@dnd-kit/react/sortable'
-import { useId, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import { ArrowDownToLineIcon, ArrowUpToLineIcon, GripVerticalIcon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import type { Task } from '@/journal/journal'
@@ -14,9 +14,10 @@ export interface DailyTaskControls {
 }
 
 /** Drag feedback is temporary; the rendered priority changes only after saving. */
-export default function DailyTaskList({ tasks, onReorder, children }: {
+export default function DailyTaskList({ tasks, onReorder, onDraggingChange, children }: {
   tasks: Task[]
   onReorder: (order: readonly string[], expected: readonly string[]) => Promise<boolean>
+  onDraggingChange: (active: boolean) => void
   children: (task: Task, controls: DailyTaskControls) => ReactNode
 }) {
   const saving = useRef(false)
@@ -25,6 +26,7 @@ export default function DailyTaskList({ tasks, onReorder, children }: {
   const dragOrder = useRef<string[]>([])
   const list = useRef<HTMLOListElement>(null)
   const instructions = useId()
+  useEffect(() => () => onDraggingChange(false), [onDraggingChange])
 
   async function move(expected: string[], from: number, to: number) {
     if (saving.current || from === to || from < 0 || from >= expected.length || to < 0 || to >= expected.length) return
@@ -52,12 +54,16 @@ export default function DailyTaskList({ tasks, onReorder, children }: {
 
   return (
     <DragDropProvider
-      onDragStart={() => { dragOrder.current = tasks.map(task => task.id) }}
+      onBeforeDragStart={() => {
+        dragOrder.current = tasks.map(task => task.id)
+        onDraggingChange(true)
+      }}
       // Keep React's saved order authoritative. The library still provides
       // drag feedback and a drop target, but must not rearrange DOM nodes
       // outside React: a failed/stale save needs to show the persisted order.
       onDragOver={event => event.preventDefault()}
       onDragEnd={event => {
+        onDraggingChange(false)
         // Escape belongs to the drag sensor, not the window's close handler.
         if (event.canceled) return
         const { source, target } = event.operation

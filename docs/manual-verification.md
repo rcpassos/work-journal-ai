@@ -107,7 +107,7 @@ The palette is the point of this section, and the moment to watch is the one the
 These layout and focus checks may use a bundled development build from the current source, with its separate `.dev` journal.
 
 - [ ] Fill Daily Tasks beyond one screen. Drag a handle to a chosen position, then drag towards the scrolling edge to move through the long list. The saved sequence matches the drop, and no Task is lost or duplicated.
-- [ ] Start a drag and cancel with Escape. The saved order stays unchanged and the window remains open.
+- [ ] Start a drag and cancel with Escape. Repeat after focusing the inline description and leaving an unfinished draft, dragging a different Task while the input retains focus. The saved order and draft stay unchanged, the window remains open, and the drag ends. A subsequent Escape can close the window normally.
 - [ ] Focus a handle and use Alt+Arrow Up / Alt+Arrow Down repeatedly. The Task moves one place per command, keeps usable focus, and stays in view. First/last boundary commands leave the list intact. Also try Space, arrows, Space to drop, and Escape to cancel a keyboard drag.
 - [ ] Use Move to top and Move to bottom on a middle Task. Focus follows the moved row, and repeating the boundary action changes nothing. New additions still enter at the bottom; removing work preserves the surviving order.
 - [ ] Close/reopen the Main Window, then quit/relaunch the app. Priorities survive. Schedules, descriptions, details, recurrence/history and the broader Open/Completed ordering remain intact.
