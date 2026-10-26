@@ -736,7 +736,9 @@ function TaskLine({
     <li
       ref={element => { row.current = element; ordering?.rowRef(element) }}
       aria-current={focused ? 'true' : undefined}
-      className={`group rounded-md py-2 pl-2 pr-1 hover:bg-muted/40 focus-within:bg-muted/40 ${
+      data-drop-target={ordering?.dropTarget || undefined}
+      data-drag-source={ordering?.dragSource || undefined}
+      className={`group rounded-md py-2 pl-2 pr-1 hover:bg-muted/40 focus-within:bg-muted/40 data-drop-target:ring-2 data-drop-target:ring-ring/40 data-drag-source:bg-background data-drag-source:shadow-sm ${
         focused ? 'bg-muted/60 ring-2 ring-ring/40' : ''
       }`}
     >

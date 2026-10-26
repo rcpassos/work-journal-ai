@@ -1,5 +1,5 @@
 import { DragDropProvider } from '@dnd-kit/react'
-import { isSortable, useSortable } from '@dnd-kit/react/sortable'
+import { useSortable } from '@dnd-kit/react/sortable'
 import { useId, useRef, useState, type ReactNode } from 'react'
 import { ArrowDownToLineIcon, ArrowUpToLineIcon, GripVerticalIcon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -7,6 +7,8 @@ import type { Task } from '@/journal/journal'
 
 export interface DailyTaskControls {
   rowRef: (element: HTMLLIElement | null) => void
+  dropTarget: boolean
+  dragSource: boolean
   handle: ReactNode
   actions: ReactNode
 }
@@ -25,7 +27,7 @@ export default function DailyTaskList({ tasks, onReorder, children }: {
   const instructions = useId()
 
   async function move(expected: string[], from: number, to: number) {
-    if (saving.current || from === to || from < 0 || to < 0 || to >= expected.length) return
+    if (saving.current || from === to || from < 0 || from >= expected.length || to < 0 || to >= expected.length) return
     const order = [...expected]
     const [id] = order.splice(from, 1)
     order.splice(to, 0, id)
@@ -51,12 +53,17 @@ export default function DailyTaskList({ tasks, onReorder, children }: {
   return (
     <DragDropProvider
       onDragStart={() => { dragOrder.current = tasks.map(task => task.id) }}
+      // Keep React's saved order authoritative. The library still provides
+      // drag feedback and a drop target, but must not rearrange DOM nodes
+      // outside React: a failed/stale save needs to show the persisted order.
+      onDragOver={event => event.preventDefault()}
       onDragEnd={event => {
         // Escape belongs to the drag sensor, not the window's close handler.
         if (event.canceled) return
         const { source, target } = event.operation
-        if (target && isSortable(source)) {
-          void move(dragOrder.current, source.initialIndex, source.index)
+        if (source && target) {
+          const expected = dragOrder.current
+          void move(expected, expected.indexOf(String(source.id)), expected.indexOf(String(target.id)))
         }
       }}
     >
@@ -87,9 +94,11 @@ function SortableDailyTask({ task, index, count, busy, instructions, onMove, chi
   onMove: (index: number) => void
   children: (controls: DailyTaskControls) => ReactNode
 }) {
-  const { ref, handleRef } = useSortable({ id: task.id, index, disabled: busy })
+  const { ref, handleRef, isDropTarget, isDragSource } = useSortable({ id: task.id, index, disabled: busy })
   return children({
     rowRef: ref,
+    dropTarget: isDropTarget && !isDragSource,
+    dragSource: isDragSource,
     handle: (
       <Button ref={handleRef} variant="ghost" size="icon-sm"
         aria-label={`Reorder “${task.description}”`}
