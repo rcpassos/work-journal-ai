@@ -4,6 +4,8 @@ What changed in each released version, newest first. Every `vX.Y.Z` section here
 
 ## Unreleased
 
+## 0.19.0 — 2026-10-26
+
 - Searching for a Task or opening its Task Alert now takes you to Daily Tasks when the Task is selected there, and otherwise to the appropriate broader list, without changing what is in Daily Tasks.
 
 - Daily Tasks can now be prioritized with drag handles, keyboard controls, and Move to top or Move to bottom actions, with the saved order retained across restarts.
