@@ -4,6 +4,8 @@ What changed in each released version, newest first. Every `vX.Y.Z` section here
 
 ## Unreleased
 
+## 0.20.0 — 2026-10-30
+
 - Daily Tasks now keeps Add Task above the rows and automatically shows tasks due today or overdue after your saved priorities.
 - Removing a saved priority leaves a still-due task visible; use Add existing to give automatic work a persistent priority.
 
