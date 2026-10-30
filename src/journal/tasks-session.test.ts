@@ -117,6 +117,24 @@ function afterDebounce() {
 }
 
 describe('opening Tasks View', () => {
+  it('refreshes automatic Daily Tasks on date rollover and schedule edits without changing saved priorities', async () => {
+    const { session, core, clock, now } = await tasksSession(['priority'])
+    const [priority] = await core.openTasks()
+    await core.addDailyTask(priority.id)
+    await core.createTask('today', { date: '2026-03-09', time: null })
+    const tomorrow = await core.createTask('tomorrow', { date: '2026-03-10', time: null })
+    await session.open()
+    expect(descriptionsOf(now())).toEqual(['priority', 'today'])
+
+    clock.set(new Date('2026-03-10T00:01:00'))
+    session.regroup()
+    await expect.poll(() => descriptionsOf(now())).toEqual(['priority', 'today', 'tomorrow'])
+
+    await session.save(tomorrow.id, { description: 'tomorrow', schedule: { date: '2026-03-11', time: null } })
+    expect(descriptionsOf(now())).toEqual(['priority', 'today'])
+    expect(await core.dailyTasks()).toEqual([priority])
+  })
+
   it('opens on Daily Tasks without selecting the backlog', async () => {
     const { session, now } = await tasksSession(['first', 'second', 'third'])
 

@@ -102,6 +102,14 @@ The palette is the point of this section, and the moment to watch is the one the
 - [ ] Re-opening **New Note** straight after committing a Note shows an empty field too — the committed text is not still sitting there.
 - [ ] Notes committed before quitting are still there after relaunching the app, and after a restart of the machine.
 
+## Daily Tasks automatic visibility (#360)
+
+- [ ] Add Task appears above the rows, including in an empty Daily Tasks list. Consecutive inline creation still appends Unscheduled Tasks to the saved priorities and retains input focus.
+- [ ] Unselected Today and Overdue Tasks appear after saved priorities, Overdue before Today, and remain in Open. A selected due Task appears only at its saved position. Future and Unscheduled Tasks appear only when selected.
+- [ ] Automatic rows have no reorder or remove-priority action. Use Add existing to give one a saved priority, reorder it, then remove that priority: it returns to the automatic section once, keeping its schedule.
+- [ ] Rescheduling automatic work to a future date or clearing its schedule removes it from Daily Tasks. Completing it removes it immediately. Editing selected work retains its priority even when future or Unscheduled.
+- [ ] Leave the window open through midnight, then repeat after sleep and regained focus: newly due Tasks appear without changing saved priority order. A recurring successor appears when due, with no saved priority.
+
 ## Daily Tasks priority (#350)
 
 These layout and focus checks may use a bundled development build from the current source, with its separate `.dev` journal.
@@ -115,7 +123,7 @@ These layout and focus checks may use a bundled development build from the curre
 ## Daily Tasks from the resident Task Creation window
 
 - [ ] Open Task Creation through the Task Hotkey, Tray Menu **New Task**, and Tasks View **New Task**. Each reaches the same resident window with **Add to Daily Tasks** initially unchecked; all controls, including the choice and refusal message, fit without clipping.
-- [ ] With Daily Tasks open and existing priorities selected, create a Task without checking the choice. It appears in the broader Open list and leaves Daily Tasks unchanged. Create another with the choice checked: it appears at the bottom of Daily Tasks without reloading, and the next creation starts empty and unchecked.
+- [ ] With Daily Tasks open and existing priorities selected, create a Task without checking the choice. It appears in the broader Open list and, when Today or Overdue, automatically in Daily Tasks without a saved priority. Create another with the choice checked: it appears at the bottom of the saved priorities without reloading, and the next creation starts empty and unchecked.
 - [ ] Repeat checked creation with a date, a date and time, and a recurrence. Schedules, details and recurrence remain intact, and the normal Task Alert permission behavior still applies.
 - [ ] Check the choice and enter unfinished text, then invoke the Task Hotkey again or switch to another Work Journal window and return. The text and choice survive and the description regains focus. Escape abandons both and the next creation is unchecked.
 
@@ -313,16 +321,16 @@ Against a release build and a repository with commits of your own from today.
 - [ ] Clicking on another application closes the window and the text is gone.
 - [ ] `Enter` on an empty field, and on a field holding only spaces, creates nothing and closes nothing.
 - [ ] Two Tasks with exactly the same description are both created and both listed.
-- [ ] **View Tasks** opens on **Daily Tasks**, initially empty even with an existing backlog; **Open** and **Completed** remain accessible. New Tasks appear in **Open** without manual refresh.
+- [ ] **View Tasks** opens on **Daily Tasks**, showing saved priorities followed by other Today and Overdue work; **Open** and **Completed** remain accessible. New Tasks appear in **Open** without manual refresh.
 - [ ] **Add existing** searches Open Tasks by description and details, excludes selected Tasks, and appends each choice once. Escape dismisses the picker without closing the window, and keyboard selection works.
-- [ ] Removing a Daily Task keeps its schedule and its row in **Open**; adding it again puts it last. Closing the Main Window and restarting the app preserves the chosen list and order.
-- [ ] Editing or rescheduling selected work keeps its position and displays its updated schedule. Midnight, wake and focus changes preserve selection while **Open** continues to refresh its schedule groups.
-- [ ] Completion from Daily Tasks or another surface removes selection immediately; ordinary work stays in **Completed**, recurring work retains history and advances outside Daily Tasks.
-- [ ] After completing from Daily Tasks, an immediate Undo beside the list restores the Task to its previous position, at the top, middle and bottom of a long list. Later reopening from **Completed** leaves it in the broader **Open** list until it is selected again, and adding or removing the Task afterwards keeps that later membership choice.
+- [ ] Removing a saved priority keeps its schedule and its row in **Open**, and leaves Today or Overdue work automatically visible; adding it again puts it last among saved priorities. Closing the Main Window and restarting the app preserves the chosen list and order.
+- [ ] Editing or rescheduling selected work keeps its position and displays its updated schedule. Midnight, wake and focus changes preserve selection while automatic visibility and the **Open** schedule groups refresh.
+- [ ] Completion from Daily Tasks or another surface removes selection immediately; ordinary work stays in **Completed**, recurring work retains history and its successor appears automatically only when Today or Overdue.
+- [ ] After completing selected work from Daily Tasks, an immediate Undo beside the list restores the Task to its previous position, at the top, middle and bottom of a long list. Later reopening from **Completed** restores no saved priority, though due work appears automatically, and adding or removing the Task afterwards keeps that later membership choice.
 - [ ] Immediate Undo of a recurring completion restores the completed occurrence and its previous position while safe Undo permits it. Once an edit has replaced the successor, the row no longer offers safe Undo. Once another completion has intervened, an earlier immediate offer is refused with the reason stated, while the row's Undo takes back the newer completion.
 - [ ] Confirmed deletion of selected work removes its row from Daily Tasks and Open; cancelling leaves both intact.
-- [ ] Choosing a Search result for a selected Open Task switches to **Daily Tasks** and visibly singles it out; an unselected Open Task opens in **Open**, and a Completed Task opens in **Completed**. The term stays in the Search field.
-- [ ] Opening a Task Alert follows the same selected-versus-broader rule, both with the Main Window already open and after a cold launch, and never adds the Task to Daily Tasks. A Task completed, removed from Daily Tasks, rescheduled or deleted before opening appears in the list its current state belongs to; a deleted Task opens **Open** with nothing singled out.
+- [ ] Choosing a Search result for a selected or automatically visible Open Task switches to **Daily Tasks** and visibly singles it out; other Open work opens in **Open**, and a Completed Task opens in **Completed**. The term stays in the Search field.
+- [ ] Opening a Task Alert follows the same visible-in-Daily-Tasks rule, both with the Main Window already open and after a cold launch, and never adds the Task to Daily Tasks. A Task completed, removed from Daily Tasks, rescheduled or deleted before opening appears in the list its current state belongs to; a deleted Task opens **Open** with nothing singled out.
 - [ ] Navigating from Search or a Task Alert leaves Daily Tasks membership and order, schedules, and the Task itself unchanged, and creates no duplicate Task.
 - [ ] A Task's checkbox completes it immediately, with no confirmation, and it leaves the Open list at once.
 - [ ] **Completed** lists it, newest completed first; its checkbox reopens it and it returns to **Open**.
