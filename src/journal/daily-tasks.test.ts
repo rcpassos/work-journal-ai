@@ -19,6 +19,58 @@ async function selectAll(journal: Journal, ...tasks: Task[]) {
   for (const task of tasks) await journal.addDailyTask(task.id)
 }
 
+it('shows chosen priorities followed by unselected Today and Overdue work, once each', async () => {
+  const { journal } = await setup()
+  const unscheduled = await journal.createTask('chosen unscheduled')
+  const future = await journal.createTask('chosen future', { date: '2026-04-01', time: null })
+  const today = await journal.createTask('today', { date: '2026-03-09', time: null })
+  const overdue = await journal.createTask('overdue', { date: '2026-03-08', time: '17:00' })
+  const earlier = await journal.createTask('earlier today', { date: '2026-03-09', time: '08:00' })
+  const wholeDay = await journal.createTask('whole day', { date: '2026-03-09', time: null })
+  const timed = await journal.createTask('later today', { date: '2026-03-09', time: '17:00' })
+  await journal.createTask('unselected future', { date: '2026-03-10', time: null })
+  await journal.createTask('unselected unscheduled')
+  const kept = await journal.createTask('completed', { date: '2026-03-08', time: null })
+  await journal.completeTask(kept.id)
+  await selectAll(journal, future, today, unscheduled)
+
+  expect(await journal.dailyTaskList()).toEqual({
+    selected: [future, today, unscheduled],
+    automatic: [overdue, earlier, wholeDay, timed],
+  })
+  expect(await journal.dailyTasks()).toEqual([future, today, unscheduled])
+  expect(await journal.openTasks()).toEqual(expect.arrayContaining([today, overdue, timed]))
+})
+
+it('re-evaluates automatic work at local midnight across DST without saving a selection', async () => {
+  const { driver } = await setup()
+  // Lisbon is on UTC+1 after the spring change: this is still 23:30 on the 29th.
+  const moving = fixedClock('2026-03-29T22:30:00Z')
+  const journal = createJournal({ driver, clock: moving })
+  const tomorrow = await journal.createTask('tomorrow', { date: '2026-03-30', time: null })
+  expect(await journal.dailyTaskList()).toEqual({ selected: [], automatic: [] })
+  moving.set(new Date('2026-03-29T23:01:00Z'))
+  expect(await journal.dailyTaskList()).toEqual({ selected: [], automatic: [tomorrow] })
+  expect(await journal.dailyTasks()).toEqual([])
+})
+
+it('shows a recurring successor automatically only while due, without restoring its completed priority', async () => {
+  const { driver } = await setup()
+  const moving = fixedClock('2026-03-07T09:00:00')
+  const journal = createJournal({ driver, clock: moving })
+  const recurring = await journal.createTask('catch up', { date: '2026-03-07', time: null }, {
+    unit: 'day', interval: 1, weekdays: [],
+  })
+  await journal.addDailyTask(recurring.id)
+  moving.set(new Date('2026-03-09T09:00:00'))
+  await journal.completeTask(recurring.id)
+  expect(await journal.dailyTaskList()).toEqual({
+    selected: [], automatic: [expect.objectContaining({ id: recurring.id, scheduledDate: '2026-03-09' })],
+  })
+  await journal.completeTask(recurring.id)
+  expect(await journal.dailyTaskList()).toEqual({ selected: [], automatic: [] })
+})
+
 it('upgrades existing Tasks without selecting them and retains selection across database restarts', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'daily-tasks-'))
   const filename = join(directory, 'journal.sqlite')
@@ -77,6 +129,16 @@ it('answers where navigation should take the reader from the Task as it is now',
 
   await journal.completeTask(selected.id)
   expect(await journal.taskPlacement(selected.id)).toBe('completed')
+})
+
+it('navigates to automatically visible work and follows it out after rescheduling or completion', async () => {
+  const { journal } = await setup()
+  const due = await journal.createTask('due', { date: '2026-03-09', time: '17:00' })
+  expect(await journal.taskPlacement(due.id)).toBe('daily')
+  await journal.editTask(due.id, { description: 'due', schedule: { date: '2026-03-10', time: null } })
+  expect(await journal.taskPlacement(due.id)).toBe('open')
+  await journal.completeTask(due.id)
+  expect(await journal.taskPlacement(due.id)).toBe('completed')
 })
 
 it.each([false, true])('rolls back completion and selection together (recurring: %s)', async recurring => {

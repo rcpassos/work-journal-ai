@@ -185,10 +185,16 @@ export interface Task {
 
 /**
  * Where navigation should take the reader for a Task: Daily Tasks when it is
- * selected there, Completed when it has been kept, and the broader Open list
+ * selected or due there, Completed when it has been kept, and the broader Open list
  * otherwise — including when the Task is gone, which a clicked Alert may name.
  */
 export type TaskPlacement = 'daily' | 'open' | 'completed'
+
+/** Saved priorities and the additional work its current schedule brings in. */
+export interface DailyTasks {
+  selected: Task[]
+  automatic: Task[]
+}
 
 /** The calendar units a cadence counts in, and there is no fifth. */
 export type RecurrenceUnit = 'day' | 'week' | 'month' | 'year'
@@ -607,14 +613,16 @@ export interface Journal {
   openTasks(): Promise<Task[]>
   /**
    * The list navigation should show for a Task, from one read of its current
-   * state and Daily Tasks membership: selected work is in Daily Tasks, kept
+   * state and Daily Tasks membership: selected or due work is in Daily Tasks, kept
    * work in Completed, and everything else — including a Task that is gone —
    * in the broader Open list.
    */
   taskPlacement(id: string): Promise<TaskPlacement>
   /** Explicitly selected Open work, highest priority first. */
   dailyTasks(): Promise<Task[]>
-  /** Open Tasks outside the working list, offered by Add existing. */
+  /** Saved priorities, then unselected Today/Overdue work in the Open list's group order. */
+  dailyTaskList(): Promise<DailyTasks>
+  /** Open Tasks without a saved priority, including automatic work, offered by Add existing. */
   dailyTaskCandidates(): Promise<Task[]>
   /** Append current Open work; never change the Task itself. */
   addDailyTask(id: string): Promise<void>
@@ -2044,12 +2052,22 @@ export function createJournal({
       if (row === undefined) return 'open'
       if (!isOpen(toTask(row))) return 'completed'
 
-      return row.in_daily === 1 ? 'daily' : 'open'
+      return row.in_daily === 1 || tasksDueNow([toTask(row)], clock.now()).length > 0
+        ? 'daily' : 'open'
     },
 
     async dailyTasks() {
       const rows = await driver.select<TaskRow>(SELECT_DAILY_TASKS, [])
       return rows.map(toTask)
+    },
+
+    async dailyTaskList() {
+      const selected = (await driver.select<TaskRow>(SELECT_DAILY_TASKS, [])).map(toTask)
+      const selectedIds = new Set(selected.map(task => task.id))
+      const open = (await driver.select<TaskRow>(SELECT_OPEN_TASKS, [])).map(toTask)
+      const automatic = tasksDueNow(open, clock.now())
+        .filter(task => !selectedIds.has(task.id))
+      return { selected, automatic }
     },
 
     async dailyTaskCandidates() {
@@ -3367,6 +3385,13 @@ export function groupOpenTasks(
       (task) => groupOf(task, now, today, timeZone) === name,
     ),
   }))
+}
+
+/** Use the Open list's classification and ordering for automatic visibility. */
+function tasksDueNow(tasks: Task[], now: Date): Task[] {
+  return groupOpenTasks(tasks, now)
+    .filter(group => group.name === 'overdue' || group.name === 'today')
+    .flatMap(group => group.tasks)
 }
 
 function groupOf(

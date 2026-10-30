@@ -329,6 +329,7 @@ export default function TasksView({
   }
 
   const list = tasks.state === 'tasks' ? tasks.tasks : []
+  const daily = tasks.state === 'tasks' ? tasks.daily : null
   const groups =
     tasks.state === 'tasks'
       ? tasks.groups.filter((group) => group.tasks.length > 0)
@@ -375,7 +376,7 @@ export default function TasksView({
         onEdit={() => setEditing(task)}
         onUndoCompletion={() => void session.undoCompletion(task.id)}
         onStopRecurrence={() => void session.stopRecurrence(task.id)}
-        onRemoveDaily={showing === 'daily' ? () => void session.removeDaily(task.id) : undefined}
+        onRemoveDaily={ordering ? () => void session.removeDaily(task.id) : undefined}
         onDelete={() => setDeleting(task)}
       />
     )
@@ -493,6 +494,10 @@ export default function TasksView({
       )}
 
       <main className="flex-1 overflow-y-auto px-6 pb-5">
+        <InlineTaskCreation
+          hidden={showing !== 'daily' || searching || editing !== null}
+          onCreate={(description) => session.createDaily(description)}
+        />
         {tasks.state === 'unreadable' && (
           <EmptyState
             icon={TriangleAlertIcon}
@@ -501,7 +506,7 @@ export default function TasksView({
         )}
         {tasks.state === 'tasks' && list.length === 0 && showing === 'daily' && (
           <EmptyState icon={ListTodoIcon} heading="No Daily Tasks yet">
-            Type a Task Description below or choose Open Tasks with Add existing.
+            Type a Task Description above or choose Open Tasks with Add existing.
           </EmptyState>
         )}
         {tasks.state === 'tasks' && list.length === 0 && showing === 'open' && (
@@ -548,16 +553,18 @@ export default function TasksView({
             ))}
           </div>
         )}
-        {showing === 'daily' && list.length > 0 && (
-          <DailyTaskList tasks={list} onReorder={session.reorderDaily} onDraggingChange={onDraggingChange}>{line}</DailyTaskList>
+        {showing === 'daily' && daily !== null && daily.selected.length > 0 && (
+          <DailyTaskList tasks={daily.selected} onReorder={session.reorderDaily} onDraggingChange={onDraggingChange}>{line}</DailyTaskList>
+        )}
+        {showing === 'daily' && daily !== null && daily.automatic.length > 0 && (
+          <section aria-label="Due today or overdue" className="pt-3">
+            <h2 className="px-2 pb-1.5 type-meta text-muted-foreground">Due today or overdue</h2>
+            <ol className="flex flex-col gap-1">{daily.automatic.map(task => line(task))}</ol>
+          </section>
         )}
         {showing === 'completed' && list.length > 0 && (
           <ol className="flex flex-col gap-1">{list.map(task => line(task))}</ol>
         )}
-        <InlineTaskCreation
-          hidden={showing !== 'daily' || searching || editing !== null}
-          onCreate={(description) => session.createDaily(description)}
-        />
       </main>
 
       {editing !== null && (
@@ -613,7 +620,7 @@ function InlineTaskCreation({ hidden, onCreate }: {
   return (
     <form
       hidden={hidden}
-      className="pt-3"
+      className="pb-3"
       aria-label="Create a Daily Task"
       aria-busy={saving}
       onSubmit={(event) => {
@@ -872,7 +879,8 @@ function TaskLine({
               variant="ghost"
               size="icon-sm"
               onClick={onRemoveDaily}
-              aria-label={`Remove “${task.description}” from Daily Tasks`}
+              aria-label={`Remove “${task.description}” from priorities`}
+              title="Remove saved priority. Tasks due today or overdue stay visible."
               className="text-muted-foreground"
             >
               <XIcon />

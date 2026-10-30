@@ -146,6 +146,29 @@ function setTime(time: string) {
 }
 
 describe('Daily Tasks', () => {
+  it('keeps automatic due work after saved priorities and can give it a persistent priority', async () => {
+    const { core, desktop, created } = await showTasks(['priority'], { selected: [0] })
+    const due = await core.createTask('due automatically', { date: '2026-03-09', time: null })
+    await desktop.announceTasksChanged()
+    await expect.poll(rows).toEqual(['priority', 'due automatically'])
+    expect(screen.queryByRole('button', { name: 'Reorder “due automatically”' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Remove “due automatically” from priorities' })).toBeNull()
+    const user = userEvent.setup()
+    await user.click(screen.getByText('Add existing'))
+    await user.click(await screen.findByRole('option', { name: 'due automatically' }))
+    await expect.poll(() => screen.queryByRole('button', { name: 'Reorder “due automatically”' })).not.toBeNull()
+    expect(rows()).toEqual(['priority', 'due automatically'])
+    expect(await core.dailyTasks()).toEqual([created[0], due])
+
+    await user.click(screen.getByRole('button', { name: 'Move “due automatically” to top' }))
+    await expect.poll(rows).toEqual(['due automatically', 'priority'])
+    await user.click(screen.getByRole('button', { name: 'Remove “due automatically” from priorities' }))
+    await expect.poll(rows).toEqual(['priority', 'due automatically'])
+    expect(await core.dailyTasks()).toEqual([created[0]])
+    await user.click(screen.getByRole('checkbox', { name: 'Complete “due automatically”' }))
+    await expect.poll(rows).toEqual(['priority'])
+  })
+
   it('cancels a pointer drag on Escape without closing the window when the inline input retains focus', async () => {
     // jsdom has no layout observers. This scenario checks event ownership,
     // not drag geometry; actual layout remains a desktop verification.
@@ -212,7 +235,7 @@ describe('Daily Tasks', () => {
     expect(await core.dailyTasks()).toEqual([created[0], created[2], created[1]])
     await user.type(screen.getByRole('textbox', { name: 'New Task Description' }), 'addition{Enter}')
     await expect.poll(rows).toEqual(['first', 'third', 'second', 'addition'])
-    await user.click(screen.getByRole('button', { name: 'Remove “third” from Daily Tasks' }))
+    await user.click(screen.getByRole('button', { name: 'Remove “third” from priorities' }))
     await expect.poll(rows).toEqual(['first', 'second', 'addition'])
   })
 
@@ -300,13 +323,14 @@ describe('Daily Tasks', () => {
     await expect.poll(rows).toEqual(['third', 'second', 'first'])
   })
 
-  it('captures consecutive inline tasks at the bottom, ready for the next entry, and persists their identities', async () => {
+  it('offers inline creation above the rows, appends consecutive tasks, and persists their identities', async () => {
     const { core, created, desktop, driver, clock } = await showTasks(['priority'])
     await core.addDailyTask(created[0].id)
     await desktop.announceTasksChanged()
     await expect.poll(rows).toEqual(['priority'])
     const user = userEvent.setup()
     const input = screen.getByRole('textbox', { name: 'New Task Description' }) as HTMLInputElement
+    expect(input.compareDocumentPosition(screen.getByText('priority')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     await user.type(input, 'first addition{Enter}')
     await expect.poll(rows).toEqual(['priority', 'first addition'])
     expect(input.value).toBe('')
@@ -474,7 +498,7 @@ describe('Daily Tasks', () => {
     await core.addDailyTask(created[1].id)
     await desktop.announceTasksChanged()
     await expect.poll(rows).toEqual(['first', 'second'])
-    fireEvent.click(screen.getByRole('button', { name: 'Remove “first” from Daily Tasks' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Remove “first” from priorities' }))
     await expect.poll(rows).toEqual(['second'])
     expect(await core.openTasks()).toContainEqual(scheduled)
     expect(screen.queryByRole('alertdialog')).toBeNull()
@@ -568,11 +592,11 @@ describe('Daily Tasks', () => {
     await screen.findByText(/Apr 1, 2026/)
     clock.set(new Date('2026-03-11T09:00:00'))
     act(() => { desktop.wake(); desktop.focus() })
-    expect(rows()).toEqual(['edited first', 'second'])
+    await expect.poll(rows).toEqual(['edited first', 'second', 'backlog'])
     cleanup()
     const reconstructed = createJournal({ driver, clock })
     render(<TasksView desktop={desktop} journal={Promise.resolve(reconstructed)} clock={clock} />)
-    await expect.poll(rows).toEqual(['edited first', 'second'])
+    await expect.poll(rows).toEqual(['edited first', 'second', 'backlog'])
     expect((await reconstructed.dailyTasks())[0].details).toBe('keep this context')
   })
 
@@ -689,7 +713,8 @@ describe('Daily Tasks', () => {
     let closed = false
     desktop.closeWindow = async () => { closed = true }
     await user.click(screen.getByText('Add existing'))
-    await screen.findByPlaceholderText('Search Open Tasks')
+    const reopenedInput = await screen.findByPlaceholderText('Search Open Tasks')
+    await expect.poll(() => document.activeElement).toBe(reopenedInput)
     await user.keyboard('{Escape}')
     expect(closed).toBe(false)
     await expect.poll(() => screen.queryByPlaceholderText('Search Open Tasks')).toBeNull()
@@ -697,7 +722,9 @@ describe('Daily Tasks', () => {
 
   it('starts empty with an existing backlog and keeps the broader list available', async () => {
     await showTasks(['first', 'second'])
-    await screen.findByRole('heading', { name: 'No Daily Tasks yet' })
+    const empty = await screen.findByRole('heading', { name: 'No Daily Tasks yet' })
+    const input = screen.getByRole('textbox', { name: 'New Task Description' })
+    expect(input.compareDocumentPosition(empty) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     expect(rows()).toEqual([])
     fireEvent.click(tab('Open'))
     await screen.findByText('second')

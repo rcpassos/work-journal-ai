@@ -27,6 +27,7 @@ import {
   isOpen,
   type Clock,
   type CompletionReceipt,
+  type DailyTasks,
   type Journal,
   type Recurrence,
   type Task,
@@ -63,6 +64,7 @@ export type TasksState =
       state: 'tasks'
       tasks: Task[]
       groups: TaskGroup[]
+      daily: DailyTasks | null
       /**
        * The Task Occurrences of every Task in the list that has any, by Task —
        * its expandable history, and the record that says whether Undo
@@ -126,7 +128,7 @@ export const openingTasksSnapshot: TasksSnapshot = {
 export interface TasksSession {
   /** What a view would render right now. */
   snapshot(): TasksSnapshot
-  /** The first read: the persistent Daily Tasks selection. */
+  /** The first read: saved Daily Tasks priorities and automatically due work. */
   open(): Promise<void>
   /**
    * The other list, or back again. Nothing else narrows either one. Choosing a
@@ -136,7 +138,7 @@ export interface TasksSession {
    */
   show(tab: TasksTab): Promise<void>
   /**
-   * Shows the list the Task is in now: Daily Tasks when it is selected there,
+   * Shows the list the Task is in now: Daily Tasks when it is selected or due there,
    * Completed when it has been kept, and otherwise the broader Open list. A
    * Task that is gone keeps the Open list, as a clicked Alert always has.
    *
@@ -169,8 +171,8 @@ export interface TasksSession {
   reconciled(held: boolean): void
   /**
    * The Tasks are what they were, but the day has moved: local midnight, a
-   * wake, or the window being looked at again. Re-groups what is already here,
-   * without asking the database a question whose answer has not changed.
+   * wake, or the window being looked at again. Re-groups Open work already
+   * here, or re-reads Daily Tasks because the visible work may have changed.
    */
   regroup(): void
   /**
@@ -289,9 +291,10 @@ export function createTasksSession({
     const ticket = ++latestRead
     try {
       const core = await journal
-      const tasks = await (tab === 'daily'
-        ? core.dailyTasks()
-        : tab === 'open' ? core.openTasks() : core.completedTasks())
+      const daily = tab === 'daily' ? await core.dailyTaskList() : null
+      const tasks = daily !== null
+        ? [...daily.selected, ...daily.automatic]
+        : await (tab === 'open' ? core.openTasks() : core.completedTasks())
       const candidates = tab === 'daily' ? await core.dailyTaskCandidates() : []
       // One read for the whole list rather than one per row: the histories
       // are wanted together, and a list that grew a query per Task would get
@@ -305,6 +308,7 @@ export function createTasksSession({
         tasks: {
           state: 'tasks',
           tasks,
+          daily,
           groups: tab === 'open' ? groupOpenTasks(tasks, clock.now()) : [],
           occurrences,
         },
@@ -497,6 +501,11 @@ export function createTasksSession({
 
     regroup() {
       const { tasks } = snapshot
+      if (snapshot.searching) return
+      if (tasks.state === 'tasks' && snapshot.showing === 'daily') {
+        void read('daily')
+        return
+      }
       if (tasks.state !== 'tasks' || snapshot.showing !== 'open') return
 
       show({
