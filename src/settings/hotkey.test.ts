@@ -98,9 +98,13 @@ describe('describeUnavailableHotkey', () => {
 })
 
 describe('HOTKEY_ACTIONS', () => {
-  it('is the two actions, each with its own name and Tray Menu fallback', () => {
-    expect(HOTKEY_ACTIONS.map((each) => each.action)).toEqual(['note', 'task'])
+  it('names each action and its Tray Menu fallback', () => {
+    expect(HOTKEY_ACTIONS.map((each) => each.action)).toEqual([
+      'note', 'task', 'viewTasks',
+    ])
     expect(describeHotkeyAction('note').label).toBe('Note Hotkey')
     expect(describeHotkeyAction('task').trayItem).toBe('New Task')
+    expect(describeHotkeyAction('viewTasks').label).toBe('View Tasks Hotkey')
+    expect(describeHotkeyAction('viewTasks').trayItem).toBe('View Tasks')
   })
 })

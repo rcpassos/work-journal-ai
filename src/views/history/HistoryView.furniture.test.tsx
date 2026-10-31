@@ -55,6 +55,7 @@ describe('the beginning', () => {
       hotkey: {
         note: { state: 'registered', hotkey: 'Cmd+Shift+J' },
         task: { state: 'registered', hotkey: 'Ctrl+Shift+Cmd+T' },
+        viewTasks: { state: 'registered', hotkey: 'Ctrl+Shift+Cmd+L' },
       },
     })
 
@@ -71,6 +72,7 @@ describe('the beginning', () => {
       hotkey: {
         note: { state: 'unavailable', hotkey: 'Cmd+Shift+J', reason: 'taken' },
         task: { state: 'registered', hotkey: 'Ctrl+Shift+Cmd+T' },
+        viewTasks: { state: 'registered', hotkey: 'Ctrl+Shift+Cmd+L' },
       },
     })
 

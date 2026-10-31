@@ -22,7 +22,7 @@ import {
   SettingsRow,
 } from './SettingsGroup'
 
-/** The Note and Task Hotkeys, each independently remappable. */
+/** The global Hotkeys, each independently remappable. */
 export default function HotkeySettings({
   desktop,
   initialSettings,
@@ -30,8 +30,8 @@ export default function HotkeySettings({
   desktop: Desktop
   initialSettings: Promise<SettingsInitialState | null> | null
 }) {
-  // The pair as the window opens with it, seeded by the read until a remap
-  // the user completed in the gap has set it — the read's pair is captured
+  // The Hotkeys as the window opens, seeded by the read until a remap
+  // the user completed in the gap has set them — the read's Hotkeys are captured
   // before that remap, and must not be put back over it.
   const [hotkeys, setHotkeys] = useSeededState(
     initialSettings,
@@ -44,7 +44,7 @@ export default function HotkeySettings({
   const [hotkeyProblem, setHotkeyProblem] = useState<
     Partial<Record<HotkeyAction, string>>
   >({})
-  // Which recorder is listening, if either. One at a time: a keystroke can only
+  // Which recorder is listening, if any. One at a time: a keystroke can only
   // belong to one of them.
   const [recording, setRecording] = useState<HotkeyAction | null>(null)
   // A remap is a save with no other feedback than the chips changing: the
@@ -117,7 +117,7 @@ export default function HotkeySettings({
       })}
 
       <SettingsAside>
-        The two can't be the same, or a combination another app has claimed.
+        Each Hotkey must use a different combination, and can't use one another app has claimed.
       </SettingsAside>
     </SettingsGroup>
   )
@@ -137,7 +137,7 @@ function HotkeyRecorder({
   onAbandon,
   onRecord,
 }: {
-  /** Which Hotkey this is, so the two recorders are told apart out loud. */
+  /** Which Hotkey this is, so the recorders are told apart out loud. */
   label: string
   recording: boolean
   hotkey: HotkeyStatus | null
