@@ -617,13 +617,67 @@ describe('replaying the Onboarding flow', () => {
   })
 })
 
-describe('the two Hotkeys', () => {
+describe('the Hotkeys', () => {
+  it('shows and remaps View Tasks independently of capture', async () => {
+    const desktop = fakeDesktop()
+    const asked: Array<[string, string]> = []
+    const setHotkey = desktop.setHotkey
+    desktop.setHotkey = async (action, hotkey) => {
+      asked.push([action, hotkey])
+      return setHotkey(action, hotkey)
+    }
+    showSettings(desktop, 'general')
+    await screen.findByRole('group', { name: 'Current View Tasks Hotkey' })
+    expect(chips('Current View Tasks Hotkey')).toEqual([
+      'Ctrl', 'Shift', 'Cmd', 'L',
+    ])
+    screen.getByRole('button', { name: 'Change View Tasks Hotkey' }).click()
+    const recorder = await screen.findByRole('button', {
+      name: 'Press a combination…',
+    })
+    recorder.dispatchEvent(
+      new KeyboardEvent('keydown', {
+        key: 'K',
+        code: 'KeyK',
+        ctrlKey: true,
+        metaKey: true,
+        bubbles: true,
+      }),
+    )
+    await expect.poll(() => asked).toEqual([['viewTasks', 'Ctrl+Cmd+K']])
+    await expect.poll(() => chips('Current View Tasks Hotkey')).toEqual([
+      'Ctrl', 'Cmd', 'K',
+    ])
+    expect(chips('Current Note Hotkey')).toEqual(['Ctrl', 'Shift', 'Cmd', 'J'])
+    expect(chips('Current Task Hotkey')).toEqual(['Ctrl', 'Shift', 'Cmd', 'T'])
+  })
+
+  it('points at View Tasks when its global registration is unavailable', async () => {
+    const desktop = fakeDesktop({
+      hotkey: {
+        note: { state: 'registered', hotkey: 'Ctrl+Shift+Cmd+J' },
+        task: { state: 'registered', hotkey: 'Ctrl+Shift+Cmd+T' },
+        viewTasks: {
+          state: 'unavailable',
+          hotkey: 'Ctrl+Shift+Cmd+L',
+          reason: 'taken',
+        },
+      },
+    })
+    showSettings(desktop, 'general')
+    const problem = await screen.findByRole('alert')
+    expect(problem.textContent).toContain('View Tasks Hotkey')
+    expect(problem.textContent).toContain('Choose View Tasks')
+    expect(screen.getAllByRole('alert')).toHaveLength(1)
+  })
+
   it('renders one chip per key rather than a single string', async () => {
     const desktop = fakeDesktop({
       stored: { startAtLogin: false },
       hotkey: {
         note: { state: 'registered', hotkey: 'Cmd+Shift+J' },
         task: { state: 'registered', hotkey: 'Cmd+Shift+T' },
+        viewTasks: { state: 'registered', hotkey: 'Ctrl+Shift+Cmd+L' },
       },
     })
 
@@ -639,6 +693,7 @@ describe('the two Hotkeys', () => {
       hotkey: {
         note: { state: 'registered', hotkey: 'Cmd+Shift+J' },
         task: { state: 'unavailable', hotkey: 'Cmd+Shift+T', reason: 'taken' },
+        viewTasks: { state: 'registered', hotkey: 'Ctrl+Shift+Cmd+L' },
       },
     })
 
@@ -659,6 +714,7 @@ describe('the two Hotkeys', () => {
       return {
         note: { state: 'registered', hotkey: 'Ctrl+Shift+Cmd+J' },
         task: { state: 'registered', hotkey },
+        viewTasks: { state: 'registered', hotkey: 'Ctrl+Shift+Cmd+L' },
       }
     }
 
@@ -1910,6 +1966,7 @@ describe('the tabs', () => {
       'Theme',
       'Note Hotkey',
       'Task Hotkey',
+      'View Tasks Hotkey',
       'Task Alerts',
     ])
 

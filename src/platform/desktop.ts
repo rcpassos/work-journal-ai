@@ -969,10 +969,10 @@ export interface Desktop {
   announceTheme(theme: Theme): Promise<void>
   onThemeChanged(handle: (theme: Theme) => void): Promise<Unlisten>
 
-  /** Both Hotkeys as they stand, each registered or not. */
+  /** All Hotkeys as they stand, each registered or not. */
   hotkeyStatus(): Promise<HotkeyStatuses>
   /**
-   * Moves one of the two Hotkeys. Rejects with the reason the OS gave — or with
+   * Moves one of the Hotkeys. Rejects with the reason the OS gave — or with
    * the collision, since the two may never share a combination — in which case
    * both combinations in force are unchanged: the Rust side puts the old one
    * back rather than leaving the user with none.

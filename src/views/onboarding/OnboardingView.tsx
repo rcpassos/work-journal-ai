@@ -319,7 +319,7 @@ function Introduction({
 
       <section aria-label="Start from anywhere" className="flex flex-col gap-2">
         <h2 className="type-section">
-          Start a Note or a Task from anywhere
+          Use Work Journal from anywhere
         </h2>
         {HOTKEY_ACTIONS.map(({ action, label, explanation }) => {
           const combination = hotkeys?.[action] ?? null
@@ -347,7 +347,7 @@ function Introduction({
         })}
         <p className="type-meta text-muted-foreground">
           If a shortcut is unavailable, the Work Journal icon in the menu bar
-          always offers New Note and New Task.
+          always offers New Note, New Task and View Tasks.
         </p>
       </section>
 

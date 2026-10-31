@@ -18,7 +18,7 @@ open "src-tauri/target/release/bundle/macos/Work Journal.app"
 
 Three things are worth knowing before you begin.
 
-**Where the app keeps its state.** `~/Library/Application Support/com.pipecodes.work-journal` — `settings.json` holds both Hotkeys, the Theme and the Start at Login answer, and `work-journal.db` holds the Notes and the Tasks. Deleting the whole directory returns the app to a first run.
+**Where the app keeps its state.** `~/Library/Application Support/com.pipecodes.work-journal` — `settings.json` holds the Hotkeys, the Theme and the Start at Login answer, and `work-journal.db` holds the Notes and the Tasks. Deleting the whole directory returns the app to a first run.
 
 ```bash
 rm -rf ~/Library/Application\ Support/com.pipecodes.work-journal
@@ -42,12 +42,12 @@ Everything else is checked against the release build.
 - [ ] `Cmd+Tab` does not list the app.
 - [ ] A tray icon appears in the menu bar.
 - [ ] Clicking the tray icon opens a menu holding **New Note**, **New Task**, **View Notes**, **View Tasks**, **Work Summary**, **Settings**, **Check for Updates…**, a separator, **Copy Yesterday's Notes**, a separator and **Quit** — in that order. With Observing turned on and a repository listed, the last group before **Quit** also holds **Pause Observing** with **For an Hour**, **Until Tomorrow** and **Until Resumed** under it; with Observing off it is absent entirely.
-- [ ] Opened without clicking it — from the keyboard or VoiceOver — the menu says exactly what a click shows: the live Hotkeys beside the two capture items, and the same pause controls. Take **Pause Observing ▸ For an Hour** from it, open it again the same way, and it reads **Paused until …** with **Resume Observing** under it. Left open while something changes — the pause runs out under it, or a Hotkey is remapped in Settings — the items change where they are and the menu stays open under the reader.
+- [ ] Opened without clicking it — from the keyboard or VoiceOver — the menu says exactly what a click shows: the live Hotkeys beside New Note, New Task and View Tasks, and the same pause controls. Take **Pause Observing ▸ For an Hour** from it, open it again the same way, and it reads **Paused until …** with **Resume Observing** under it. Left open while something changes — the pause runs out under it, or a Hotkey is remapped in Settings — the items change where they are and the menu stays open under the reader.
 - [ ] Today's Captured Note count sits beside the glyph and follows the journal — and waits while the Tray Menu is open, which cannot change under a reader. Press the Note Hotkey with the menu open and the app stays up through it. Then close the menu, finish the capture and save the Note: the count is up by one.
 - [ ] **New Note** opens a capture window, with the Note Hotkey spelled out beside the item.
 - [ ] **New Task** opens the Task Creation window, with the Task Hotkey spelled out beside the item.
 - [ ] **View Notes** opens the Main Window, showing History.
-- [ ] **View Tasks** opens the Main Window, showing Tasks View; it does not open a second reading window.
+- [ ] **View Tasks** opens the Main Window, showing Tasks View, with the View Tasks Hotkey spelled out beside the item; it does not open a second reading window.
 - [ ] **Work Summary** opens the Main Window on the Work Summary section without spending a model call — no summary appears until **Generate** is clicked.
 - [ ] **Copy Yesterday's Notes** puts yesterday's Notes on the clipboard without opening any window, and with the Main Window already open it leaves History's range exactly where it was.
 - [ ] On a morning with no Notes filed under yesterday, **Copy Yesterday's Notes** leaves the clipboard as it was — paste to confirm the previous contents are still there.
@@ -85,7 +85,7 @@ The palette is the point of this section, and the moment to watch is the one the
 - [ ] `Cmd+C`, `Cmd+V`, `Cmd+X` and `Cmd+Z` work in the Task Editor, Task Creation, Capture and History fields.
 - [ ] `Cmd+W` closes the Main Window without quitting; the tray icon, Hotkeys, Tray Count, Meeting Import and pending Task Alerts keep running.
 - [ ] `Cmd+Q` quits the app, matching **Quit** in the Tray Menu.
-- [ ] There is no View menu and no section-switching shortcut; sections are changed only from the sidebar.
+- [ ] There is no View menu. Sections are changed from the sidebar or named Tray Menu items; the View Tasks Hotkey opens Tasks View from anywhere.
 - [ ] Closing the Main Window removes the Dock icon and the **Work Journal** menu; reopening it restores both.
 - [ ] With no Main Window open, `Cmd+C`, `Cmd+X`, `Cmd+V` and `Cmd+Z` all work in the Capture field.
 - [ ] With no Main Window open, the same four work in the Task Creation field.
@@ -149,7 +149,12 @@ Start each of these with **New Task**, half a description typed and the field ne
 - [ ] With the Main Window on screen, **New Task** puts the Task Creation panel over it rather than behind it, and the panel stays on top while the Main Window is clicked.
 - [ ] `Escape` on that Task Creation clears the field, hands focus back to the application that was in front, and leaves the Main Window on screen.
 
-## The two Hotkeys and relaunch
+## The Hotkeys and relaunch
+
+- [ ] From another app, `Ctrl+Shift+Cmd+L` opens the Main Window on Tasks View. Repeat with the window closed, with it already on Tasks View, and with it on History: the same window opens or focuses on Tasks View each time.
+- [ ] With unfinished text in Capture or Task Creation, the View Tasks Hotkey opens Tasks View; returning to the input window preserves that text.
+- [ ] With the View Tasks combination claimed by another app, Settings reports **View Tasks Hotkey** unavailable and points at **View Tasks**; the tray item and the capture Hotkeys still work.
+- [ ] Upgrading adds the View Tasks Hotkey without changing existing Note or Task combinations.
 
 Run these on a first run — with no `settings.json` — so the defaults are the ones a new user gets.
 
@@ -157,7 +162,7 @@ Run these on a first run — with no `settings.json` — so the defaults are the
 - [ ] `Ctrl+Shift+Cmd+T` starts a Task Creation from those same three applications, and never a Capture.
 - [ ] Neither keystroke reaches the application that was in front (they are intercepted, not passed through).
 - [ ] Holding either combination down starts exactly one window — one action per press, never a stream of them.
-- [ ] Neither Hotkey fights VoiceOver: with VoiceOver on, `Ctrl+Opt` commands still work as documented.
+- [ ] None of the Hotkeys fights VoiceOver: with VoiceOver on, `Ctrl+Opt` commands still work as documented.
 - [ ] Pressing the Note Hotkey during a Capture already in progress leaves one capture window and does not clear what has been typed; the same for the Task Hotkey and the Task Creation window.
 - [ ] With half a Note typed and the capture window dismissed with `Escape`, then half a Task typed: neither window's text ever appears in the other, and abandoning one leaves the other's next use empty.
 - [ ] Clicking on another application while either window holds text closes it and the text is gone — the handoff below is the only thing that preserves it.
@@ -305,13 +310,14 @@ Against a release build and a repository with commits of your own from today.
 
 - [ ] **Change** beside **Note Hotkey**, then pressing a combination, rebinds it — the new one starts a Capture and the old one no longer does. The Task Hotkey is untouched and still starts a Task Creation.
 - [ ] The same for **Task Hotkey**, with the Note Hotkey untouched.
+- [ ] **Change** beside **View Tasks Hotkey** rebinds it, updates the accelerator beside **View Tasks** in the Tray Menu, and leaves both capture Hotkeys untouched. The new combination opens Tasks View after relaunch; its old combination no longer does.
 - [ ] The Tray Menu shows each remapped combination beside its own item straight away.
-- [ ] Both remapped Hotkeys still work after quitting and relaunching the app.
+- [ ] All remapped Hotkeys still work after quitting and relaunching the app.
 - [ ] `Escape` while recording abandons it and leaves that Hotkey as it was.
-- [ ] Recording the combination the *other* Hotkey already holds is refused, says which one holds it, and leaves both Hotkeys working exactly as before.
+- [ ] Recording the combination *another* Hotkey already holds is refused, says which one holds it, and leaves all Hotkeys working exactly as before.
 - [ ] Choosing a combination another application has registered globally (for example `Ctrl+Opt+Cmd+Space` while another tool holds it) reports the refusal, names the combination and the action, and points at the Work Journal menu — and the previous Hotkey still works.
 - [ ] Pressing a bare key, or only modifiers, records nothing.
-- [ ] Settings says in as many words that a conflict with an application's own in-window shortcut cannot be detected, and that the two Hotkeys may never be the same.
+- [ ] Settings says in as many words that a conflict with an application's own in-window shortcut cannot be detected, and that the Hotkeys must all use different combinations.
 
 ## Tasks
 

@@ -16,23 +16,24 @@ export type HotkeyStatus =
   | { state: 'unavailable'; hotkey: string; reason: string }
 
 /**
- * The two things a global combination can do, each with its own Hotkey. They
+ * The actions a global combination can perform, each with its own Hotkey. They
  * are independently remappable and independently registrable — see
  * docs/adr/0018-note-and-task-have-independent-accessible-hotkeys.md — so
  * every Hotkey in the app is qualified by which action it begins. Must match
  * `HotkeyAction` in `src-tauri/src/hotkey.rs`, as
  * `src/platform/desktop-rust.test.ts` checks.
  */
-export type HotkeyAction = 'note' | 'task'
+export type HotkeyAction = 'note' | 'task' | 'viewTasks'
 
 /**
- * Both Hotkeys as they stand, which is how the Rust side reports them. Must
+ * All Hotkeys as they stand, which is how the Rust side reports them. Must
  * match `Hotkeys` in `src-tauri/src/hotkey.rs`, as
  * `src/platform/desktop-rust.test.ts` checks.
  */
 export interface HotkeyStatuses {
   note: HotkeyStatus
   task: HotkeyStatus
+  viewTasks: HotkeyStatus
 }
 
 /** What each Hotkey is called on screen, and what pressing it does. */
@@ -59,6 +60,12 @@ export const HOTKEY_ACTIONS: readonly {
     label: 'Task Hotkey',
     explanation: 'The global combination that begins a Task Creation from anywhere.',
     trayItem: 'New Task',
+  },
+  {
+    action: 'viewTasks',
+    label: 'View Tasks Hotkey',
+    explanation: 'The global combination that opens Tasks View from anywhere.',
+    trayItem: 'View Tasks',
   },
 ]
 
@@ -137,7 +144,7 @@ function keyForCode(code: string): string | null {
  * same thing — the Entry Point that always works — so a refused registration
  * reads as one way in being unavailable rather than as a broken app.
  *
- * Qualified by action because there are two of them: telling someone whose Task
+ * Qualified by action because each action has its own fallback: telling someone whose Task
  * Hotkey was refused to start a Capture instead is the wrong instruction.
  */
 export function describeUnavailableHotkey(
@@ -149,7 +156,7 @@ export function describeUnavailableHotkey(
   return `${label} ${hotkey} could not be registered: ${reason}. Choose ${trayItem} from the Work Journal menu in the menu bar instead.`
 }
 
-/** How one of the two actions reads on screen. */
+/** How an action reads on screen. */
 export function describeHotkeyAction(action: HotkeyAction) {
   const found = HOTKEY_ACTIONS.find((each) => each.action === action)
   if (found === undefined) {

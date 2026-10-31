@@ -979,7 +979,7 @@ function rustFieldNames(source: string, name: string): string[] {
 /** The quoted member names of one TypeScript union, as written. */
 function tsUnionKinds(source: string, name: string): string[] {
   const body = source.match(new RegExp(`export type ${name} =\\s*([\\s\\S]*?)\\n\\n`))?.[1] ?? ''
-  return [...body.matchAll(/'([a-z-]+)'/g)].map(([, kind]) => kind)
+  return [...body.matchAll(/'([a-z][A-Za-z-]*)'/g)].map(([, kind]) => kind)
 }
 
 /** The field names of one TypeScript interface, as written. */
@@ -1072,7 +1072,7 @@ describe('the data that crosses the command boundary', () => {
     { ts: 'CalendarEvent', tsSource: journalTs, rust: 'CalendarEvent', rustSource: calendar, fields: ['id', 'calendarId', 'title', 'startsAt', 'endsAt', 'isAllDay', 'isDeclined'] },
     { ts: 'BackupResult', tsSource: desktop, rust: 'BackupResult', rustSource, fields: ['path', 'fileName'] },
     { ts: 'AutomaticBackups', tsSource: desktop, rust: 'AutomaticBackups', rustSource: backup, fields: ['count', 'newestTakenAt'] },
-    { ts: 'HotkeyStatuses', tsSource: hotkeyTs, rust: 'Hotkeys', rustSource: hotkey, fields: ['note', 'task'] },
+    { ts: 'HotkeyStatuses', tsSource: hotkeyTs, rust: 'Hotkeys', rustSource: hotkey, fields: ['note', 'task', 'viewTasks'] },
     { ts: 'ExportedFile', tsSource: desktop, rust: 'ExportedFile', rustSource: exportRs, fields: ['path', 'fileName'] },
     { ts: 'CaptureShown', tsSource: desktop, rust: 'CaptureShown', rustSource, fields: ['practice'] },
     { ts: 'TaskAlertOpened', tsSource: desktop, rust: 'TaskAlertOpened', rustSource, fields: ['taskId'] },
@@ -1097,7 +1097,7 @@ describe('the data that crosses the command boundary', () => {
   const unions = [
     { ts: 'TaskAlertPermission', tsSource: desktop, rust: 'Permission', rustSource: alerts, kinds: ['granted', 'denied', 'undetermined'], rename: 'lowercase' },
     { ts: 'CalendarAccess', tsSource: desktop, rust: 'Access', rustSource: calendar, kinds: ['granted', 'denied', 'undetermined'], rename: 'lowercase' },
-    { ts: 'HotkeyAction', tsSource: hotkeyTs, rust: 'HotkeyAction', rustSource: hotkey, kinds: ['note', 'task'], rename: 'camelCase' },
+    { ts: 'HotkeyAction', tsSource: hotkeyTs, rust: 'HotkeyAction', rustSource: hotkey, kinds: ['note', 'task', 'viewTasks'], rename: 'camelCase' },
   ]
 
   it.each(unions)('spells $ts the same on both sides', (union) => {

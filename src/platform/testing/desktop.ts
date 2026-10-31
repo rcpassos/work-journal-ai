@@ -269,6 +269,7 @@ export function fakeDesktop({
   hotkey = {
     note: { state: 'registered', hotkey: 'Ctrl+Shift+Cmd+J' },
     task: { state: 'registered', hotkey: 'Ctrl+Shift+Cmd+T' },
+    viewTasks: { state: 'registered', hotkey: 'Ctrl+Shift+Cmd+L' },
   },
   appIdentity = { version: 'test', isDevelopment: true },
   openSettingsStore,

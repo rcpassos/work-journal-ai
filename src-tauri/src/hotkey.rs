@@ -1,6 +1,6 @@
 //! The Hotkeys: the fastest Entry Points, and the only ones that can be
-//! unavailable. There are two of them — one that begins a Capture and one that
-//! begins a Task Creation — and they are independent in every respect except
+//! unavailable. They begin a Capture, begin a Task Creation, or open Tasks View,
+//! and they are independent in every respect except
 //! that they may never be the same combination; see
 //! docs/adr/0018-note-and-task-have-independent-accessible-hotkeys.md.
 //!
@@ -10,7 +10,7 @@
 
 use serde::{Deserialize, Serialize};
 
-/// Which of the two things a global combination does. Every Hotkey in the app
+/// What a global combination does. Every Hotkey in the app
 /// is qualified by this, because "the Hotkey" no longer names one thing. Must
 /// match `HotkeyAction` in `src/settings/hotkey.ts`, as
 /// `src/platform/desktop-rust.test.ts` checks.
@@ -19,24 +19,20 @@ use serde::{Deserialize, Serialize};
 pub enum HotkeyAction {
     Note,
     Task,
+    ViewTasks,
 }
 
 impl HotkeyAction {
-    /// The other one. A collision is always against exactly this.
-    fn other(self) -> Self {
-        match self {
-            Self::Note => Self::Task,
-            Self::Task => Self::Note,
-        }
-    }
+    pub const ALL: [Self; 3] = [Self::Note, Self::Task, Self::ViewTasks];
 
     /// What the action is called when a refusal has to be said out loud. Must
     /// match `label` in `HOTKEY_ACTIONS` (`src/settings/hotkey.ts`), which is
-    /// where Settings reads the same two names from.
+    /// where Settings reads the same names from.
     fn label(self) -> &'static str {
         match self {
             Self::Note => "Note Hotkey",
             Self::Task => "Task Hotkey",
+            Self::ViewTasks => "View Tasks Hotkey",
         }
     }
 }
@@ -49,6 +45,7 @@ impl HotkeyAction {
 /// each starts.
 pub const DEFAULT_NOTE_HOTKEY: &str = "Ctrl+Shift+Cmd+J";
 pub const DEFAULT_TASK_HOTKEY: &str = "Ctrl+Shift+Cmd+T";
+pub const DEFAULT_VIEW_TASKS_HOTKEY: &str = "Ctrl+Shift+Cmd+L";
 
 /// What the Note Hotkey used to default to, before Tasks existed. Preserved
 /// for anyone who has been running the app and never chose a combination of
@@ -57,22 +54,27 @@ pub const DEFAULT_TASK_HOTKEY: &str = "Ctrl+Shift+Cmd+T";
 /// after the upgrade, so it stops being a fallback at all.
 pub const LEGACY_NOTE_HOTKEY: &str = "Ctrl+Alt+Cmd+J";
 
-/// What each Hotkey has to be written down as before either is claimed, given
+/// What each Hotkey has to be written down as before they are claimed, given
 /// what the settings file already says. `None` means the file already holds an
 /// answer and nothing should be written over it.
 ///
-/// Both are settled once, explicitly, so that neither is ever again decided by
+/// All are settled once, explicitly, so that none is ever again decided by
 /// a fallback that could move under the user. The Note Hotkey's default changed
 /// when the Task Hotkey arrived — the old `Ctrl+Opt+Cmd` family collides with
 /// documented VoiceOver commands — so an installation that predates Tasks and
 /// never chose a combination keeps the one it has been using, persisted before
 /// the fallback moves beneath it. A genuinely new installation starts on the
-/// new pair.
+/// current defaults.
 pub fn settle(
     stored_note: Option<&str>,
     stored_task: Option<&str>,
+    stored_view_tasks: Option<&str>,
     predates_tasks: bool,
-) -> (Option<&'static str>, Option<&'static str>) {
+) -> (
+    Option<&'static str>,
+    Option<&'static str>,
+    Option<&'static str>,
+) {
     let note = match stored_note {
         Some(_) => None,
         None if predates_tasks => Some(LEGACY_NOTE_HOTKEY),
@@ -83,7 +85,12 @@ pub fn settle(
         None => Some(DEFAULT_TASK_HOTKEY),
     };
 
-    (note, task)
+    let view_tasks = match stored_view_tasks {
+        Some(_) => None,
+        None => Some(DEFAULT_VIEW_TASKS_HOTKEY),
+    };
+
+    (note, task, view_tasks)
 }
 
 /// Whether a Hotkey is available, and if not, why. Recorded at startup and
@@ -98,8 +105,8 @@ pub enum HotkeyStatus {
     },
     /// macOS may withhold the permission registration needs, the combination
     /// may already belong to another application, the machine may be managed,
-    /// or — for the Task Hotkey alone — the stored combination may be the one
-    /// the Note Hotkey already holds. Every feature stays reachable through the
+    /// or the stored combination may be one another Hotkey already holds.
+    /// Every feature stays reachable through the
     /// Tray Menu, so this is recorded rather than fatal.
     Unavailable {
         hotkey: String,
@@ -123,8 +130,8 @@ impl HotkeyStatus {
     }
 }
 
-/// Both Hotkeys as they stand. Held as one value because the rule that keeps
-/// them apart is about the pair rather than about either one. Must match
+/// All Hotkeys as they stand. Held as one value because their combinations
+/// must stay distinct. Must match
 /// `HotkeyStatuses` in `src/settings/hotkey.ts`, as
 /// `src/platform/desktop-rust.test.ts` checks.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -132,6 +139,7 @@ impl HotkeyStatus {
 pub struct Hotkeys {
     pub note: HotkeyStatus,
     pub task: HotkeyStatus,
+    pub view_tasks: HotkeyStatus,
 }
 
 impl Hotkeys {
@@ -139,20 +147,18 @@ impl Hotkeys {
         match action {
             HotkeyAction::Note => &self.note,
             HotkeyAction::Task => &self.task,
+            HotkeyAction::ViewTasks => &self.view_tasks,
         }
     }
 
     fn with(&self, action: HotkeyAction, status: HotkeyStatus) -> Hotkeys {
-        match action {
-            HotkeyAction::Note => Hotkeys {
-                note: status,
-                task: self.task.clone(),
-            },
-            HotkeyAction::Task => Hotkeys {
-                note: self.note.clone(),
-                task: status,
-            },
-        }
+        let mut next = self.clone();
+        *match action {
+            HotkeyAction::Note => &mut next.note,
+            HotkeyAction::Task => &mut next.task,
+            HotkeyAction::ViewTasks => &mut next.view_tasks,
+        } = status;
+        next
     }
 }
 
@@ -165,12 +171,12 @@ pub trait Registrar {
     fn unregister(&self, hotkey: &str);
 }
 
-/// Moves one of the two Hotkeys, or explains why it could not move.
+/// Moves one of the Hotkeys, or explains why it could not move.
 ///
-/// A combination the other Hotkey already holds is refused outright: the two
+/// A combination another Hotkey already holds is refused outright: they
 /// may never be the same, and claiming it would mean one keypress doing two
 /// things or the OS refusing on the app's own behalf. Nothing is given up in
-/// that case, so both live registrations survive a rejected remap intact.
+/// that case, so all live registrations survive a rejected remap intact.
 ///
 /// Otherwise the old binding is given up first, because the OS will not hand
 /// out a combination twice and remapping onto an overlapping one would fail
@@ -192,9 +198,10 @@ pub fn remap(
         return Err("a Hotkey cannot be empty".to_string());
     }
 
-    let other = action.other();
-    if hotkeys.of(other).hotkey() == next {
-        return Err(format!("it is already the {}", other.label()));
+    for other in HotkeyAction::ALL {
+        if other != action && hotkeys.of(other).hotkey() == next {
+            return Err(format!("it is already the {}", other.label()));
+        }
     }
 
     let current = hotkeys.of(action);
@@ -227,29 +234,42 @@ pub fn remap(
     }
 }
 
-/// Registers both Hotkeys and reports the outcome of each. Never fails: a
+/// Registers all Hotkeys and reports the outcome of each. Never fails: a
 /// Hotkey that could not be registered leaves the app running with one Entry
 /// Point fewer, and the Tray Menu still does everything.
 ///
-/// The Note Hotkey is claimed first, so a settings file holding the same
-/// combination twice — which nothing in the app can produce, but a hand-edited
-/// file can — resolves in its favour rather than by whichever happened to be
-/// read first. The Task Hotkey is then Unavailable, and says so.
-pub fn register_both(note: &str, task: &str, registrar: &impl Registrar) -> Hotkeys {
-    let note_status = register(HotkeyAction::Note, note, registrar);
-
-    let task_status = if task.trim() == note.trim() {
-        HotkeyStatus::Unavailable {
-            hotkey: task.to_string(),
-            reason: format!("it is already the {}", HotkeyAction::Note.label()),
+/// Duplicate stored values resolve in Note, Task, View Tasks order, preserving
+/// the existing capture bindings when the View Tasks Hotkey is added.
+pub fn register_all(
+    note: &str,
+    task: &str,
+    view_tasks: &str,
+    registrar: &impl Registrar,
+) -> Hotkeys {
+    let combinations = [
+        (HotkeyAction::Note, note),
+        (HotkeyAction::Task, task),
+        (HotkeyAction::ViewTasks, view_tasks),
+    ];
+    let statuses: [HotkeyStatus; 3] = std::array::from_fn(|index| {
+        let (action, hotkey) = combinations[index];
+        if let Some((other, _)) = combinations[..index]
+            .iter()
+            .find(|(_, previous)| previous.trim() == hotkey.trim())
+        {
+            HotkeyStatus::Unavailable {
+                hotkey: hotkey.to_string(),
+                reason: format!("it is already the {}", other.label()),
+            }
+        } else {
+            register(action, hotkey, registrar)
         }
-    } else {
-        register(HotkeyAction::Task, task, registrar)
-    };
-
+    });
+    let [note, task, view_tasks] = statuses;
     Hotkeys {
-        note: note_status,
-        task: task_status,
+        note,
+        task,
+        view_tasks,
     }
 }
 
@@ -302,6 +322,7 @@ mod tests {
             let name = match action {
                 HotkeyAction::Note => "note",
                 HotkeyAction::Task => "task",
+                HotkeyAction::ViewTasks => "viewTasks",
             };
             self.calls
                 .borrow_mut()
@@ -323,25 +344,35 @@ mod tests {
         }
     }
 
-    fn both(note: &str, task: &str) -> Hotkeys {
+    fn capture_hotkeys(note: &str, task: &str) -> Hotkeys {
         Hotkeys {
             note: registered(note),
             task: registered(task),
+            view_tasks: registered(DEFAULT_VIEW_TASKS_HOTKEY),
         }
     }
 
     #[test]
-    fn both_hotkeys_are_registered_independently() {
+    fn all_hotkeys_are_registered_independently() {
         let registrar = FakeRegistrar::accepting_everything();
 
-        let hotkeys = register_both(DEFAULT_NOTE_HOTKEY, DEFAULT_TASK_HOTKEY, &registrar);
+        let hotkeys = register_all(
+            DEFAULT_NOTE_HOTKEY,
+            DEFAULT_TASK_HOTKEY,
+            DEFAULT_VIEW_TASKS_HOTKEY,
+            &registrar,
+        );
 
-        assert_eq!(hotkeys, both(DEFAULT_NOTE_HOTKEY, DEFAULT_TASK_HOTKEY));
+        assert_eq!(
+            hotkeys,
+            capture_hotkeys(DEFAULT_NOTE_HOTKEY, DEFAULT_TASK_HOTKEY)
+        );
         assert_eq!(
             registrar.calls(),
             vec![
                 format!("register note {DEFAULT_NOTE_HOTKEY}"),
                 format!("register task {DEFAULT_TASK_HOTKEY}"),
+                format!("register viewTasks {DEFAULT_VIEW_TASKS_HOTKEY}"),
             ]
         );
     }
@@ -350,7 +381,12 @@ mod tests {
     fn one_hotkey_the_os_refuses_leaves_the_other_registered() {
         let registrar = FakeRegistrar::refusing(DEFAULT_TASK_HOTKEY);
 
-        let hotkeys = register_both(DEFAULT_NOTE_HOTKEY, DEFAULT_TASK_HOTKEY, &registrar);
+        let hotkeys = register_all(
+            DEFAULT_NOTE_HOTKEY,
+            DEFAULT_TASK_HOTKEY,
+            DEFAULT_VIEW_TASKS_HOTKEY,
+            &registrar,
+        );
 
         assert_eq!(hotkeys.note, registered(DEFAULT_NOTE_HOTKEY));
         assert_eq!(
@@ -366,7 +402,12 @@ mod tests {
     fn duplicate_stored_combinations_resolve_in_the_note_hotkeys_favour() {
         let registrar = FakeRegistrar::accepting_everything();
 
-        let hotkeys = register_both("Ctrl+Shift+Cmd+J", "Ctrl+Shift+Cmd+J", &registrar);
+        let hotkeys = register_all(
+            "Ctrl+Shift+Cmd+J",
+            "Ctrl+Shift+Cmd+J",
+            DEFAULT_VIEW_TASKS_HOTKEY,
+            &registrar,
+        );
 
         assert_eq!(hotkeys.note, registered("Ctrl+Shift+Cmd+J"));
         assert_eq!(
@@ -380,7 +421,10 @@ mod tests {
         // against the app itself or bind one keypress to two actions.
         assert_eq!(
             registrar.calls(),
-            vec!["register note Ctrl+Shift+Cmd+J".to_string()]
+            vec![
+                "register note Ctrl+Shift+Cmd+J".to_string(),
+                format!("register viewTasks {DEFAULT_VIEW_TASKS_HOTKEY}")
+            ]
         );
     }
 
@@ -389,13 +433,16 @@ mod tests {
         let registrar = FakeRegistrar::accepting_everything();
 
         let hotkeys = remap(
-            &both("Ctrl+Shift+Cmd+J", "Ctrl+Shift+Cmd+T"),
+            &capture_hotkeys("Ctrl+Shift+Cmd+J", "Ctrl+Shift+Cmd+T"),
             HotkeyAction::Note,
             "Ctrl+Alt+K",
             &registrar,
         );
 
-        assert_eq!(hotkeys, Ok(both("Ctrl+Alt+K", "Ctrl+Shift+Cmd+T")));
+        assert_eq!(
+            hotkeys,
+            Ok(capture_hotkeys("Ctrl+Alt+K", "Ctrl+Shift+Cmd+T"))
+        );
         assert_eq!(
             registrar.calls(),
             vec!["unregister Ctrl+Shift+Cmd+J", "register note Ctrl+Alt+K"]
@@ -407,7 +454,7 @@ mod tests {
         let registrar = FakeRegistrar::accepting_everything();
 
         let hotkeys = remap(
-            &both("Ctrl+Shift+Cmd+J", "Ctrl+Shift+Cmd+T"),
+            &capture_hotkeys("Ctrl+Shift+Cmd+J", "Ctrl+Shift+Cmd+T"),
             HotkeyAction::Task,
             "Ctrl+Alt+K",
             &registrar,
@@ -423,7 +470,7 @@ mod tests {
         let registrar = FakeRegistrar::refusing("Ctrl+Alt+K");
 
         let hotkeys = remap(
-            &both("Ctrl+Shift+Cmd+J", "Ctrl+Shift+Cmd+T"),
+            &capture_hotkeys("Ctrl+Shift+Cmd+J", "Ctrl+Shift+Cmd+T"),
             HotkeyAction::Note,
             "Ctrl+Alt+K",
             &registrar,
@@ -446,14 +493,9 @@ mod tests {
     #[test]
     fn a_collision_is_refused_without_touching_either_registration() {
         let registrar = FakeRegistrar::accepting_everything();
-        let hotkeys = both("Ctrl+Shift+Cmd+J", "Ctrl+Shift+Cmd+T");
+        let hotkeys = capture_hotkeys("Ctrl+Shift+Cmd+J", "Ctrl+Shift+Cmd+T");
 
-        let refused = remap(
-            &hotkeys,
-            HotkeyAction::Task,
-            "Ctrl+Shift+Cmd+J",
-            &registrar,
-        );
+        let refused = remap(&hotkeys, HotkeyAction::Task, "Ctrl+Shift+Cmd+J", &registrar);
 
         assert_eq!(refused, Err("it is already the Note Hotkey".to_string()));
         assert!(registrar.calls().is_empty());
@@ -468,14 +510,10 @@ mod tests {
                 reason: "macOS withheld the permission".to_string(),
             },
             task: registered("Ctrl+Shift+Cmd+T"),
+            view_tasks: registered(DEFAULT_VIEW_TASKS_HOTKEY),
         };
 
-        let refused = remap(
-            &hotkeys,
-            HotkeyAction::Task,
-            "Ctrl+Shift+Cmd+J",
-            &registrar,
-        );
+        let refused = remap(&hotkeys, HotkeyAction::Task, "Ctrl+Shift+Cmd+J", &registrar);
 
         assert_eq!(refused, Err("it is already the Note Hotkey".to_string()));
         assert!(registrar.calls().is_empty());
@@ -486,13 +524,16 @@ mod tests {
         let registrar = FakeRegistrar::accepting_everything();
 
         let hotkeys = remap(
-            &both("Ctrl+Shift+Cmd+J", "Ctrl+Shift+Cmd+T"),
+            &capture_hotkeys("Ctrl+Shift+Cmd+J", "Ctrl+Shift+Cmd+T"),
             HotkeyAction::Note,
             "Ctrl+Shift+Cmd+J",
             &registrar,
         );
 
-        assert_eq!(hotkeys, Ok(both("Ctrl+Shift+Cmd+J", "Ctrl+Shift+Cmd+T")));
+        assert_eq!(
+            hotkeys,
+            Ok(capture_hotkeys("Ctrl+Shift+Cmd+J", "Ctrl+Shift+Cmd+T"))
+        );
         assert!(registrar.calls().is_empty());
     }
 
@@ -505,6 +546,7 @@ mod tests {
                 reason: "macOS withheld the permission".to_string(),
             },
             task: registered("Ctrl+Shift+Cmd+T"),
+            view_tasks: registered(DEFAULT_VIEW_TASKS_HOTKEY),
         };
 
         let next = remap(&hotkeys, HotkeyAction::Note, "Ctrl+Alt+K", &registrar).unwrap();
@@ -522,6 +564,7 @@ mod tests {
                 hotkey: "Ctrl+Shift+Cmd+T".to_string(),
                 reason: "macOS withheld the permission".to_string(),
             },
+            view_tasks: registered(DEFAULT_VIEW_TASKS_HOTKEY),
         };
 
         let next = remap(&hotkeys, HotkeyAction::Task, "Ctrl+Shift+Cmd+T", &registrar).unwrap();
@@ -534,7 +577,7 @@ mod tests {
         let registrar = FakeRegistrar::accepting_everything();
 
         let refused = remap(
-            &both("Ctrl+Shift+Cmd+J", "Ctrl+Shift+Cmd+T"),
+            &capture_hotkeys("Ctrl+Shift+Cmd+J", "Ctrl+Shift+Cmd+T"),
             HotkeyAction::Note,
             "   ",
             &registrar,
@@ -569,39 +612,138 @@ mod tests {
     }
 
     #[test]
-    fn a_first_run_settles_on_the_pair_the_app_ships_with() {
+    fn view_tasks_registration_failure_leaves_capture_hotkeys_working() {
+        let registrar = FakeRegistrar::refusing(DEFAULT_VIEW_TASKS_HOTKEY);
+        let hotkeys = register_all(
+            DEFAULT_NOTE_HOTKEY,
+            DEFAULT_TASK_HOTKEY,
+            DEFAULT_VIEW_TASKS_HOTKEY,
+            &registrar,
+        );
+        assert!(hotkeys.note.is_registered());
+        assert!(hotkeys.task.is_registered());
+        assert!(!hotkeys.view_tasks.is_registered());
+    }
+
+    #[test]
+    fn view_tasks_cannot_claim_either_capture_combination_at_startup() {
+        for (combination, label) in [
+            (DEFAULT_NOTE_HOTKEY, "Note Hotkey"),
+            (DEFAULT_TASK_HOTKEY, "Task Hotkey"),
+        ] {
+            let registrar = FakeRegistrar::accepting_everything();
+            let hotkeys = register_all(
+                DEFAULT_NOTE_HOTKEY,
+                DEFAULT_TASK_HOTKEY,
+                combination,
+                &registrar,
+            );
+            assert_eq!(
+                hotkeys.view_tasks,
+                HotkeyStatus::Unavailable {
+                    hotkey: combination.to_string(),
+                    reason: format!("it is already the {label}"),
+                }
+            );
+            assert_eq!(registrar.calls().len(), 2);
+        }
+    }
+
+    #[test]
+    fn every_action_refuses_combinations_reserved_for_other_actions() {
+        let hotkeys = capture_hotkeys(DEFAULT_NOTE_HOTKEY, DEFAULT_TASK_HOTKEY);
+        for action in HotkeyAction::ALL {
+            for other in HotkeyAction::ALL {
+                if action == other {
+                    continue;
+                }
+                let registrar = FakeRegistrar::accepting_everything();
+                assert_eq!(
+                    remap(&hotkeys, action, hotkeys.of(other).hotkey(), &registrar),
+                    Err(format!("it is already the {}", other.label()))
+                );
+                assert!(registrar.calls().is_empty());
+            }
+        }
+    }
+
+    #[test]
+    fn view_tasks_remap_preserves_capture_bindings_and_rolls_back_on_refusal() {
+        let hotkeys = capture_hotkeys(DEFAULT_NOTE_HOTKEY, DEFAULT_TASK_HOTKEY);
+        let accepting = FakeRegistrar::accepting_everything();
+        let next = remap(&hotkeys, HotkeyAction::ViewTasks, "Ctrl+Cmd+K", &accepting).unwrap();
+        assert_eq!(next.note, hotkeys.note);
+        assert_eq!(next.task, hotkeys.task);
+        assert_eq!(next.view_tasks, registered("Ctrl+Cmd+K"));
+        let refusing = FakeRegistrar::refusing("Ctrl+Cmd+K");
+        assert!(remap(&hotkeys, HotkeyAction::ViewTasks, "Ctrl+Cmd+K", &refusing).is_err());
         assert_eq!(
-            settle(None, None, false),
-            (Some(DEFAULT_NOTE_HOTKEY), Some(DEFAULT_TASK_HOTKEY))
+            refusing.calls(),
+            vec![
+                format!("unregister {DEFAULT_VIEW_TASKS_HOTKEY}"),
+                "register viewTasks Ctrl+Cmd+K".to_string(),
+                format!("register viewTasks {DEFAULT_VIEW_TASKS_HOTKEY}"),
+            ]
+        );
+    }
+
+    #[test]
+    fn an_upgrade_adds_view_tasks_without_overwriting_existing_bindings() {
+        assert_eq!(
+            settle(Some("Ctrl+K"), Some("Ctrl+T"), None, true),
+            (None, None, Some(DEFAULT_VIEW_TASKS_HOTKEY))
+        );
+        assert_eq!(
+            settle(Some("Ctrl+K"), Some("Ctrl+T"), Some("Ctrl+L"), true),
+            (None, None, None)
+        );
+    }
+
+    #[test]
+    fn a_first_run_settles_on_the_hotkeys_the_app_ships_with() {
+        assert_eq!(
+            settle(None, None, None, false),
+            (
+                Some(DEFAULT_NOTE_HOTKEY),
+                Some(DEFAULT_TASK_HOTKEY),
+                Some(DEFAULT_VIEW_TASKS_HOTKEY)
+            )
         );
     }
 
     #[test]
     fn an_installation_predating_tasks_keeps_the_note_hotkey_it_has_been_using() {
         assert_eq!(
-            settle(None, None, true),
-            (Some(LEGACY_NOTE_HOTKEY), Some(DEFAULT_TASK_HOTKEY))
+            settle(None, None, None, true),
+            (
+                Some(LEGACY_NOTE_HOTKEY),
+                Some(DEFAULT_TASK_HOTKEY),
+                Some(DEFAULT_VIEW_TASKS_HOTKEY)
+            )
         );
     }
 
     #[test]
     fn a_combination_the_user_chose_is_never_written_over() {
-        assert_eq!(settle(Some("Ctrl+Alt+K"), None, true).0, None);
-        assert_eq!(settle(Some("Ctrl+Alt+K"), None, false).0, None);
-        assert_eq!(settle(None, Some("Ctrl+Alt+L"), true).1, None);
+        assert_eq!(settle(Some("Ctrl+Alt+K"), None, None, true).0, None);
+        assert_eq!(settle(Some("Ctrl+Alt+K"), None, None, false).0, None);
+        assert_eq!(settle(None, Some("Ctrl+Alt+L"), None, true).1, None);
     }
 
     #[test]
     fn settling_twice_writes_nothing_the_second_time() {
-        let (note, task) = settle(None, None, true);
-        assert_eq!(settle(note, task, true), (None, None));
+        let (note, task, view_tasks) = settle(None, None, None, true);
+        assert_eq!(settle(note, task, view_tasks, true), (None, None, None));
     }
 
     #[test]
     fn the_defaults_avoid_the_voiceover_family_and_differ_from_each_other() {
         assert_ne!(DEFAULT_NOTE_HOTKEY, DEFAULT_TASK_HOTKEY);
+        assert_ne!(DEFAULT_VIEW_TASKS_HOTKEY, DEFAULT_NOTE_HOTKEY);
+        assert_ne!(DEFAULT_VIEW_TASKS_HOTKEY, DEFAULT_TASK_HOTKEY);
         assert!(!DEFAULT_NOTE_HOTKEY.contains("Alt"));
         assert!(!DEFAULT_TASK_HOTKEY.contains("Alt"));
+        assert!(!DEFAULT_VIEW_TASKS_HOTKEY.contains("Alt"));
         assert_eq!(LEGACY_NOTE_HOTKEY, "Ctrl+Alt+Cmd+J");
     }
 }

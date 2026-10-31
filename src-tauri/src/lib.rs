@@ -111,6 +111,7 @@ const HOTKEY_KEY: &str = "hotkey";
 
 /// The Task Hotkey, stored beside it and independent in every other respect.
 const TASK_HOTKEY_KEY: &str = "taskHotkey";
+const VIEW_TASKS_HOTKEY_KEY: &str = "viewTasksHotkey";
 
 /// Where automatic Onboarding stands — `unfinished` while it is still due,
 /// `suppressed` once it has been dismissed or was never due — written by the
@@ -344,6 +345,8 @@ enum PauseShape {
 struct NewNoteMenuItem(MenuItem<tauri::Wry>);
 /// The same, for New Task.
 struct NewTaskMenuItem(MenuItem<tauri::Wry>);
+/// The same, for View Tasks.
+struct ViewTasksMenuItem(MenuItem<tauri::Wry>);
 
 /// The count's line beside the glyph, and whether the menu is open: the one
 /// time the tray cannot be changed. `show_menu` holds the tray borrowed for
@@ -1417,6 +1420,7 @@ impl hotkey::Registrar for GlobalShortcuts {
                 match action {
                     HotkeyAction::Note => start_capture(&handle),
                     HotkeyAction::Task => start_task_creation_window(&handle),
+                    HotkeyAction::ViewTasks => open_main_window(&handle, Some(TASKS_SECTION), None),
                 }
             })
             .map_err(|error| error.to_string())
@@ -1429,21 +1433,23 @@ impl hotkey::Registrar for GlobalShortcuts {
     }
 }
 
-/// Registers the two Hotkeys the user last settled on and records the outcomes
+/// Registers the Hotkeys the user last settled on and records the outcomes
 /// where the rest of the app can read them. A registration macOS withholds must
-/// not take the app down with it: the Tray Menu still reaches both Entry
-/// Points, and Settings reports each failure against its own action.
+/// not take the app down with it: the Tray Menu still reaches every action,
+/// and Settings reports each failure against its own action.
 fn register_hotkeys(app: &tauri::AppHandle) {
     settle_stored_hotkeys(app);
 
     let registrar = GlobalShortcuts { app: app.clone() };
-    let hotkeys = hotkey::register_both(
+    let hotkeys = hotkey::register_all(
         &stored_hotkey(app, HotkeyAction::Note),
         &stored_hotkey(app, HotkeyAction::Task),
+        &stored_hotkey(app, HotkeyAction::ViewTasks),
         &registrar,
     );
 
-    for status in [&hotkeys.note, &hotkeys.task] {
+    for action in HotkeyAction::ALL {
+        let status = hotkeys.of(action);
         if let hotkey::HotkeyStatus::Unavailable { hotkey, reason } = status {
             log::error!("the Hotkey {hotkey} is unavailable: {reason}");
         }
@@ -1452,7 +1458,7 @@ fn register_hotkeys(app: &tauri::AppHandle) {
     app.manage(Mutex::new(hotkeys));
 }
 
-/// Writes both combinations down explicitly, once. What each should be is
+/// Writes the combinations down explicitly, once. What each should be is
 /// `hotkey::settle`'s decision; all that happens here is reading the settings
 /// file, telling it whether this installation predates Tasks, and saving.
 ///
@@ -1472,18 +1478,17 @@ fn settle_stored_hotkeys(app: &tauri::AppHandle) {
 
     let stored_note = store.get(HOTKEY_KEY);
     let stored_task = store.get(TASK_HOTKEY_KEY);
+    let stored_view_tasks = store.get(VIEW_TASKS_HOTKEY_KEY);
     let marker = store
         .get(ONBOARDING_KEY)
         .and_then(|value| value.as_str().map(str::to_string));
-    let (note, task) = hotkey::settle(
+    let (note, task, view_tasks) = hotkey::settle(
         stored_note.as_ref().and_then(|value| value.as_str()),
         stored_task.as_ref().and_then(|value| value.as_str()),
+        stored_view_tasks.as_ref().and_then(|value| value.as_str()),
         onboarding::predates_tasks(
             marker.as_deref(),
-            onboarding::installation_existed(
-                !store.is_empty(),
-                journal_database_exists(app),
-            ),
+            onboarding::installation_existed(!store.is_empty(), journal_database_exists(app)),
         ),
     );
 
@@ -1494,7 +1499,11 @@ fn settle_stored_hotkeys(app: &tauri::AppHandle) {
         store.set(TASK_HOTKEY_KEY, task);
     }
 
-    if note.is_some() || task.is_some() {
+    if let Some(view_tasks) = view_tasks {
+        store.set(VIEW_TASKS_HOTKEY_KEY, view_tasks);
+    }
+
+    if note.is_some() || task.is_some() || view_tasks.is_some() {
         if let Err(error) = store.save() {
             log::error!("could not settle the Hotkeys: {error}");
         }
@@ -1523,11 +1532,12 @@ fn live_hotkey(app: &tauri::AppHandle, action: HotkeyAction) -> Option<String> {
     }
 }
 
-/// Which key one of the two Hotkeys is remembered under.
+/// Which key each Hotkey is remembered under.
 fn hotkey_key(action: HotkeyAction) -> &'static str {
     match action {
         HotkeyAction::Note => HOTKEY_KEY,
         HotkeyAction::Task => TASK_HOTKEY_KEY,
+        HotkeyAction::ViewTasks => VIEW_TASKS_HOTKEY_KEY,
     }
 }
 
@@ -1544,12 +1554,13 @@ fn stored_hotkey(app: &tauri::AppHandle, action: HotkeyAction) -> String {
             match action {
                 HotkeyAction::Note => hotkey::DEFAULT_NOTE_HOTKEY,
                 HotkeyAction::Task => hotkey::DEFAULT_TASK_HOTKEY,
+                HotkeyAction::ViewTasks => hotkey::DEFAULT_VIEW_TASKS_HOTKEY,
             }
             .to_string()
         })
 }
 
-/// Both Hotkeys' availability, for whichever window asks — Settings reports a
+/// All Hotkeys' availability, for whichever window asks — Settings reports a
 /// failed registration to the user, and points them at the Tray Menu item that
 /// does the same thing.
 #[tauri::command]
@@ -1594,7 +1605,9 @@ fn set_hotkey(
 ) -> Result<Hotkeys, String> {
     let registrar = GlobalShortcuts { app: app.clone() };
     move_hotkey(&hotkeys, action, &hotkey, &registrar, |next| {
-        let store = app.store(SETTINGS_FILE).map_err(|error| error.to_string())?;
+        let store = app
+            .store(SETTINGS_FILE)
+            .map_err(|error| error.to_string())?;
         store.set(hotkey_key(action), next.of(action).hotkey());
         store.save().map_err(|error| error.to_string())?;
 
@@ -1610,6 +1623,10 @@ fn set_hotkey(
                 .set_accelerator(Some(moved)),
             HotkeyAction::Task => app
                 .state::<NewTaskMenuItem>()
+                .0
+                .set_accelerator(Some(moved)),
+            HotkeyAction::ViewTasks => app
+                .state::<ViewTasksMenuItem>()
                 .0
                 .set_accelerator(Some(moved)),
         };
@@ -2509,7 +2526,7 @@ fn ask_the_capture_window<T: serde::Serialize + Clone>(
 /// for the whole life of its tracking session, and `set_menu` takes the tray
 /// mutably — a panic inside a callback of the system, and the app aborts with
 /// it. So everything a command changes is kept and managed here, with
-/// somewhere to go: the two Hotkey items' accelerators, and the pause block.
+/// somewhere to go: the Hotkey items' accelerators, and the pause block.
 ///
 /// The pause controls sit in their own group, and are absent rather than
 /// greyed when there is nothing to pause: Observing off, or nothing on the
@@ -2541,8 +2558,14 @@ fn tray_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     app.manage(NewTaskMenuItem(new_task.clone()));
     let view_notes =
         MenuItem::with_id(app, VIEW_NOTES_MENU_ITEM, "View Notes", true, None::<&str>)?;
-    let view_tasks =
-        MenuItem::with_id(app, VIEW_TASKS_MENU_ITEM, "View Tasks", true, None::<&str>)?;
+    let view_tasks = MenuItem::with_id(
+        app,
+        VIEW_TASKS_MENU_ITEM,
+        "View Tasks",
+        true,
+        live_hotkey(app, HotkeyAction::ViewTasks).as_deref(),
+    )?;
+    app.manage(ViewTasksMenuItem(view_tasks.clone()));
     let view_work_summary = MenuItem::with_id(
         app,
         VIEW_WORK_SUMMARY_MENU_ITEM,
@@ -2996,9 +3019,10 @@ mod tests {
             fn unregister(&self, _hotkey: &str) {}
         }
 
-        let hotkeys = Mutex::new(hotkey::register_both(
+        let hotkeys = Mutex::new(hotkey::register_all(
             hotkey::DEFAULT_NOTE_HOTKEY,
             hotkey::DEFAULT_TASK_HOTKEY,
+            hotkey::DEFAULT_VIEW_TASKS_HOTKEY,
             &Accepting,
         ));
 
