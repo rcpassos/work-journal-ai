@@ -4,6 +4,10 @@ What changed in each released version, newest first. Every `vX.Y.Z` section here
 
 ## Unreleased
 
+## 0.21.0 — 2026-10-31
+
+- View Tasks now has a global Hotkey, initially Ctrl+Shift+Cmd+L, which you can remap independently in Settings and see in the Tray Menu.
+
 ## 0.20.0 — 2026-10-30
 
 - Daily Tasks now keeps Add Task above the rows and automatically shows tasks due today or overdue after your saved priorities.
